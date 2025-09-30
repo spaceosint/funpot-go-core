@@ -1,0 +1,870 @@
+openapi: 3.1.0
+info:
+  title: FunPot Backend API
+  version: 1.0.0
+  description: REST API for the FunPot Telegram Mini App platform.
+servers:
+  - url: https://api.funpot.example
+paths:
+  /api/me:
+    get:
+      summary: Get current user profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/config:
+    get:
+      summary: Get configuration and feature flags
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Configuration payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientConfig'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/streamers:
+    get:
+      summary: List streamers
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: query
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Streamer list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Streamer'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Submit a streamer for validation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [twitchUsername]
+              properties:
+                twitchUsername:
+                  type: string
+      responses:
+        '200':
+          description: Streamer submission result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamerSubmission'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/games:
+    get:
+      summary: List games for a streamer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: streamerId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Game list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/events/live:
+    get:
+      summary: Get live events for a streamer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: streamerId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Live events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LiveEvent'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/votes:
+    post:
+      summary: Cast a vote
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventId, optionId]
+              properties:
+                eventId:
+                  type: string
+                  format: uuid
+                optionId:
+                  type: string
+                cost:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Vote accepted response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/wallet:
+    get:
+      summary: Get wallet balance and history
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Wallet information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/payments/stars/createInvoice:
+    post:
+      summary: Create Telegram Stars invoice
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountINT]
+              properties:
+                amountINT:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Invoice payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StarsInvoice'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/wallet/withdraw:
+    post:
+      summary: Request withdrawal
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountINT]
+              properties:
+                amountINT:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: Withdrawal status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/referrals/summary:
+    get:
+      summary: Get referral summary
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Referral information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferralSummary'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/referrals/payouts:
+    get:
+      summary: Get referral payout history
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Referral payout history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReferralPayout'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/media/clips:
+    get:
+      summary: List media clips for a streamer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: streamerId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Clip list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MediaClip'
+        default:
+          $ref: '#/components/responses/Error'
+  /integrations/telegram/payments:
+    post:
+      summary: Telegram payments webhook
+      security:
+        - telegramSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramPaymentWebhook'
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/worker/events:
+    post:
+      summary: Ingest worker-generated events
+      security:
+        - workerSignature: []
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerEvents'
+      responses:
+        '200':
+          description: Worker ingest outcome
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerEventsResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/worker/media:
+    post:
+      summary: Ingest worker media metadata
+      security:
+        - workerSignature: []
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerMedia'
+      responses:
+        '200':
+          description: Media accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/worker/streamer-status:
+    post:
+      summary: Update streamer status from worker
+      security:
+        - workerSignature: []
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerStreamerStatus'
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/commands/assign-streamer:
+    post:
+      summary: Assign streamer monitoring to worker
+      security:
+        - workerSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamerId, twitchUsername]
+              properties:
+                streamerId:
+                  type: string
+                  format: uuid
+                twitchUsername:
+                  type: string
+      responses:
+        '200':
+          description: Assignment acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/Error'
+  /internal/commands/unassign-streamer:
+    post:
+      summary: Remove streamer monitoring assignment
+      security:
+        - workerSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [streamerId]
+              properties:
+                streamerId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Unassignment acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/Error'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    workerSignature:
+      type: apiKey
+      in: header
+      name: X-Worker-Signature
+    telegramSignature:
+      type: apiKey
+      in: header
+      name: X-Telegram-Signature
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                required: [code, message]
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                    additionalProperties: true
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        tgUserId:
+          type: integer
+        nickname:
+          type: string
+        language:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        balances:
+          type: object
+          properties:
+            internal:
+              type: integer
+        referral:
+          type: object
+          properties:
+            code:
+              type: string
+            url:
+              type: string
+        flags:
+          type: object
+          additionalProperties: true
+    ClientConfig:
+      type: object
+      properties:
+        starsRate:
+          type: number
+        minViewers:
+          type: integer
+        features:
+          type: object
+          properties:
+            paymentsEnabled:
+              type: boolean
+            referralsEnabled:
+              type: boolean
+            mediaEnabled:
+              type: boolean
+            adminEnabled:
+              type: boolean
+        currencies:
+          type: array
+          items:
+            type: string
+        limits:
+          type: object
+          properties:
+            votePerMin:
+              type: integer
+    Streamer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          type: string
+          enum: [twitch]
+        username:
+          type: string
+        displayName:
+          type: string
+        online:
+          type: boolean
+        viewers:
+          type: integer
+        addedBy:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ok, pending, rejected, banned]
+    StreamerSubmission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ok, pending, rejected]
+        reason:
+          type: string
+          nullable: true
+    Game:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        streamerId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        rules:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [active, upcoming, closed, draft, paused]
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+          nullable: true
+    LiveEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        gameId:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventOption'
+        closesAt:
+          type: string
+          format: date-time
+        totals:
+          type: object
+          additionalProperties:
+            type: integer
+        userVote:
+          type: object
+          properties:
+            optionId:
+              type: string
+        costPerVote:
+          type: integer
+    EventOption:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+    VoteResponse:
+      type: object
+      properties:
+        voteId:
+          type: string
+          format: uuid
+        newBalance:
+          type: integer
+        eventId:
+          type: string
+          format: uuid
+        optionId:
+          type: string
+    Wallet:
+      type: object
+      properties:
+        balance:
+          type: integer
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/WalletEntry'
+    WalletEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [credit, debit]
+        amount:
+          type: integer
+        currency:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    StarsInvoice:
+      type: object
+      properties:
+        invoiceId:
+          type: string
+        tgInvoicePayload:
+          type: string
+    WithdrawResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, processing, done, rejected]
+    ReferralSummary:
+      type: object
+      properties:
+        referralCode:
+          type: string
+        url:
+          type: string
+        tier:
+          type: string
+          enum: [single]
+        percent:
+          type: number
+        invitedCount:
+          type: integer
+        earningsINT:
+          type: integer
+        invited:
+          type: array
+          items:
+            type: object
+            properties:
+              userId:
+                type: string
+                format: uuid
+              joinedAt:
+                type: string
+                format: date-time
+              earningsINT:
+                type: integer
+    ReferralPayout:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        amountINT:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+    MediaClip:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        streamerId:
+          type: string
+          format: uuid
+        startedAt:
+          type: string
+          format: date-time
+        durationSec:
+          type: integer
+        url:
+          type: string
+        thumbnailUrl:
+          type: string
+          nullable: true
+    TelegramPaymentWebhook:
+      type: object
+      description: Telegram Stars webhook payload (mirrors Telegram schema)
+      additionalProperties: true
+    WorkerEvents:
+      type: object
+      properties:
+        streamerId:
+          type: string
+          format: uuid
+        gameId:
+          type: string
+          format: uuid
+          nullable: true
+        source:
+          type: object
+          properties:
+            clipId:
+              type: string
+            startedAt:
+              type: string
+              format: date-time
+            durationSec:
+              type: integer
+            llmModel:
+              type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkerEventItem'
+    WorkerEventItem:
+      type: object
+      properties:
+        externalId:
+          type: string
+        title:
+          type: string
+        options:
+          type: array
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/EventOption'
+        validForSec:
+          type: integer
+        confidence:
+          type: number
+        promptVersions:
+          type: object
+          properties:
+            session:
+              type: string
+            game:
+              type: string
+            perClip:
+              type: string
+        schemaVersion:
+          type: string
+        rawJson:
+          type: object
+          additionalProperties: true
+    WorkerEventsResponse:
+      type: object
+      properties:
+        accepted:
+          type: integer
+        createdEventIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        rejected:
+          type: array
+          items:
+            type: object
+            properties:
+              externalId:
+                type: string
+              reason:
+                type: string
+    WorkerMedia:
+      type: object
+      properties:
+        streamerId:
+          type: string
+          format: uuid
+        clipId:
+          type: string
+        tenMinChunk:
+          type: boolean
+        bunnyUrl:
+          type: string
+          format: uri
+        thumbnailUrl:
+          type: string
+          format: uri
+        startedAt:
+          type: string
+          format: date-time
+        durationSec:
+          type: integer
+    WorkerStreamerStatus:
+      type: object
+      properties:
+        streamerId:
+          type: string
+          format: uuid
+        online:
+          type: boolean
+        viewers:
+          type: integer
+        checkedAt:
+          type: string
+          format: date-time
+
