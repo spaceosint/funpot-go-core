@@ -24,3 +24,8 @@ This repository contains the backend modular monolith for the FunPot Telegram Mi
 - Reference user-facing changes in the PR description.
 - Attach migrations and documentation updates alongside code changes.
 
+## Status Reporting
+- Every deliverable or follow-up task must include an explicit checklist in the final
+  response that marks what has been completed (`[x]`) and what remains (`[ ]`).
+- Keep the checklist aligned with the implementation plan in `docs/implementation_plan.md`
+  so stakeholders can track progress across iterations.
