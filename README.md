@@ -1,0 +1,1 @@
+# funpot-go-core
