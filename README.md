@@ -9,6 +9,7 @@ FunPot is a modular Go monolith powering the Telegram Mini App experience for in
 - [WebSocket Contracts](docs/ws_messages.md)
 - [Idempotency & Rate Limits](docs/idempotency_rate_limits.md)
 - [Migration Plan](docs/migrations_plan.md)
+- [Implementation Plan](docs/implementation_plan.md)
 - [Load & Performance Testing](docs/load_testing.md)
 - [Local Development Guide](docs/local_setup.md)
 - [Risk Matrix & Environment Checklist](docs/risk_matrix_and_checklist.md)
