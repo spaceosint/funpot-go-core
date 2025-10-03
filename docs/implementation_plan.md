@@ -15,22 +15,23 @@ approximate sequencing, and validation criteria.
 ## Milestones
 
 ### M0 – Foundation & Tooling
-- [ ] Initialize Go module, dependency management, and project layout under
+- [x] Initialize Go module, dependency management, and project layout under
   `internal/` and `pkg/` according to `AGENTS.md`.
-- [ ] Implement configuration loader with env overrides and local `.env`
+- [x] Implement configuration loader with env overrides and local `.env`
   support, updating `docs/local_setup.md` accordingly.
-- [ ] Wire logging, metrics (OpenTelemetry/Prometheus), and Sentry stubs.
-- [ ] Provide health endpoints (`/healthz`, `/readyz`) and CI sanity pipeline.
+- [x] Wire logging, metrics (OpenTelemetry/Prometheus), and Sentry stubs.
+- [x] Provide health endpoints (`/healthz`, `/readyz`) and CI sanity pipeline.
 - Exit Criteria: containerized service boots, responds to health checks, and
   emits baseline telemetry.
 
 ### M1 – Authentication & User Profiles
-- [ ] Verify Telegram `initData`, issue short-lived JWTs, and implement auth
+- [x] Verify Telegram `initData`, issue short-lived JWTs, and implement auth
   middleware shared by REST/WSS.
 - [ ] Create `users` module (profile CRUD, referral code generation) with DB
-  migrations.
-- [ ] Seed configuration flags and expose `/api/me`, `/api/config`.
-- [ ] Deliver acceptance tests for valid/invalid initData flows.
+  migrations. *(In-memory repository stubbed; persistent storage and migrations
+  remain outstanding.)*
+- [x] Seed configuration flags and expose `/api/me`, `/api/config`.
+- [x] Deliver acceptance tests for valid/invalid initData flows.
 - Exit Criteria: Mini App can authenticate, fetch own profile, and retrieve
   feature flags.
 
