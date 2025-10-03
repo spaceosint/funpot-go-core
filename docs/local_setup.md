@@ -39,6 +39,14 @@ Update this table whenever you introduce a new configuration surface.
 go run ./cmd/server
 ```
 
+Alternatively, you can build and run the container image defined in the
+repository `Dockerfile`:
+
+```bash
+docker build -t funpot-core:dev .
+docker run --rm -p 8080:8080 --env-file .env funpot-core:dev
+```
+
 On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
 - `GET /readyz` – readiness probe (currently always ready).
