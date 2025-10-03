@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -16,6 +17,8 @@ type Config struct {
 	Logging     LoggingConfig
 	Telemetry   TelemetryConfig
 	Sentry      SentryConfig
+	Auth        AuthConfig
+	Features    FeatureConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -43,6 +46,23 @@ type SentryConfig struct {
 	Environment string
 	SampleRate  float64
 	Debug       bool
+}
+
+// AuthConfig controls Telegram authentication and JWT issuance.
+type AuthConfig struct {
+	BotToken string
+	JWT      JWTConfig
+}
+
+// JWTConfig holds settings for token issuance.
+type JWTConfig struct {
+	Secret string
+	TTL    time.Duration
+}
+
+// FeatureConfig describes dynamic feature flag exposure.
+type FeatureConfig struct {
+	Flags map[string]bool
 }
 
 // Load reads configuration from the environment, applying defaults and .env overrides.
@@ -79,6 +99,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	jwtTTL, err := getDuration("FUNPOT_AUTH_JWT_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Environment: getString("FUNPOT_ENV", "development"),
 		Server: ServerConfig{
@@ -99,6 +129,16 @@ func Load() (Config, error) {
 			Environment: getString("FUNPOT_SENTRY_ENVIRONMENT", "development"),
 			SampleRate:  sampleRate,
 			Debug:       sentryDebug,
+		},
+		Auth: AuthConfig{
+			BotToken: os.Getenv("FUNPOT_AUTH_TELEGRAM_BOT_TOKEN"),
+			JWT: JWTConfig{
+				Secret: getString("FUNPOT_AUTH_JWT_SECRET", "dev-secret"),
+				TTL:    jwtTTL,
+			},
+		},
+		Features: FeatureConfig{
+			Flags: featureFlags,
 		},
 	}
 
@@ -143,4 +183,34 @@ func getFloat(key string, fallback float64) (float64, error) {
 		return parsed, nil
 	}
 	return fallback, nil
+}
+
+func getFeatureFlags(key string) (map[string]bool, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return map[string]bool{}, nil
+	}
+
+	flags := make(map[string]bool)
+	for _, entry := range strings.Split(value, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid feature flag pair: %s", entry)
+		}
+		key := strings.TrimSpace(parts[0])
+		rawValue := strings.TrimSpace(parts[1])
+		if key == "" {
+			return nil, fmt.Errorf("feature flag key missing in pair: %s", entry)
+		}
+		enabled, err := strconv.ParseBool(rawValue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid feature flag value for %s: %w", key, err)
+		}
+		flags[key] = enabled
+	}
+	return flags, nil
 }

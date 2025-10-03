@@ -10,7 +10,9 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/funpot/funpot-go-core/internal/app"
+	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/users"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
 
@@ -47,7 +49,15 @@ func main() {
 	}
 	defer telemetry.FlushSentry(2 * time.Second)
 
-	handler := app.NewHandler(logger, func() bool { return true }, telemetryProvider.MetricsHandler())
+	userRepo := users.NewInMemoryRepository()
+	userService := users.NewService(userRepo)
+
+	authService, err := auth.NewService(logger, cfg.Auth, userService)
+	if err != nil {
+		logger.Fatal("failed to create auth service", zap.Error(err))
+	}
+
+	handler := app.NewHandler(logger, func() bool { return true }, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {

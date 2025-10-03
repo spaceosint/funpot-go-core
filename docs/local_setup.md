@@ -26,6 +26,10 @@ FUNPOT_SENTRY_DSN=
 FUNPOT_SENTRY_ENVIRONMENT=development
 FUNPOT_SENTRY_TRACES_SAMPLE_RATE=0.0
 FUNPOT_SENTRY_DEBUG=false
+FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
+FUNPOT_AUTH_JWT_SECRET=dev-secret
+FUNPOT_AUTH_JWT_TTL=15m
+FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
 ```
 
 Update this table whenever you introduce a new configuration surface.
@@ -39,6 +43,9 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
 - `GET /readyz` – readiness probe (currently always ready).
 - `GET /metrics` – Prometheus metrics when enabled, `204 No Content` otherwise.
+- `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
+- `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
+- `GET /api/config` – exposes seeded feature flags for the authenticated user.
 
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is
@@ -49,6 +56,9 @@ provided.
 - Adjust the log level (`debug`, `info`, `warn`, `error`) via `FUNPOT_LOG_LEVEL`.
 - When Sentry is enabled, the shutdown process flushes pending events with a
   2-second timeout.
+- Telegram authentication requires a bot token; for local development you can
+  use a sandbox bot token from BotFather. The JWT secret defaults to
+  `dev-secret` but should be overridden in non-development environments.
 
 As subsequent milestones introduce persistence, authentication, and domain
 modules, extend this guide with database and queue dependencies.
