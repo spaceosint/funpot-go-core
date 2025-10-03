@@ -1,0 +1,63 @@
+name: FunPot Core CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate formatting
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [ -n "$fmt_out" ]; then
+            echo "The following files need gofmt:" >&2
+            echo "$fmt_out" >&2
+            exit 1
+          fi
+
+      - name: Verify modules
+        run: go mod tidy
+
+      - name: Check module diff
+        run: |
+          if [ -n "$(git status --short go.mod go.sum)" ]; then
+            echo "go.mod or go.sum changed after go mod tidy. Run go mod tidy locally." >&2
+            git diff -- go.mod go.sum >&2
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build Docker image
+        run: docker build -t funpot-core:ci .
+
+      - name: Smoke test container
+        run: |
+          container_id=$(docker run -d -p 8080:8080 -e FUNPOT_ENV=ci funpot-core:ci)
+          trap 'docker logs "$container_id"; docker rm -f "$container_id" >/dev/null 2>&1' EXIT
+          for attempt in 1 2 3; do
+            if curl --fail --silent http://localhost:8080/healthz > /dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail http://localhost:8080/readyz
