@@ -2,18 +2,24 @@ name: FunPot Core CI
 
 on:
   push:
-    branches:
-      - main
+    branches: ["main", "dev", "feature/**"]
   pull_request:
-    branches:
-      - main
+    branches: ["main", "dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: docker.gitea.com/runner-images:ubuntu-latest
+      options: -v /var/run/docker.sock:/var/run/docker.sock
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v4
@@ -52,12 +58,11 @@ jobs:
 
       - name: Smoke test container
         run: |
-          container_id=$(docker run -d -p 8080:8080 -e FUNPOT_ENV=ci funpot-core:ci)
-          trap 'docker logs "$container_id"; docker rm -f "$container_id" >/dev/null 2>&1' EXIT
-          for attempt in 1 2 3; do
-            if curl --fail --silent http://localhost:8080/healthz > /dev/null; then
-              break
-            fi
+          set -e
+          cid=$(docker run -d -p 8080:8080 -e FUNPOT_ENV=ci --name funpot-ci-test funpot-core:ci)
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for i in {1..10}; do
+            if curl -sf http://127.0.0.1:8080/healthz > /dev/null; then break; fi
             sleep 2
           done
-          curl --fail http://localhost:8080/readyz
+          curl -sf http://127.0.0.1:8080/readyz
