@@ -11,93 +11,61 @@ permissions:
   contents: read
 
 jobs:
+  # Базовая проверка — всегда
   build:
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
-    env:
-      PORT: "8080"
-      FUNPOT_ENV: "ci"
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Ensure secret present (no reveal)
+      - name: gofmt
         run: |
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
-            echo "ERROR: TELEGRAM_BOT_TOKEN secret is missing (fork PRs не получают секреты)." >&2
-            exit 1
-          fi
-
-      - name: Validate formatting
-        run: |
-          fmt_out=$(gofmt -l .)
-          if [ -n "$fmt_out" ]; then
-            echo "The following files need gofmt:" >&2
-            echo "$fmt_out" >&2
-            exit 1
-          fi
-
-      - name: Verify modules
+          out=$(gofmt -l .); if [ -n "$out" ]; then echo "$out" >&2; exit 1; fi
+      - name: tidy (no diff)
         run: go mod tidy && git diff --exit-code -- go.mod go.sum
-
-      - name: Run go vet
+      - name: vet
         run: go vet ./...
-
-      - name: Run tests
+      - name: test
         run: go test ./...
-
-      - name: Build Docker image
+      - name: docker build
         run: docker build -t funpot-core:ci .
 
-      - name: Smoke test container
+  # Полный smoke-тест — только для push/ручного запуска из ЭТОГО репо
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' }}   # PR форков пропускаем
+    container:
+      image: docker.gitea.com/runner-images:ubuntu-latest
+    env:
+      FUNPOT_ENV: "ci"
+      FUNPOT_SERVER_ADDRESS: ":8080"
+      FUNPOT_AUTH_TELEGRAM_BOT_TOKEN: ${{ secrets.FUNPOT_AUTH_TELEGRAM_BOT_TOKEN }}
+    steps:
+      - name: Ensure secret exists
+        run: |
+          if [ -z "${FUNPOT_AUTH_TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "Secret FUNPOT_AUTH_TELEGRAM_BOT_TOKEN is missing." >&2; exit 1
+          fi
+      - name: Smoke test container (distroless safe)
         shell: bash
-        env:
-          PORT: "8080"
-          FUNPOT_ENV: "ci"
         run: |
           set -euo pipefail
-
-          # 0) Проверим, что секрет доступен в этом workflow
-          if [[ -z "${{ secrets.TELEGRAM_BOT_TOKEN }}" ]]; then
-            echo "ERROR: TELEGRAM_BOT_TOKEN secret is missing or not available to this workflow (fork PRs don't get secrets)." >&2
-            exit 1
-          fi
-
-          # 1) Стартуем контейнер и ПЕРЕДАЁМ токен разными ключами (на случай иного имени в коде)
           cid=$(docker run -d \
-            -e TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
-            -e TELEGRAM_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
-            -e BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }} \
             -e FUNPOT_ENV="$FUNPOT_ENV" \
-            -e PORT="$PORT" \
+            -e FUNPOT_SERVER_ADDRESS="$FUNPOT_SERVER_ADDRESS" \
+            -e FUNPOT_AUTH_TELEGRAM_BOT_TOKEN="$FUNPOT_AUTH_TELEGRAM_BOT_TOKEN" \
             --name funpot-ci-test \
             funpot-core:ci)
-
-          cleanup() { docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
+          cleanup(){ docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-
-          # 2) Покажем имена ENV внутри контейнера (значения скрываем), чтобы убедиться, что ключи там есть
-          echo "Container ENV keys:"
-          docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' \
-            | sed -E 's/^(.*)=(.*)$/\1=***MASKED***/' \
-            | grep -E '^(TELEGRAM_BOT_TOKEN|TELEGRAM_TOKEN|BOT_TOKEN|PORT|FUNPOT_ENV)=' || true
-
-          # 3) Ждём подъёма и проверяем endpoints через sidecar curl (образ приложения distroless, внутрь не exec'имся)
           for i in {1..20}; do
-            if ! docker ps --format '{{.Names}}' | grep -qx funpot-ci-test; then
-              echo "Container exited early"; exit 1
-            fi
-            if docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:$PORT/healthz" > /dev/null; then
-              break
-            fi
+            docker ps --format '{{.Names}}' | grep -qx funpot-ci-test || { echo "Container exited early"; exit 1; }
+            if docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:8080/healthz" >/dev/null; then break; fi
             sleep 2
           done
-
-          docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:$PORT/readyz" > /dev/null
+          docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:8080/readyz" >/dev/null
