@@ -57,8 +57,13 @@ jobs:
         run: docker build -t funpot-core:ci .
 
       - name: Smoke test container
+        env:
+          PORT: "8080"
+          FUNPOT_ENV: "ci"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          set -euo pipefail
+          set -eu
+          # стартуем приложение
           cid=$(docker run -d \
             -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
             -e FUNPOT_ENV="$FUNPOT_ENV" \
@@ -69,16 +74,24 @@ jobs:
           cleanup() { docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
 
-          # ждём readiness
-          for i in {1..20}; do
-            # если упал — сразу выходим с логами
+          # ждём, пока контейнер жив и эндпойнт отвечает
+          i=0
+          while :; do
+            i=$((i+1))
+            # если контейнер уже упал — выходим с ошибкой
             if ! docker ps --format '{{.Names}}' | grep -qx funpot-ci-test; then
               echo "Container exited early"; exit 1
             fi
-            if docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1'; then
+
+            # пробуем healthz через sidecar curl в сетевом неймспейсе контейнера приложения
+            if docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:$PORT/healthz" >/dev/null; then
               break
             fi
+
+            [ "$i" -ge 20 ] && { echo "healthz not ready"; exit 1; }
             sleep 2
           done
 
-          docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/readyz >/dev/null'
+          # финальная проверка readyz
+          docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:$PORT/readyz" >/dev/null
+
