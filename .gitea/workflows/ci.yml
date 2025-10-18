@@ -15,17 +15,25 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
-      # options удаляем — раннер сам монтирует docker.sock
+    env:
+      PORT: "8080"
+      FUNPOT_ENV: "ci"
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
+      - uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Ensure secret present (no reveal)
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "ERROR: TELEGRAM_BOT_TOKEN secret is missing (fork PRs не получают секреты)." >&2
+            exit 1
+          fi
 
       - name: Validate formatting
         run: |
@@ -37,15 +45,7 @@ jobs:
           fi
 
       - name: Verify modules
-        run: go mod tidy
-
-      - name: Check module diff
-        run: |
-          if [ -n "$(git status --short go.mod go.sum)" ]; then
-            echo "go.mod or go.sum changed after go mod tidy. Run go mod tidy locally." >&2
-            git diff -- go.mod go.sum >&2
-            exit 1
-          fi
+        run: go mod tidy && git diff --exit-code -- go.mod go.sum
 
       - name: Run go vet
         run: go vet ./...
@@ -56,21 +56,22 @@ jobs:
       - name: Build Docker image
         run: docker build -t funpot-core:ci .
 
-            - name: Smoke test container
+      - name: Smoke test container
         run: |
           set -euo pipefail
           cid=$(docker run -d \
-            -e TELEGRAM_BOT_TOKEN='${{ secrets.TELEGRAM_BOT_TOKEN }}' \
-            -e FUNPOT_ENV=ci \
-            -e PORT=8080 \
+            -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+            -e FUNPOT_ENV="$FUNPOT_ENV" \
+            -e PORT="$PORT" \
             --name funpot-ci-test \
             funpot-core:ci)
 
           cleanup() { docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
 
-          # ждём, пока контейнер в состоянии running и порт слушается
+          # ждём readiness
           for i in {1..20}; do
+            # если упал — сразу выходим с логами
             if ! docker ps --format '{{.Names}}' | grep -qx funpot-ci-test; then
               echo "Container exited early"; exit 1
             fi
@@ -80,6 +81,4 @@ jobs:
             sleep 2
           done
 
-          # финальная проверка готовности
           docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/readyz >/dev/null'
-
