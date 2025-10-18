@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
-      options: -v /var/run/docker.sock:/var/run/docker.sock
+      # options удаляем — раннер сам монтирует docker.sock
 
     steps:
       - name: Checkout
@@ -59,10 +59,13 @@ jobs:
       - name: Smoke test container
         run: |
           set -e
-          cid=$(docker run -d -p 8080:8080 -e FUNPOT_ENV=ci --name funpot-ci-test funpot-core:ci)
+          cid=$(docker run -d -e FUNPOT_ENV=ci --name funpot-ci-test funpot-core:ci)
           trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-          for i in {1..10}; do
-            if curl -sf http://127.0.0.1:8080/healthz > /dev/null; then break; fi
+          # ждём, пока приложение поднимется
+          for i in {1..15}; do
+            if docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1'; then
+              break
+            fi
             sleep 2
           done
-          curl -sf http://127.0.0.1:8080/readyz
+          docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/readyz >/dev/null'
