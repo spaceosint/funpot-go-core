@@ -56,16 +56,30 @@ jobs:
       - name: Build Docker image
         run: docker build -t funpot-core:ci .
 
-      - name: Smoke test container
+            - name: Smoke test container
         run: |
-          set -e
-          cid=$(docker run -d -e FUNPOT_ENV=ci --name funpot-ci-test funpot-core:ci)
-          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-          # ждём, пока приложение поднимется
-          for i in {1..15}; do
+          set -euo pipefail
+          cid=$(docker run -d \
+            -e TELEGRAM_BOT_TOKEN='${{ secrets.TELEGRAM_BOT_TOKEN }}' \
+            -e FUNPOT_ENV=ci \
+            -e PORT=8080 \
+            --name funpot-ci-test \
+            funpot-core:ci)
+
+          cleanup() { docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          # ждём, пока контейнер в состоянии running и порт слушается
+          for i in {1..20}; do
+            if ! docker ps --format '{{.Names}}' | grep -qx funpot-ci-test; then
+              echo "Container exited early"; exit 1
+            fi
             if docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1'; then
               break
             fi
             sleep 2
           done
+
+          # финальная проверка готовности
           docker exec "$cid" sh -c 'wget -qO- http://127.0.0.1:8080/readyz >/dev/null'
+
