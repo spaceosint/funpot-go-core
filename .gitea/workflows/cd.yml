@@ -40,7 +40,7 @@ jobs:
 
       - name: Build Linux binary
         run: |
-          set -euo pipefail
+          set -eu
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -o "dist/${BINARY_NAME}" ./cmd/server
 
