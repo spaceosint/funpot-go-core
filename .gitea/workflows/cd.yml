@@ -1,0 +1,51 @@
+name: FunPot Core CD
+
+on:
+  push:
+    branches: ["main", "dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  notify-deploy:
+    name: Deploy to ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: development
+            branch: dev
+            webhook_secret: DEV_DEPLOY_WEBHOOK_URL
+          - environment: production
+            branch: main
+            webhook_secret: PROD_DEPLOY_WEBHOOK_URL
+    if: startsWith(github.ref, 'refs/heads/') && github.ref_name == matrix.branch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure webhook secret is configured
+        shell: bash
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          WEBHOOK_SECRET_NAME: ${{ matrix.webhook_secret }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_WEBHOOK_URL:-}" ]; then
+            printf 'Secret %s is not configured.\n' "$WEBHOOK_SECRET_NAME" >&2
+            exit 1
+          fi
+
+      - name: Trigger deployment webhook
+        shell: bash
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          TARGET_ENV: ${{ matrix.environment }}
+        run: |
+          set -euo pipefail
+          payload=$(printf '{"environment":"%s","branch":"%s","git_sha":"%s","repository":"%s"}' \
+            "$TARGET_ENV" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_REPOSITORY")
+          curl -fsS -X POST "$DEPLOY_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$payload"

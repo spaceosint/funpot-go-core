@@ -70,3 +70,29 @@ provided.
 
 As subsequent milestones introduce persistence, authentication, and domain
 modules, extend this guide with database and queue dependencies.
+
+## Continuous Delivery
+The repository ships with an automated CD workflow defined in
+`.gitea/workflows/cd.yml`. The pipeline runs on pushes to `dev` and `main`, as
+well as manual `workflow_dispatch` invocations, and performs the following:
+
+1. Determines which environment corresponds to the branch (`dev` → development,
+   `main` → production).
+2. Sends an HTTPS POST request to the configured deployment webhook with the
+   target environment, branch name, commit SHA, and repository identifier.
+
+The webhook consumer is responsible for building and rolling out the
+application (for example, by pulling the latest sources and running a local
+Docker build). This keeps the workflow registry-free for teams that prefer to
+build images on the deployment host.
+
+### Required secrets
+Configure the following repository secrets before enabling the workflow:
+
+- `DEV_DEPLOY_WEBHOOK_URL` – HTTPS endpoint that accepts a POST request to
+  deploy the dev environment.
+- `PROD_DEPLOY_WEBHOOK_URL` – HTTPS endpoint for the production deployment.
+
+Each webhook receives a JSON payload with the keys `environment`, `branch`,
+`git_sha`, and `repository`. Use those fields to orchestrate the rollout on your
+hosting platform of choice.

@@ -95,6 +95,11 @@ approximate sequencing, and validation criteria.
 - Exit Criteria: service meets SLO under projected load, observability alerts
   configured, runbooks updated.
 
+### Operational Automation
+- [x] Ship CD workflow that notifies environment-specific webhooks for `dev`
+  and `main` deployments without relying on a container registry.
+- [ ] Add automated post-deployment smoke tests for webhook-driven rollouts.
+
 ## Cross-Cutting Workstreams
 - Security reviews, secrets rotation, and compliance updates each milestone.
 - Database migrations versioned and peer-reviewed.
