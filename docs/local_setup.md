@@ -76,26 +76,20 @@ The repository ships with an automated CD workflow defined in
 `.gitea/workflows/cd.yml`. The pipeline runs on pushes to `dev` and `main`, as
 well as manual `workflow_dispatch` invocations, and performs the following:
 
-1. Logs into the configured container registry.
-2. Builds the application image and pushes environment-specific tags.
-   - `dev` branch: publishes `${REGISTRY_IMAGE}:${GITHUB_SHA}` and
-     `${REGISTRY_IMAGE}:dev`.
-   - `main` branch: publishes `${REGISTRY_IMAGE}:${GITHUB_SHA}` along with
-     `${REGISTRY_IMAGE}:prod` and `${REGISTRY_IMAGE}:latest`.
-3. Calls an HTTP webhook to trigger the deployment in the corresponding
+1. Checks out the repository and installs the Go toolchain defined in `go.mod`.
+2. Executes `go test ./...` to ensure the commit is healthy.
+3. Builds a Linux `amd64` binary at `dist/funpot-core`.
+4. Publishes the binary as a workflow artifact named `funpot-core-<environment>-<sha>` so it can be downloaded for manual deployment.
+5. Calls an HTTP webhook to trigger the deployment in the corresponding
    environment without relying on SSH access.
 
 ### Required secrets
 Configure the following repository secrets before enabling the workflow:
 
-- `REGISTRY_IMAGE` – fully qualified image reference, e.g.
-  `registry.example.com/funpot/core`.
-- `REGISTRY_USERNAME` / `REGISTRY_PASSWORD` – credentials with push access.
-- `REGISTRY_URL` – optional registry host (omit for Docker Hub).
 - `DEV_DEPLOY_WEBHOOK_URL` – HTTPS endpoint that accepts a POST request to
   deploy the dev environment.
 - `PROD_DEPLOY_WEBHOOK_URL` – HTTPS endpoint for the production deployment.
 
-Each webhook receives a JSON payload that includes the freshly built image tag,
-target environment label, Git SHA, and the list of pushed tags. Use those
-fields to orchestrate the rollout on your hosting platform of choice.
+Each webhook receives a JSON payload with the target environment label and Git
+SHA. Use those fields to orchestrate the rollout or kick off your own build
+process on the destination host.
