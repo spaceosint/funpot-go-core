@@ -13,6 +13,8 @@ permissions:
 jobs:
   # Базовая проверка — всегда
   build:
+    outputs:
+      image_ref: ${{ steps.publish-image.outputs.image_ref }}
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
@@ -33,6 +35,35 @@ jobs:
         run: go test ./...
       - name: docker build
         run: docker build -t funpot-core:ci .
+      - name: Log in to container registry
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REGISTRY_URL:-}" ] || [ -z "${REGISTRY_USERNAME:-}" ] || [ -z "${REGISTRY_PASSWORD:-}" ]; then
+            echo "Registry credentials are not configured." >&2
+            exit 1
+          fi
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+      - name: Publish container image
+        id: publish-image
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_REPOSITORY: ${{ secrets.REGISTRY_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REGISTRY_URL:-}" ] || [ -z "${REGISTRY_REPOSITORY:-}" ]; then
+            echo "Registry URL or repository secret is missing." >&2
+            exit 1
+          fi
+          IMAGE_REF="${REGISTRY_URL}/${REGISTRY_REPOSITORY}:${GITHUB_SHA}"
+          docker tag funpot-core:ci "$IMAGE_REF"
+          docker push "$IMAGE_REF"
+          echo "image_ref=$IMAGE_REF" >>"$GITHUB_OUTPUT"
 
   # Полный smoke-тест — только для push/ручного запуска из ЭТОГО репо
   smoke:

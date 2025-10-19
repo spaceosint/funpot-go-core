@@ -1,15 +1,17 @@
 name: FunPot Core CD
 
 on:
-  push:
-    branches: ["main", "dev"]
-  workflow_dispatch:
+  workflow_run:
+    workflows: ["FunPot Core CI"]
+    types:
+      - completed
 
 permissions:
   contents: read
 
 env:
-  BINARY_NAME: funpot-core
+  REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+  REGISTRY_REPOSITORY: ${{ secrets.REGISTRY_REPOSITORY }}
 
 jobs:
   publish-and-deploy:
@@ -17,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
+    environment: ${{ matrix.environment }}
     strategy:
       matrix:
         include:
@@ -26,20 +29,70 @@ jobs:
           - environment: production
             branch: main
             webhook_secret: PROD_DEPLOY_WEBHOOK_URL
-    if: startsWith(github.ref, 'refs/heads/') && github.ref_name == matrix.branch
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == matrix.branch
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Run tests
-        run: go test ./...
-
-      - name: Build Linux binary
+      - name: Verify registry configuration
         run: |
-          set -eu
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -o "dist/${BINARY_NAME}" ./cmd/server
+          set -euo pipefail
+          if [ -z "${REGISTRY_URL:-}" ] || [ -z "${REGISTRY_REPOSITORY:-}" ]; then
+            echo "Registry URL or repository secret is missing." >&2
+            exit 1
+          fi
+
+      - name: Log in to registry
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REGISTRY_USERNAME:-}" ] || [ -z "${REGISTRY_PASSWORD:-}" ]; then
+            echo "Registry credentials are not configured." >&2
+            exit 1
+          fi
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Resolve image reference
+        id: image
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="${REGISTRY_URL}/${REGISTRY_REPOSITORY}:${HEAD_SHA}"
+          echo "image_ref=$IMAGE_REF" >>"$GITHUB_OUTPUT"
+
+      - name: Verify published image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REF"
+
+      - name: Trigger environment webhook
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.image_ref }}
+          WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          ENVIRONMENT: ${{ matrix.environment }}
+          BRANCH: ${{ matrix.branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK_URL:-}" ]; then
+            echo "Webhook URL secret '${{ matrix.webhook_secret }}' is missing." >&2
+            exit 1
+          fi
+          cat <<EOF >payload.json
+{
+  "environment": "${ENVIRONMENT}",
+  "branch": "${BRANCH}",
+  "image": "${IMAGE_REF}",
+  "sha": "${HEAD_SHA}"
+}
+EOF
+          curl -fsSL -X POST -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK_URL"
