@@ -1,9 +1,5 @@
 name: FunPot Core CI
 
-defaults:
-  run:
-    shell: bash
-
 on:
   push:
     branches: ["main", "dev", "feature/**"]
@@ -13,6 +9,10 @@ on:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   # Базовая проверка — всегда
