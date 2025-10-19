@@ -1,0 +1,115 @@
+name: FunPot Core CD
+
+on:
+  push:
+    branches: ["main", "dev"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ${{ secrets.REGISTRY_IMAGE }}
+
+jobs:
+  publish-and-deploy:
+    name: Deploy to ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    container:
+      image: docker.gitea.com/runner-images:ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: development
+            branch: dev
+            image_tags: "dev"
+            webhook_secret: DEV_DEPLOY_WEBHOOK_URL
+          - environment: production
+            branch: main
+            image_tags: "prod latest"
+            webhook_secret: PROD_DEPLOY_WEBHOOK_URL
+    if: startsWith(github.ref, 'refs/heads/') && github.ref_name == matrix.branch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate registry configuration
+        shell: bash
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          if [ -z "${IMAGE_NAME:-}" ]; then
+            missing+=("REGISTRY_IMAGE")
+          fi
+          if [ -z "${REGISTRY_USERNAME:-}" ]; then
+            missing+=("REGISTRY_USERNAME")
+          fi
+          if [ -z "${REGISTRY_PASSWORD:-}" ]; then
+            missing+=("REGISTRY_PASSWORD")
+          fi
+          if [ ${#missing[@]} -ne 0 ]; then
+            printf 'Missing required secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Log in to container registry
+        shell: bash
+        env:
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REGISTRY_URL:-}" ]; then
+            echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+          else
+            echo "$REGISTRY_PASSWORD" | docker login --username "$REGISTRY_USERNAME" --password-stdin
+          fi
+
+      - name: Build and push image
+        id: publish
+        shell: bash
+        env:
+          EXTRA_TAGS: ${{ matrix.image_tags }}
+        run: |
+          set -euo pipefail
+          image_name="${IMAGE_NAME}"
+          sha_tag="$image_name:${GITHUB_SHA}"
+          mapfile -t tags < <(printf '%s\n' "$sha_tag")
+          if [ -n "${EXTRA_TAGS:-}" ]; then
+            for tag in $EXTRA_TAGS; do
+              tags+=("$image_name:$tag")
+            done
+          fi
+          build_args=()
+          for tag in "${tags[@]}"; do
+            build_args+=("-t" "$tag")
+          done
+          docker build "${build_args[@]}" .
+          for tag in "${tags[@]}"; do
+            docker push "$tag"
+          done
+          printf 'image=%s\n' "$sha_tag" >> "$GITHUB_OUTPUT"
+          printf 'tags=%s\n' "${tags[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger deployment webhook
+        shell: bash
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          WEBHOOK_SECRET_NAME: ${{ matrix.webhook_secret }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          ALL_TAGS: ${{ steps.publish.outputs.tags }}
+          TARGET_ENV: ${{ matrix.environment }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_WEBHOOK_URL:-}" ]; then
+            printf 'Secret %s is not configured.\n' "$WEBHOOK_SECRET_NAME" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$DEPLOY_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "{\"image\":\"$IMAGE\",\"environment\":\"$TARGET_ENV\",\"git_sha\":\"${GITHUB_SHA}\",\"tags\":\"$ALL_TAGS\"}"
