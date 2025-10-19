@@ -98,7 +98,7 @@ approximate sequencing, and validation criteria.
 ### Operational Automation
 - [x] Ship CD workflow that publishes per-branch images and triggers webhook-based
   deploys for `dev` and `main` environments.
-- [ ] Add automated post-deployment smoke tests for webhook-driven rollouts.
+- [x] Add automated post-deployment smoke tests for webhook-driven rollouts.
 
 ## Cross-Cutting Workstreams
 - Security reviews, secrets rotation, and compliance updates each milestone.
