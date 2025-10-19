@@ -30,9 +30,15 @@ jobs:
           - environment: development
             branch: dev
             webhook_secret: DEV_DEPLOY_WEBHOOK_URL
+            healthcheck_secret: DEV_DEPLOY_HEALTHCHECK_URL
+            healthcheck_timeout: 240
+            healthcheck_interval: 5
           - environment: production
             branch: main
             webhook_secret: PROD_DEPLOY_WEBHOOK_URL
+            healthcheck_secret: PROD_DEPLOY_HEALTHCHECK_URL
+            healthcheck_timeout: 420
+            healthcheck_interval: 10
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
@@ -100,3 +106,39 @@ jobs:
 }
 EOF
           curl -fsSL -X POST -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK_URL"
+
+      - name: Resolve healthcheck target
+        id: healthcheck
+        env:
+          HEALTHCHECK_URL: ${{ secrets[matrix.healthcheck_secret] }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HEALTHCHECK_URL:-}" ]; then
+            echo "url=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "url=$HEALTHCHECK_URL" >>"$GITHUB_OUTPUT"
+
+      - name: Wait for deployment healthcheck
+        if: ${{ steps.healthcheck.outputs.url != '' }}
+        env:
+          HEALTHCHECK_URL: ${{ steps.healthcheck.outputs.url }}
+          TIMEOUT_SECONDS: ${{ matrix.healthcheck_timeout }}
+          INTERVAL_SECONDS: ${{ matrix.healthcheck_interval }}
+        run: |
+          set -euo pipefail
+          : "${TIMEOUT_SECONDS:=180}"
+          : "${INTERVAL_SECONDS:=5}"
+          attempt=1
+          max_attempts=$(( (TIMEOUT_SECONDS + INTERVAL_SECONDS - 1) / INTERVAL_SECONDS ))
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if curl -fsSL "$HEALTHCHECK_URL" >/dev/null; then
+              echo "Deployment is healthy at attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt/${max_attempts}: service not ready yet"
+            sleep "$INTERVAL_SECONDS"
+            attempt=$((attempt + 1))
+          done
+          echo "Deployment did not become healthy before timeout (${TIMEOUT_SECONDS}s)." >&2
+          exit 1
