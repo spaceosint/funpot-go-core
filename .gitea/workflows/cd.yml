@@ -1,5 +1,9 @@
 name: FunPot Core CD
 
+defaults:
+  run:
+    shell: bash
+
 on:
   workflow_run:
     workflows: ["FunPot Core CI"]
