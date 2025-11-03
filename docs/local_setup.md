@@ -73,15 +73,19 @@ modules, extend this guide with database and queue dependencies.
 
 ## Continuous Delivery
 The repository ships with an automated CD workflow defined in
-`.gitea/workflows/cd.yml`. The pipeline runs on pushes to `dev` and `main`, as
-well as manual `workflow_dispatch` invocations, and performs the following:
+`.gitea/workflows/cd.yml`. The pipeline listens for successful runs of the
+"FunPot Core CI" workflow on pushes to `dev` and `main`, and performs the
+following for each environment:
 
-1. Checks out the repository and installs the Go toolchain defined in `go.mod`.
-2. Executes `go test ./...` to ensure the commit is healthy.
-3. Builds a Linux `amd64` binary at `dist/funpot-core`.
-4. Publishes the binary as a workflow artifact named `funpot-core-<environment>-<sha>` so it can be downloaded for manual deployment.
-5. Calls an HTTP webhook to trigger the deployment in the corresponding
+1. Checks out the commit that produced the passing CI build.
+2. Resolves the container image pushed by the CI pipeline using the configured
+   registry secrets.
+3. Pulls the image to verify that it is available to downstream infrastructure.
+4. Calls an HTTP webhook to trigger the deployment in the corresponding
    environment without relying on SSH access.
+5. Polls the environment-specific healthcheck URL to confirm that the
+   application is serving `/readyz` successfully before marking the job as
+   finished.
 
 ### Required secrets
 Configure the following repository secrets before enabling the workflow:
@@ -89,6 +93,11 @@ Configure the following repository secrets before enabling the workflow:
 - `DEV_DEPLOY_WEBHOOK_URL` – HTTPS endpoint that accepts a POST request to
   deploy the dev environment.
 - `PROD_DEPLOY_WEBHOOK_URL` – HTTPS endpoint for the production deployment.
+- `DEV_DEPLOY_HEALTHCHECK_URL` – HTTPS address (e.g. `https://dev.funpot.live/readyz`)
+  that returns `200` once the dev environment is ready. Used to confirm the
+  deployment booted correctly.
+- `PROD_DEPLOY_HEALTHCHECK_URL` – Optional HTTPS address for the production
+  readiness probe. Leave blank to skip the post-deploy health poll.
 
 Each webhook receives a JSON payload with the target environment label and Git
 SHA. Use those fields to orchestrate the rollout or kick off your own build
