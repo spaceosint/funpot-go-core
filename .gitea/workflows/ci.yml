@@ -15,33 +15,39 @@ defaults:
     shell: bash
 
 jobs:
-  # Базовая проверка — всегда
   build:
-    outputs:
-      image_ref: ${{ steps.publish-image.outputs.image_ref }}
+    name: Build & Publish
     runs-on: ubuntu-latest
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
+    outputs:
+      image_ref: ${{ steps.publish-image.outputs.image_ref }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
           cache: true
+
       - name: gofmt
         run: |
           out=$(gofmt -l .); if [ -n "$out" ]; then echo "$out" >&2; exit 1; fi
+
       - name: tidy (no diff)
         run: go mod tidy && git diff --exit-code -- go.mod go.sum
+
       - name: vet
         run: go vet ./...
+
       - name: test
         run: go test ./...
-      - name: docker build
+
+      - name: Docker build (local tag)
         run: docker build -t funpot-core:ci .
+
       - name: Log in to container registry
         if: ${{ github.event_name != 'pull_request' && secrets.REGISTRY_URL != '' && secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '' }}
-        shell: bash
         env:
           REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
@@ -49,40 +55,72 @@ jobs:
         run: |
           set -euo pipefail
           echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
-      
-      - name: Publish container image
+
+      - name: Publish container image (SHA + floating tag)
         id: publish-image
         if: ${{ github.event_name != 'pull_request' && secrets.REGISTRY_URL != '' && secrets.REGISTRY_REPOSITORY != '' }}
-        shell: bash
         env:
-          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
-          REGISTRY_REPOSITORY: ${{ secrets.REGISTRY_REPOSITORY }}
+          REGISTRY_URL: ${{ secrets.REGISTRY_URL }}              # напр.: git.funwan.live
+          REGISTRY_REPOSITORY: ${{ secrets.REGISTRY_REPOSITORY }} # напр.: stream/funpot-go-core
+          BRANCH_NAME: ${{ github.ref_name }}                    # dev/main
         run: |
           set -euo pipefail
-          IMAGE_REF="${REGISTRY_URL}/${REGISTRY_REPOSITORY}:${GITHUB_SHA}"
-          docker tag funpot-core:ci "$IMAGE_REF"
-          docker push "$IMAGE_REF"
-          echo "image_ref=$IMAGE_REF" >>"$GITHUB_OUTPUT"
+          IMAGE="${REGISTRY_URL}/${REGISTRY_REPOSITORY}"
+          SHA="${GITHUB_SHA}"
 
-  # Полный smoke-тест — только для push/ручного запуска из ЭТОГО репо
+          # Пушим неизменяемый тег по SHA
+          docker tag funpot-core:ci "${IMAGE}:${SHA}"
+          docker push "${IMAGE}:${SHA}"
+
+          # Определяем "скользящий" тег по ветке
+          FLOAT_TAG=""
+          if [ "$BRANCH_NAME" = "main" ]; then
+            FLOAT_TAG="prod"
+          elif [ "$BRANCH_NAME" = "dev" ]; then
+            FLOAT_TAG="dev"
+          fi
+
+          # Пушим dev/prod, если нужно
+          if [ -n "$FLOAT_TAG" ]; then
+            docker tag funpot-core:ci "${IMAGE}:${FLOAT_TAG}"
+            docker push "${IMAGE}:${FLOAT_TAG}"
+          fi
+
+          # Вернём output с SHA-тегом
+          echo "image_ref=${IMAGE}:${SHA}" >>"$GITHUB_OUTPUT"
+
   smoke:
+    name: Smoke Test
     needs: build
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'pull_request' }}   # PR форков пропускаем
+    if: ${{ github.event_name != 'pull_request' }}
     container:
       image: docker.gitea.com/runner-images:ubuntu-latest
     env:
       FUNPOT_ENV: "ci"
       FUNPOT_SERVER_ADDRESS: ":8080"
       FUNPOT_AUTH_TELEGRAM_BOT_TOKEN: ${{ secrets.FUNPOT_AUTH_TELEGRAM_BOT_TOKEN }}
+      REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+      IMAGE_REF: ${{ needs.build.outputs.image_ref }}
     steps:
-      - name: Ensure secret exists
+      - name: Ensure secrets exist
         run: |
-          if [ -z "${FUNPOT_AUTH_TELEGRAM_BOT_TOKEN:-}" ]; then
-            echo "Secret FUNPOT_AUTH_TELEGRAM_BOT_TOKEN is missing." >&2; exit 1
-          fi
+          set -euo pipefail
+          for v in FUNPOT_AUTH_TELEGRAM_BOT_TOKEN REGISTRY_URL REGISTRY_USERNAME REGISTRY_PASSWORD IMAGE_REF; do
+            test -n "${!v:-}" || { echo "Missing $v" >&2; exit 1; }
+          done
+
+      - name: Log in to container registry
+        run: |
+          set -euo pipefail
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Pull test image
+        run: docker pull "$IMAGE_REF"
+
       - name: Smoke test container (distroless safe)
-        shell: bash
         run: |
           set -euo pipefail
           cid=$(docker run -d \
@@ -90,10 +128,10 @@ jobs:
             -e FUNPOT_SERVER_ADDRESS="$FUNPOT_SERVER_ADDRESS" \
             -e FUNPOT_AUTH_TELEGRAM_BOT_TOKEN="$FUNPOT_AUTH_TELEGRAM_BOT_TOKEN" \
             --name funpot-ci-test \
-            funpot-core:ci)
+            "$IMAGE_REF")
           cleanup(){ docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          for i in {1..20}; do
+          for i in $(seq 1 20); do
             docker ps --format '{{.Names}}' | grep -qx funpot-ci-test || { echo "Container exited early"; exit 1; }
             if docker run --rm --network "container:$cid" curlimages/curl:8.9.0 -sf "http://127.0.0.1:8080/healthz" >/dev/null; then break; fi
             sleep 2
