@@ -30,9 +30,36 @@ FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
 FUNPOT_AUTH_JWT_SECRET=dev-secret
 FUNPOT_AUTH_JWT_TTL=15m
 FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
+FUNPOT_DATABASE_DSN=postgres://funpot:funpot@localhost:5432/funpot_core?sslmode=disable
+FUNPOT_DATABASE_MAX_OPEN_CONNS=10
+FUNPOT_DATABASE_MAX_IDLE_CONNS=5
+FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
+FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 ```
 
 Update this table whenever you introduce a new configuration surface.
+
+### Database
+
+Milestone M1 introduces PostgreSQL persistence for the `users` module. For
+local development you can run Postgres via Docker:
+
+```bash
+docker run --rm -p 5432:5432 \
+  -e POSTGRES_DB=funpot_core \
+  -e POSTGRES_USER=funpot \
+  -e POSTGRES_PASSWORD=funpot \
+  postgres:16
+```
+
+Once the container is running, export the DSN shown above or update `.env` to
+match your credentials. Apply database migrations before starting the server:
+
+```bash
+go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
+  -path migrations \
+  -database "$FUNPOT_DATABASE_DSN" up
+```
 
 ## Running the Server
 ```bash
@@ -54,6 +81,11 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
 - `GET /api/config` – exposes seeded feature flags for the authenticated user.
+
+When `FUNPOT_DATABASE_DSN` is unset the server falls back to the in-memory
+repository for user profiles. This is useful for quick smoke tests but bypasses
+database persistence; prefer configuring PostgreSQL locally to exercise the
+full stack.
 
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is

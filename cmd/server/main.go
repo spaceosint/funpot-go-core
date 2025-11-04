@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/users"
+	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
 
@@ -49,7 +51,34 @@ func main() {
 	}
 	defer telemetry.FlushSentry(2 * time.Second)
 
-	userRepo := users.NewInMemoryRepository()
+	var (
+		db       *sql.DB
+		userRepo users.Repository
+	)
+
+	if cfg.Database.DSN != "" {
+		db, err = dbpkg.OpenPostgres(dbpkg.PostgresSettings{
+			DSN:             cfg.Database.DSN,
+			MaxOpenConns:    cfg.Database.MaxOpenConns,
+			MaxIdleConns:    cfg.Database.MaxIdleConns,
+			ConnMaxIdleTime: cfg.Database.ConnMaxIdleTime,
+			ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		})
+		if err != nil {
+			logger.Fatal("failed to connect to postgres", zap.Error(err))
+		}
+		defer func() {
+			if err := db.Close(); err != nil {
+				logger.Error("failed to close database", zap.Error(err))
+			}
+		}()
+
+		userRepo = users.NewPostgresRepository(db)
+	} else {
+		logger.Warn("FUNPOT_DATABASE_DSN not provided; using in-memory users repository")
+		userRepo = users.NewInMemoryRepository()
+	}
+
 	userService := users.NewService(userRepo)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
