@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.23.3-bookworm AS build
+FROM golang:1.23.0-bookworm AS build
 WORKDIR /app
 
 # Leverage caching by copying go.mod and go.sum first
