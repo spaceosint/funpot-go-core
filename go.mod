@@ -1,6 +1,6 @@
 module github.com/funpot/funpot-go-core
 
-go 1.23.0
+go 1.22.12
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
