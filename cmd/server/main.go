@@ -12,6 +12,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/database"
 	"github.com/funpot/funpot-go-core/internal/users"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
@@ -49,7 +50,32 @@ func main() {
 	}
 	defer telemetry.FlushSentry(2 * time.Second)
 
-	userRepo := users.NewInMemoryRepository()
+	readyFn := func() bool { return true }
+
+	var userRepo users.Repository
+	if cfg.Database.Enabled {
+		pool, err := database.OpenPostgresPool(ctx, cfg.Database)
+		if err != nil {
+			logger.Fatal("failed to connect to postgres", zap.Error(err))
+		}
+		defer pool.Close()
+
+		repo, err := users.NewPostgresRepository(pool)
+		if err != nil {
+			logger.Fatal("failed to create postgres users repository", zap.Error(err))
+		}
+		userRepo = repo
+		readyFn = func() bool {
+			healthCtx, cancel := context.WithTimeout(context.Background(), cfg.Database.HealthcheckPing)
+			defer cancel()
+			return pool.Ping(healthCtx) == nil
+		}
+		logger.Info("postgres database enabled")
+	} else {
+		userRepo = users.NewInMemoryRepository()
+		logger.Warn("database disabled, using in-memory user repository")
+	}
+
 	userService := users.NewService(userRepo)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
@@ -57,7 +83,7 @@ func main() {
 		logger.Fatal("failed to create auth service", zap.Error(err))
 	}
 
-	handler := app.NewHandler(logger, func() bool { return true }, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
+	handler := app.NewHandler(logger, readyFn, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {
