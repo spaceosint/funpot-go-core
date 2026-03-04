@@ -27,9 +27,8 @@ approximate sequencing, and validation criteria.
 ### M1 – Authentication & User Profiles
 - [x] Verify Telegram `initData`, issue short-lived JWTs, and implement auth
   middleware shared by REST/WSS.
-- [ ] Create `users` module (profile CRUD, referral code generation) with DB
-  migrations. *(In-memory repository stubbed; persistent storage and migrations
-  remain outstanding.)*
+- [x] Create `users` module (profile CRUD, referral code generation) with DB
+  migrations.
 - [x] Seed configuration flags and expose `/api/me`, `/api/config`.
 - [x] Deliver acceptance tests for valid/invalid initData flows.
 - Exit Criteria: Mini App can authenticate, fetch own profile, and retrieve
