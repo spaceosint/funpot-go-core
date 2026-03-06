@@ -20,6 +20,7 @@ type Config struct {
 	Auth        AuthConfig
 	Database    DatabaseConfig
 	Features    FeatureConfig
+	Database    DatabaseConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -74,6 +75,15 @@ type JWTConfig struct {
 // FeatureConfig describes dynamic feature flag exposure.
 type FeatureConfig struct {
 	Flags map[string]bool
+}
+
+// DatabaseConfig defines connectivity settings for PostgreSQL.
+type DatabaseConfig struct {
+	DSN             string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxIdleTime time.Duration
+	ConnMaxLifetime time.Duration
 }
 
 // Load reads configuration from the environment, applying defaults and .env overrides.
@@ -145,6 +155,26 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	maxOpenConns, err := getInt("FUNPOT_DATABASE_MAX_OPEN_CONNS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
+	maxIdleConns, err := getInt("FUNPOT_DATABASE_MAX_IDLE_CONNS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+
+	connMaxIdleTime, err := getDuration("FUNPOT_DATABASE_CONN_MAX_IDLE_TIME", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
+	connMaxLifetime, err := getDuration("FUNPOT_DATABASE_CONN_MAX_LIFETIME", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Environment: getString("FUNPOT_ENV", "development"),
 		Server: ServerConfig{
@@ -183,6 +213,13 @@ func Load() (Config, error) {
 		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
+		},
+		Database: DatabaseConfig{
+			DSN:             os.Getenv("FUNPOT_DATABASE_DSN"),
+			MaxOpenConns:    maxOpenConns,
+			MaxIdleConns:    maxIdleConns,
+			ConnMaxIdleTime: connMaxIdleTime,
+			ConnMaxLifetime: connMaxLifetime,
 		},
 	}
 
@@ -237,13 +274,13 @@ func getFloat(key string, fallback float64) (float64, error) {
 	return fallback, nil
 }
 
-func getInt32(key string, fallback int32) (int32, error) {
+func getInt(key string, fallback int) (int, error) {
 	if value := os.Getenv(key); value != "" {
-		parsed, err := strconv.ParseInt(value, 10, 32)
+		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return 0, fmt.Errorf("invalid int32 for %s: %w", key, err)
+			return 0, fmt.Errorf("invalid int for %s: %w", key, err)
 		}
-		return int32(parsed), nil
+		return parsed, nil
 	}
 	return fallback, nil
 }

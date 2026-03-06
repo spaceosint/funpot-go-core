@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.24.3 AS build
-WORKDIR /src
+FROM golang:1.23.0-bookworm AS build
+WORKDIR /app
 
 # (1) deps layer cache: меняется редко → отлично кешируется
 COPY go.mod go.sum ./

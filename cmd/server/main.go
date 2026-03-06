@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/database"
 	"github.com/funpot/funpot-go-core/internal/users"
+	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
 
@@ -50,30 +52,32 @@ func main() {
 	}
 	defer telemetry.FlushSentry(2 * time.Second)
 
-	readyFn := func() bool { return true }
+	var (
+		db       *sql.DB
+		userRepo users.Repository
+	)
 
-	var userRepo users.Repository
-	if cfg.Database.Enabled {
-		pool, err := database.OpenPostgresPool(ctx, cfg.Database)
+	if cfg.Database.DSN != "" {
+		db, err = dbpkg.OpenPostgres(dbpkg.PostgresSettings{
+			DSN:             cfg.Database.DSN,
+			MaxOpenConns:    cfg.Database.MaxOpenConns,
+			MaxIdleConns:    cfg.Database.MaxIdleConns,
+			ConnMaxIdleTime: cfg.Database.ConnMaxIdleTime,
+			ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		})
 		if err != nil {
 			logger.Fatal("failed to connect to postgres", zap.Error(err))
 		}
-		defer pool.Close()
+		defer func() {
+			if err := db.Close(); err != nil {
+				logger.Error("failed to close database", zap.Error(err))
+			}
+		}()
 
-		repo, err := users.NewPostgresRepository(pool)
-		if err != nil {
-			logger.Fatal("failed to create postgres users repository", zap.Error(err))
-		}
-		userRepo = repo
-		readyFn = func() bool {
-			healthCtx, cancel := context.WithTimeout(context.Background(), cfg.Database.HealthcheckPing)
-			defer cancel()
-			return pool.Ping(healthCtx) == nil
-		}
-		logger.Info("postgres database enabled")
+		userRepo = users.NewPostgresRepository(db)
 	} else {
+		logger.Warn("FUNPOT_DATABASE_DSN not provided; using in-memory users repository")
 		userRepo = users.NewInMemoryRepository()
-		logger.Warn("database disabled, using in-memory user repository")
 	}
 
 	userService := users.NewService(userRepo)

@@ -2,35 +2,27 @@ package users
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"fmt"
 )
 
-// PostgresRepository stores user profiles in PostgreSQL.
+// PostgresRepository persists user profiles in PostgreSQL.
 type PostgresRepository struct {
-	pool *pgxpool.Pool
+	db *sql.DB
 }
 
-// NewPostgresRepository constructs a PostgreSQL-backed user repository.
-func NewPostgresRepository(pool *pgxpool.Pool) (*PostgresRepository, error) {
-	if pool == nil {
-		return nil, errors.New("postgres pool is required")
-	}
-	return &PostgresRepository{pool: pool}, nil
+// NewPostgresRepository constructs a repository backed by PostgreSQL.
+func NewPostgresRepository(db *sql.DB) *PostgresRepository {
+	return &PostgresRepository{db: db}
 }
 
-// GetByTelegramID returns a profile by Telegram identifier.
+// GetByTelegramID returns a profile identified by the Telegram ID.
 func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int64) (Profile, error) {
-	const query = `
-		SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at
-		FROM users
-		WHERE telegram_id = $1
-	`
+	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at FROM users WHERE telegram_id = $1`
 
 	var profile Profile
-	err := r.pool.QueryRow(ctx, query, telegramID).Scan(
+	err := r.db.QueryRowContext(ctx, query, telegramID).Scan(
 		&profile.ID,
 		&profile.TelegramID,
 		&profile.Username,
@@ -42,23 +34,22 @@ func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int
 		&profile.UpdatedAt,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return Profile{}, ErrNotFound
 		}
-		return Profile{}, err
+		return Profile{}, fmt.Errorf("select user by telegram id: %w", err)
 	}
 	return profile, nil
 }
 
-// Create stores a new profile.
+// Create inserts a new profile. Existing records are left untouched.
 func (r *PostgresRepository) Create(ctx context.Context, profile Profile) error {
 	const query = `
-		INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (telegram_id) DO NOTHING
-	`
+INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (telegram_id) DO NOTHING`
 
-	_, err := r.pool.Exec(ctx, query,
+	if _, err := r.db.ExecContext(ctx, query,
 		profile.ID,
 		profile.TelegramID,
 		profile.Username,
