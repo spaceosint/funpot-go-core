@@ -59,8 +59,11 @@ ON CONFLICT (telegram_id) DO NOTHING`
 		profile.ReferralCode,
 		profile.CreatedAt,
 		profile.UpdatedAt,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Update persists an existing profile.
@@ -76,7 +79,7 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 		WHERE telegram_id = $1
 	`
 
-	result, err := r.pool.Exec(ctx, query,
+	result, err := r.db.ExecContext(ctx, query,
 		profile.TelegramID,
 		profile.Username,
 		profile.FirstName,
@@ -88,7 +91,11 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
