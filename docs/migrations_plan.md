@@ -1,6 +1,9 @@
 # Migration Plan
 
 ## v1 (Initial Release)
+> Current status: migration scaffolding added in `migrations/0001_users.up.sql`
+> and `migrations/0001_users.down.sql` for the `users` domain.
+
 1. Create core tables: `users`, `wallet_accounts`, `wallet_ledger`, `payments`, `streamers`, `games`, `events`, `votes`, `media_clips`, `prompts`, `config`, `referrals`, `idempotency`.
 2. Seed configuration values: `minViewers=100`, `starsRate`, `limits.votePerMin`, feature flags (`paymentsEnabled`, `referralsEnabled`, `mediaEnabled`, `adminEnabled`).
 3. Create indexes and unique constraints specified in `docs/erd.md`.
@@ -24,4 +27,3 @@
 - All migrations executed via `golang-migrate` with versioned files (`migrations/0001_init.sql`, etc.).
 - Use transactional DDL where supported; wrap partition changes in maintenance windows.
 - For partition rollout, deploy application support before data migration to ensure compatibility.
-

@@ -7,6 +7,7 @@ instrumentation scaffolding.
 ## Prerequisites
 - Go 1.22+
 - Make sure ports `8080` (HTTP) are available on your machine.
+- PostgreSQL 15+ (or compatible managed PostgreSQL).
 
 ## Environment Variables
 Configuration is provided via environment variables. For local development you
@@ -29,6 +30,12 @@ FUNPOT_SENTRY_DEBUG=false
 FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
 FUNPOT_AUTH_JWT_SECRET=dev-secret
 FUNPOT_AUTH_JWT_TTL=15m
+FUNPOT_DATABASE_ENABLED=true
+FUNPOT_DATABASE_URL=postgres://funpot:funpot@localhost:5432/funpot?sslmode=disable
+FUNPOT_DATABASE_MAX_OPEN_CONNS=10
+FUNPOT_DATABASE_MIN_OPEN_CONNS=1
+FUNPOT_DATABASE_CONNECT_TIMEOUT=5s
+FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT=1s
 FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
 FUNPOT_DATABASE_DSN=postgres://funpot:funpot@localhost:5432/funpot_core?sslmode=disable
 FUNPOT_DATABASE_MAX_OPEN_CONNS=10
@@ -62,6 +69,25 @@ go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
 ```
 
 ## Running the Server
+Run PostgreSQL locally (example with Docker):
+
+```bash
+docker run --name funpot-postgres \
+  -e POSTGRES_USER=funpot \
+  -e POSTGRES_PASSWORD=funpot \
+  -e POSTGRES_DB=funpot \
+  -p 5432:5432 \
+  -d postgres:16
+```
+
+Apply migrations before starting the API:
+
+```bash
+migrate -path ./migrations -database "$FUNPOT_DATABASE_URL" up
+```
+
+Then start the service:
+
 ```bash
 go run ./cmd/server
 ```
@@ -76,7 +102,7 @@ docker run --rm -p 8080:8080 --env-file .env funpot-core:dev
 
 On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
-- `GET /readyz` – readiness probe (currently always ready).
+- `GET /readyz` – readiness probe (`ready` by default; DB connectivity check when PostgreSQL mode is enabled).
 - `GET /metrics` – Prometheus metrics when enabled, `204 No Content` otherwise.
 - `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
@@ -89,7 +115,8 @@ full stack.
 
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is
-provided.
+provided. When `FUNPOT_DATABASE_ENABLED=true`, startup validates PostgreSQL
+connectivity and `/readyz` depends on successful DB ping checks.
 
 ## Observability Notes
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.
@@ -100,8 +127,8 @@ provided.
   use a sandbox bot token from BotFather. The JWT secret defaults to
   `dev-secret` but should be overridden in non-development environments.
 
-As subsequent milestones introduce persistence, authentication, and domain
-modules, extend this guide with database and queue dependencies.
+Set `FUNPOT_DATABASE_ENABLED=false` to run with in-memory users persistence for
+quick smoke testing.
 
 ## Continuous Delivery
 The repository ships with an automated CD workflow defined in

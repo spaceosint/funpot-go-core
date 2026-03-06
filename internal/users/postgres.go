@@ -59,40 +59,36 @@ ON CONFLICT (telegram_id) DO NOTHING`
 		profile.ReferralCode,
 		profile.CreatedAt,
 		profile.UpdatedAt,
-	); err != nil {
-		return fmt.Errorf("insert user: %w", err)
-	}
-	return nil
+	)
+	return err
 }
 
-// Update persists profile changes for an existing user.
+// Update persists an existing profile.
 func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error {
 	const query = `
-UPDATE users
-SET username = $1,
-    first_name = $2,
-    last_name = $3,
-    language_code = $4,
-    updated_at = $5
-WHERE telegram_id = $6`
+		UPDATE users
+		SET username = $2,
+		    first_name = $3,
+		    last_name = $4,
+		    language_code = $5,
+		    referral_code = $6,
+		    updated_at = $7
+		WHERE telegram_id = $1
+	`
 
-	res, err := r.db.ExecContext(ctx, query,
+	result, err := r.pool.Exec(ctx, query,
+		profile.TelegramID,
 		profile.Username,
 		profile.FirstName,
 		profile.LastName,
 		profile.LanguageCode,
+		profile.ReferralCode,
 		profile.UpdatedAt,
-		profile.TelegramID,
 	)
 	if err != nil {
-		return fmt.Errorf("update user: %w", err)
+		return err
 	}
-
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("update user rows affected: %w", err)
-	}
-	if affected == 0 {
+	if result.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	return nil

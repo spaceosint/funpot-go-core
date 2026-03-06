@@ -13,6 +13,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/database"
 	"github.com/funpot/funpot-go-core/internal/users"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
@@ -86,7 +87,7 @@ func main() {
 		logger.Fatal("failed to create auth service", zap.Error(err))
 	}
 
-	handler := app.NewHandler(logger, func() bool { return true }, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
+	handler := app.NewHandler(logger, readyFn, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {

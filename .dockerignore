@@ -1,0 +1,15 @@
+.git
+.gitignore
+.gitea
+.github
+
+**/*_test.go
+**/*.md
+**/*.log
+
+bin/
+dist/
+tmp/
+node_modules/
+
+.DS_Store

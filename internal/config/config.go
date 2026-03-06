@@ -18,6 +18,7 @@ type Config struct {
 	Telemetry   TelemetryConfig
 	Sentry      SentryConfig
 	Auth        AuthConfig
+	Database    DatabaseConfig
 	Features    FeatureConfig
 	Database    DatabaseConfig
 }
@@ -53,6 +54,16 @@ type SentryConfig struct {
 type AuthConfig struct {
 	BotToken string
 	JWT      JWTConfig
+}
+
+// DatabaseConfig controls PostgreSQL connectivity.
+type DatabaseConfig struct {
+	Enabled         bool
+	URL             string
+	MaxOpenConns    int32
+	MinOpenConns    int32
+	ConnectTimeout  time.Duration
+	HealthcheckPing time.Duration
 }
 
 // JWTConfig holds settings for token issuance.
@@ -114,6 +125,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	databaseEnabled, err := getBool("FUNPOT_DATABASE_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	maxOpenConns, err := getInt32("FUNPOT_DATABASE_MAX_OPEN_CONNS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
+	minOpenConns, err := getInt32("FUNPOT_DATABASE_MIN_OPEN_CONNS", 1)
+	if err != nil {
+		return Config{}, err
+	}
+
+	connectTimeout, err := getDuration("FUNPOT_DATABASE_CONNECT_TIMEOUT", 5*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	healthcheckPing, err := getDuration("FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT", 1*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
 	if err != nil {
 		return Config{}, err
@@ -167,6 +203,14 @@ func Load() (Config, error) {
 				TTL:    jwtTTL,
 			},
 		},
+		Database: DatabaseConfig{
+			Enabled:         databaseEnabled,
+			URL:             os.Getenv("FUNPOT_DATABASE_URL"),
+			MaxOpenConns:    maxOpenConns,
+			MinOpenConns:    minOpenConns,
+			ConnectTimeout:  connectTimeout,
+			HealthcheckPing: healthcheckPing,
+		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
 		},
@@ -177,6 +221,14 @@ func Load() (Config, error) {
 			ConnMaxIdleTime: connMaxIdleTime,
 			ConnMaxLifetime: connMaxLifetime,
 		},
+	}
+
+	if cfg.Database.Enabled && cfg.Database.URL == "" {
+		return Config{}, fmt.Errorf("FUNPOT_DATABASE_URL is required when FUNPOT_DATABASE_ENABLED=true")
+	}
+
+	if cfg.Database.MinOpenConns < 0 || cfg.Database.MaxOpenConns < 1 || cfg.Database.MinOpenConns > cfg.Database.MaxOpenConns {
+		return Config{}, fmt.Errorf("invalid database pool bounds: min=%d max=%d", cfg.Database.MinOpenConns, cfg.Database.MaxOpenConns)
 	}
 
 	return cfg, nil
