@@ -1,4 +1,4 @@
- # FunPot Go Core
+  # FunPot Go Core
 
 FunPot is a modular Go monolith powering the Telegram Mini App experience for interactive streamer games. This repository hosts the canonical architecture, contracts, and operational guides.
 
