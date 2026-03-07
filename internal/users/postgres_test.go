@@ -129,14 +129,15 @@ func TestPostgresRepository_Update(t *testing.T) {
 		UpdatedAt:    now,
 	}
 
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $1,\n    first_name = $2,\n    last_name = $3,\n    language_code = $4,\n    updated_at = $5\nWHERE telegram_id = $6")).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    updated_at = $7\nWHERE telegram_id = $1")).
 		WithArgs(
+			profile.TelegramID,
 			profile.Username,
 			profile.FirstName,
 			profile.LastName,
 			profile.LanguageCode,
+			profile.ReferralCode,
 			profile.UpdatedAt,
-			profile.TelegramID,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -160,8 +161,8 @@ func TestPostgresRepository_UpdateNotFound(t *testing.T) {
 	now := time.Now().UTC()
 	profile := Profile{TelegramID: 42, UpdatedAt: now}
 
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $1,\n    first_name = $2,\n    last_name = $3,\n    language_code = $4,\n    updated_at = $5\nWHERE telegram_id = $6")).
-		WithArgs("", "", "", "", profile.UpdatedAt, profile.TelegramID).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    updated_at = $7\nWHERE telegram_id = $1")).
+		WithArgs(profile.TelegramID, "", "", "", "", "", profile.UpdatedAt).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err = repo.Update(context.Background(), profile)

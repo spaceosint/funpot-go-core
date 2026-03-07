@@ -17,8 +17,8 @@ func OpenPostgresPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 
-	poolCfg.MaxConns = cfg.MaxOpenConns
-	poolCfg.MinConns = cfg.MinOpenConns
+	poolCfg.MaxConns = int32(cfg.MaxOpenConns)
+	poolCfg.MinConns = int32(cfg.MinOpenConns)
 	poolCfg.MaxConnIdleTime = 10 * time.Minute
 	poolCfg.HealthCheckPeriod = 30 * time.Second
 	poolCfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout

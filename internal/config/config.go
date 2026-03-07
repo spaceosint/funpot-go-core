@@ -20,7 +20,6 @@ type Config struct {
 	Auth        AuthConfig
 	Database    DatabaseConfig
 	Features    FeatureConfig
-	Database    DatabaseConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -59,9 +58,13 @@ type AuthConfig struct {
 // DatabaseConfig controls PostgreSQL connectivity.
 type DatabaseConfig struct {
 	Enabled         bool
+	DSN             string
 	URL             string
-	MaxOpenConns    int32
-	MinOpenConns    int32
+	MaxOpenConns    int
+	MinOpenConns    int
+	MaxIdleConns    int
+	ConnMaxIdleTime time.Duration
+	ConnMaxLifetime time.Duration
 	ConnectTimeout  time.Duration
 	HealthcheckPing time.Duration
 }
@@ -75,15 +78,6 @@ type JWTConfig struct {
 // FeatureConfig describes dynamic feature flag exposure.
 type FeatureConfig struct {
 	Flags map[string]bool
-}
-
-// DatabaseConfig defines connectivity settings for PostgreSQL.
-type DatabaseConfig struct {
-	DSN             string
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxIdleTime time.Duration
-	ConnMaxLifetime time.Duration
 }
 
 // Load reads configuration from the environment, applying defaults and .env overrides.
@@ -130,12 +124,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	maxOpenConns, err := getInt32("FUNPOT_DATABASE_MAX_OPEN_CONNS", 10)
+	maxOpenConns, err := getInt("FUNPOT_DATABASE_MAX_OPEN_CONNS", 10)
 	if err != nil {
 		return Config{}, err
 	}
 
-	minOpenConns, err := getInt32("FUNPOT_DATABASE_MIN_OPEN_CONNS", 1)
+	minOpenConns, err := getInt("FUNPOT_DATABASE_MIN_OPEN_CONNS", 1)
 	if err != nil {
 		return Config{}, err
 	}
@@ -151,11 +145,6 @@ func Load() (Config, error) {
 	}
 
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
-	if err != nil {
-		return Config{}, err
-	}
-
-	maxOpenConns, err := getInt("FUNPOT_DATABASE_MAX_OPEN_CONNS", 10)
 	if err != nil {
 		return Config{}, err
 	}
@@ -205,21 +194,18 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
+			DSN:             os.Getenv("FUNPOT_DATABASE_DSN"),
 			URL:             os.Getenv("FUNPOT_DATABASE_URL"),
 			MaxOpenConns:    maxOpenConns,
 			MinOpenConns:    minOpenConns,
+			MaxIdleConns:    maxIdleConns,
+			ConnMaxIdleTime: connMaxIdleTime,
+			ConnMaxLifetime: connMaxLifetime,
 			ConnectTimeout:  connectTimeout,
 			HealthcheckPing: healthcheckPing,
 		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
-		},
-		Database: DatabaseConfig{
-			DSN:             os.Getenv("FUNPOT_DATABASE_DSN"),
-			MaxOpenConns:    maxOpenConns,
-			MaxIdleConns:    maxIdleConns,
-			ConnMaxIdleTime: connMaxIdleTime,
-			ConnMaxLifetime: connMaxLifetime,
 		},
 	}
 
