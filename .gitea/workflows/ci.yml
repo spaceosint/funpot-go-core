@@ -26,22 +26,19 @@ defaults:
 env:
   DOCKER_BUILDKIT: "1"
   BUILDKIT_PROGRESS: plain
-  RUNNER_TOOL_CACHE: /toolcache
 
 jobs:
   build:
     name: Build & Publish
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-build
     timeout-minutes: 45
-
-    container:
-      image: docker.gitea.com/runner-images:ubuntu-latest
 
     outputs:
       image_ref: ${{ steps.meta.outputs.image_ref }}
       image_repo: ${{ steps.meta.outputs.image }}
       tags_json: ${{ steps.meta.outputs.tags_json }}
       branch_tag: ${{ steps.meta.outputs.branch_tag }}
+      build_date: ${{ steps.meta.outputs.build_date }}
 
     steps:
       - name: Checkout
@@ -62,8 +59,12 @@ jobs:
           echo "GITHUB_REF=${GITHUB_REF}"
           echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
           echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
+          echo "RUNNER_OS=${RUNNER_OS:-unknown}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
           go version
           docker version
+          docker buildx version || true
 
       - name: Verify formatting
         run: |
@@ -190,6 +191,7 @@ jobs:
 
           IMAGE="${{ steps.meta.outputs.image }}"
           SHA_IMAGE="${{ steps.meta.outputs.image_ref }}"
+
           echo "Inspecting remote SHA tag..."
           docker buildx imagetools inspect "$SHA_IMAGE"
 
@@ -215,12 +217,9 @@ jobs:
   smoke:
     name: Smoke Test
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-build
     timeout-minutes: 20
     if: ${{ github.event_name != 'pull_request' && needs.build.outputs.image_ref != '' }}
-
-    container:
-      image: docker.gitea.com/runner-images:ubuntu-latest
 
     env:
       IMAGE_REF: ${{ needs.build.outputs.image_ref }}
