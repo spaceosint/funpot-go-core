@@ -58,7 +58,6 @@ type AuthConfig struct {
 // DatabaseConfig controls PostgreSQL connectivity.
 type DatabaseConfig struct {
 	Enabled         bool
-	DSN             string
 	URL             string
 	MaxOpenConns    int
 	MinOpenConns    int
@@ -194,7 +193,6 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
-			DSN:             os.Getenv("FUNPOT_DATABASE_DSN"),
 			URL:             os.Getenv("FUNPOT_DATABASE_URL"),
 			MaxOpenConns:    maxOpenConns,
 			MinOpenConns:    minOpenConns,

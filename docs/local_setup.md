@@ -37,7 +37,6 @@ FUNPOT_DATABASE_MIN_OPEN_CONNS=1
 FUNPOT_DATABASE_CONNECT_TIMEOUT=5s
 FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT=1s
 FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
-FUNPOT_DATABASE_DSN=postgres://funpot:funpot@localhost:5432/funpot_core?sslmode=disable
 FUNPOT_DATABASE_MAX_OPEN_CONNS=10
 FUNPOT_DATABASE_MAX_IDLE_CONNS=5
 FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
@@ -59,13 +58,12 @@ docker run --rm -p 5432:5432 \
   postgres:16
 ```
 
-Once the container is running, export the DSN shown above or update `.env` to
-match your credentials. Apply database migrations before starting the server:
+Once the container is running, export `FUNPOT_DATABASE_URL` from the config example above (or update `.env`) to match your credentials. Apply database migrations before starting the server:
 
 ```bash
 go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
   -path migrations \
-  -database "$FUNPOT_DATABASE_DSN" up
+  -database "$FUNPOT_DATABASE_URL" up
 ```
 
 ## Running the Server
@@ -108,7 +106,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
 - `GET /api/config` – exposes seeded feature flags for the authenticated user.
 
-When `FUNPOT_DATABASE_DSN` is unset the server falls back to the in-memory
+When `FUNPOT_DATABASE_URL` is unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
 database persistence; prefer configuring PostgreSQL locally to exercise the
 full stack.
