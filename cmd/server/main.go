@@ -56,9 +56,9 @@ func main() {
 		userRepo users.Repository
 	)
 
-	if cfg.Database.DSN != "" {
+	if cfg.Database.DSN() != "" {
 		db, err = dbpkg.OpenPostgres(dbpkg.PostgresSettings{
-			DSN:             cfg.Database.DSN,
+			DSN:             cfg.Database.DSN(),
 			MaxOpenConns:    cfg.Database.MaxOpenConns,
 			MaxIdleConns:    cfg.Database.MaxIdleConns,
 			ConnMaxIdleTime: cfg.Database.ConnMaxIdleTime,
@@ -75,7 +75,7 @@ func main() {
 
 		userRepo = users.NewPostgresRepository(db)
 	} else {
-		logger.Warn("FUNPOT_DATABASE_DSN not provided; using in-memory users repository")
+		logger.Warn("database connection parameters not provided; using in-memory users repository")
 		userRepo = users.NewInMemoryRepository()
 	}
 

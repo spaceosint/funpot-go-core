@@ -62,7 +62,10 @@ jobs:
           echo "RUNNER_NAME=${RUNNER_NAME:-unknown}"
           echo "RUNNER_OS=${RUNNER_OS:-unknown}"
           echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
+          which node || true
+          node -v
           go version
+          git --version
           docker version
           docker buildx version || true
 
@@ -128,15 +131,6 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-          echo "Resolved image: $IMAGE"
-          echo "Resolved immutable tag: ${IMAGE}:${SHA}"
-          if [ -n "$BRANCH_TAG" ]; then
-            echo "Resolved rolling tag: ${IMAGE}:${BRANCH_TAG}"
-          else
-            echo "No rolling tag for branch: $BRANCH"
-          fi
-          echo "Build date: $BUILD_DATE"
-
       - name: Log in to container registry
         if: ${{ github.event_name != 'pull_request' && steps.meta.outputs.image_ref != '' && secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '' }}
         uses: docker/login-action@v3
@@ -175,13 +169,8 @@ jobs:
           SHA_IMAGE="${{ steps.meta.outputs.image_ref }}"
           ROLLING_IMAGE="${IMAGE}:${{ steps.meta.outputs.branch_tag }}"
 
-          echo "Pulling immutable image: $SHA_IMAGE"
           docker pull "$SHA_IMAGE"
-
-          echo "Tagging as rolling image: $ROLLING_IMAGE"
           docker tag "$SHA_IMAGE" "$ROLLING_IMAGE"
-
-          echo "Pushing rolling image: $ROLLING_IMAGE"
           docker push "$ROLLING_IMAGE"
 
       - name: Verify pushed tags
@@ -191,13 +180,10 @@ jobs:
 
           IMAGE="${{ steps.meta.outputs.image }}"
           SHA_IMAGE="${{ steps.meta.outputs.image_ref }}"
-
-          echo "Inspecting remote SHA tag..."
           docker buildx imagetools inspect "$SHA_IMAGE"
 
           if [ -n "${{ steps.meta.outputs.branch_tag }}" ]; then
             ROLLING_IMAGE="${IMAGE}:${{ steps.meta.outputs.branch_tag }}"
-            echo "Inspecting remote rolling tag..."
             docker buildx imagetools inspect "$ROLLING_IMAGE"
           fi
 
@@ -226,7 +212,6 @@ jobs:
       REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
       REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
       REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-
       FUNPOT_ENV: ci
       FUNPOT_SERVER_ADDRESS: :8080
       FUNPOT_AUTH_TELEGRAM_BOT_TOKEN: ${{ secrets.FUNPOT_AUTH_TELEGRAM_BOT_TOKEN }}

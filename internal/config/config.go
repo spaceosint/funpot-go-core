@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -58,8 +59,12 @@ type AuthConfig struct {
 // DatabaseConfig controls PostgreSQL connectivity.
 type DatabaseConfig struct {
 	Enabled         bool
-	DSN             string
-	URL             string
+	Host            string
+	Port            int
+	Name            string
+	User            string
+	Password        string
+	SSLMode         string
 	MaxOpenConns    int
 	MinOpenConns    int
 	MaxIdleConns    int
@@ -67,6 +72,26 @@ type DatabaseConfig struct {
 	ConnMaxLifetime time.Duration
 	ConnectTimeout  time.Duration
 	HealthcheckPing time.Duration
+}
+
+// DSN builds a PostgreSQL connection string from database fields.
+func (d DatabaseConfig) DSN() string {
+	if d.Host == "" || d.Port <= 0 || d.Name == "" || d.User == "" {
+		return ""
+	}
+
+	connURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(d.User, d.Password),
+		Host:   fmt.Sprintf("%s:%d", d.Host, d.Port),
+		Path:   d.Name,
+	}
+
+	q := connURL.Query()
+	q.Set("sslmode", d.SSLMode)
+	connURL.RawQuery = q.Encode()
+
+	return connURL.String()
 }
 
 // JWTConfig holds settings for token issuance.
@@ -164,6 +189,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	databasePort, err := getInt("FUNPOT_DATABASE_PORT", 5432)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Environment: getString("FUNPOT_ENV", "development"),
 		Server: ServerConfig{
@@ -194,8 +224,12 @@ func Load() (Config, error) {
 		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
-			DSN:             os.Getenv("FUNPOT_DATABASE_DSN"),
-			URL:             os.Getenv("FUNPOT_DATABASE_URL"),
+			Host:            os.Getenv("FUNPOT_DATABASE_HOST"),
+			Port:            databasePort,
+			Name:            os.Getenv("FUNPOT_DATABASE_NAME"),
+			User:            os.Getenv("FUNPOT_DATABASE_USER"),
+			Password:        os.Getenv("FUNPOT_DATABASE_PASSWORD"),
+			SSLMode:         getString("FUNPOT_DATABASE_SSLMODE", "disable"),
 			MaxOpenConns:    maxOpenConns,
 			MinOpenConns:    minOpenConns,
 			MaxIdleConns:    maxIdleConns,
@@ -209,8 +243,13 @@ func Load() (Config, error) {
 		},
 	}
 
-	if cfg.Database.Enabled && cfg.Database.URL == "" {
-		return Config{}, fmt.Errorf("FUNPOT_DATABASE_URL is required when FUNPOT_DATABASE_ENABLED=true")
+	if cfg.Database.Enabled {
+		if cfg.Database.Host == "" || cfg.Database.Name == "" || cfg.Database.User == "" {
+			return Config{}, fmt.Errorf("FUNPOT_DATABASE_HOST, FUNPOT_DATABASE_NAME and FUNPOT_DATABASE_USER are required when FUNPOT_DATABASE_ENABLED=true")
+		}
+		if cfg.Database.Port < 1 || cfg.Database.Port > 65535 {
+			return Config{}, fmt.Errorf("FUNPOT_DATABASE_PORT must be between 1 and 65535")
+		}
 	}
 
 	if cfg.Database.MinOpenConns < 0 || cfg.Database.MaxOpenConns < 1 || cfg.Database.MinOpenConns > cfg.Database.MaxOpenConns {

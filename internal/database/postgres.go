@@ -12,7 +12,7 @@ import (
 
 // OpenPostgresPool creates and validates a PostgreSQL connection pool.
 func OpenPostgresPool(ctx context.Context, cfg config.DatabaseConfig) (*pgxpool.Pool, error) {
-	poolCfg, err := pgxpool.ParseConfig(cfg.URL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}

@@ -8,7 +8,12 @@ import (
 
 func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_DATABASE_ENABLED", "true")
-	t.Setenv("FUNPOT_DATABASE_URL", "postgres://funpot:funpot@localhost:5432/funpot?sslmode=disable")
+	t.Setenv("FUNPOT_DATABASE_HOST", "localhost")
+	t.Setenv("FUNPOT_DATABASE_PORT", "5432")
+	t.Setenv("FUNPOT_DATABASE_NAME", "funpot")
+	t.Setenv("FUNPOT_DATABASE_USER", "funpot")
+	t.Setenv("FUNPOT_DATABASE_PASSWORD", "funpot")
+	t.Setenv("FUNPOT_DATABASE_SSLMODE", "disable")
 	t.Setenv("FUNPOT_DATABASE_MAX_OPEN_CONNS", "20")
 	t.Setenv("FUNPOT_DATABASE_MIN_OPEN_CONNS", "2")
 	t.Setenv("FUNPOT_DATABASE_CONNECT_TIMEOUT", "7s")
@@ -22,8 +27,8 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if !cfg.Database.Enabled {
 		t.Fatalf("expected database enabled")
 	}
-	if cfg.Database.URL == "" {
-		t.Fatalf("expected database url to be set")
+	if cfg.Database.DSN() == "" {
+		t.Fatalf("expected database connection settings to be set")
 	}
 	if cfg.Database.MaxOpenConns != 20 {
 		t.Fatalf("expected max open conns 20, got %d", cfg.Database.MaxOpenConns)
@@ -46,19 +51,33 @@ func TestLoadDatabaseValidation(t *testing.T) {
 		unsets []string
 	}{
 		{
-			name: "missing url when enabled",
+			name: "missing host when enabled",
 			env: map[string]string{
 				"FUNPOT_DATABASE_ENABLED": "true",
+				"FUNPOT_DATABASE_NAME":    "funpot",
+				"FUNPOT_DATABASE_USER":    "funpot",
 			},
-			unsets: []string{"FUNPOT_DATABASE_URL"},
+			unsets: []string{"FUNPOT_DATABASE_HOST"},
 		},
 		{
 			name: "invalid pool bounds",
 			env: map[string]string{
 				"FUNPOT_DATABASE_ENABLED":        "true",
-				"FUNPOT_DATABASE_URL":            "postgres://funpot:funpot@localhost:5432/funpot?sslmode=disable",
+				"FUNPOT_DATABASE_HOST":           "localhost",
+				"FUNPOT_DATABASE_NAME":           "funpot",
+				"FUNPOT_DATABASE_USER":           "funpot",
 				"FUNPOT_DATABASE_MAX_OPEN_CONNS": "2",
 				"FUNPOT_DATABASE_MIN_OPEN_CONNS": "5",
+			},
+		},
+		{
+			name: "invalid port",
+			env: map[string]string{
+				"FUNPOT_DATABASE_ENABLED": "true",
+				"FUNPOT_DATABASE_HOST":    "localhost",
+				"FUNPOT_DATABASE_PORT":    "70000",
+				"FUNPOT_DATABASE_NAME":    "funpot",
+				"FUNPOT_DATABASE_USER":    "funpot",
 			},
 		},
 	}
