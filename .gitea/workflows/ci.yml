@@ -38,6 +38,7 @@ jobs:
       image_repo: ${{ steps.meta.outputs.image }}
       tags_json: ${{ steps.meta.outputs.tags_json }}
       branch_tag: ${{ steps.meta.outputs.branch_tag }}
+      build_date: ${{ steps.meta.outputs.build_date }}
 
     steps:
       - name: Checkout
