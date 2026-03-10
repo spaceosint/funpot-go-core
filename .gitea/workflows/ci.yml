@@ -247,6 +247,7 @@ jobs:
 
           MODE="${MIGRATIONS_MODE:-apply}"
           MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
+
           if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
             echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
             exit 1
@@ -291,12 +292,14 @@ jobs:
 
           required_vars=(DATABASE_HOST DATABASE_PORT DATABASE_NAME DATABASE_USER DATABASE_PASSWORD)
           missing=0
+
           for v in "${required_vars[@]}"; do
             if [ -z "${!v:-}" ]; then
               echo "Database secret for $v is missing; skipping migrations."
               missing=1
             fi
           done
+
           if [ "$missing" -eq 1 ]; then
             exit 0
           fi
@@ -312,21 +315,7 @@ jobs:
           echo "  DATABASE_USER=${DATABASE_USER}"
           echo "  DATABASE_SSLMODE=${DATABASE_SSLMODE}"
 
-          DATABASE_URL="$(
-            python3 - <<'PY'
-import os
-from urllib.parse import quote
-
-user = quote(os.environ["DATABASE_USER"], safe="")
-password = quote(os.environ["DATABASE_PASSWORD"], safe="")
-host = os.environ["DATABASE_HOST"]
-port = os.environ["DATABASE_PORT"]
-name = os.environ["DATABASE_NAME"]
-sslmode = os.environ.get("DATABASE_SSLMODE", "require")
-
-print(f"postgres://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}")
-PY
-          )"
+          DATABASE_URL="$(python3 -c 'import os, urllib.parse; print("postgres://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}".format(user=urllib.parse.quote(os.environ["DATABASE_USER"], safe=""), password=urllib.parse.quote(os.environ["DATABASE_PASSWORD"], safe=""), host=os.environ["DATABASE_HOST"], port=os.environ["DATABASE_PORT"], name=os.environ["DATABASE_NAME"], sslmode=os.environ.get("DATABASE_SSLMODE", "require")))' )"
 
           DATABASE_URL_REDACTED="postgres://${DATABASE_USER}:***@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
           echo "  DATABASE_URL=${DATABASE_URL_REDACTED}"
