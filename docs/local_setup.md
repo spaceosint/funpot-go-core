@@ -110,6 +110,11 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
 - `GET /api/config` – exposes seeded feature flags for the authenticated user.
+- `GET/POST /api/streamers`, `GET /api/games`, `GET /api/events/live`, `POST /api/votes`, `GET /api/wallet`, `POST /api/payments/stars/createInvoice`, `GET /api/referrals/summary`, `GET /api/referrals/payouts`, `GET /api/media/clips`.
+
+> These core domain endpoints require PostgreSQL migrations to be applied. If
+> the service starts without DB settings, these routes respond with
+> `503 Service Unavailable`.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

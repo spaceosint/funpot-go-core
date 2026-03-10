@@ -13,7 +13,15 @@ import (
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/media"
+	"github.com/funpot/funpot-go-core/internal/payments"
+	"github.com/funpot/funpot-go-core/internal/referrals"
+	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
+	"github.com/funpot/funpot-go-core/internal/votes"
+	"github.com/funpot/funpot-go-core/internal/wallet"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
@@ -81,6 +89,27 @@ func main() {
 
 	userService := users.NewService(userRepo)
 
+	var (
+		streamerService  *streamers.Service
+		gamesService     *games.Service
+		eventsService    *events.Service
+		votesService     *votes.Service
+		walletService    *wallet.Service
+		paymentsService  *payments.Service
+		referralsService *referrals.Service
+		mediaService     *media.Service
+	)
+	if db != nil {
+		streamerService = streamers.NewService(db)
+		gamesService = games.NewService(db)
+		eventsService = events.NewService(db)
+		votesService = votes.NewService(db)
+		walletService = wallet.NewService(db)
+		paymentsService = payments.NewService(db)
+		referralsService = referrals.NewService(db)
+		mediaService = media.NewService(db)
+	}
+
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
 	if err != nil {
 		logger.Fatal("failed to create auth service", zap.Error(err))
@@ -97,7 +126,22 @@ func main() {
 		return db.PingContext(pingCtx) == nil
 	}
 
-	handler := app.NewHandler(logger, readyFn, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
+	handler := app.NewHandler(
+		logger,
+		readyFn,
+		telemetryProvider.MetricsHandler(),
+		authService,
+		userService,
+		cfg.Features.Flags,
+		streamerService,
+		gamesService,
+		eventsService,
+		votesService,
+		walletService,
+		paymentsService,
+		referralsService,
+		mediaService,
+	)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {
