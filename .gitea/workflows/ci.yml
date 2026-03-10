@@ -245,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          MODE="${MIGRATIONS_MODE:-check}"
+          MODE="${MIGRATIONS_MODE:-apply}"
           MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
           if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
             echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
