@@ -235,14 +235,14 @@ jobs:
 
       - name: Run migration preflight
         env:
-          DATABASE_HOST: ${{ secrets[matrix.database_host_secret] }}
+          DATABASE_HOST: "10.55.0.1"
           DATABASE_PORT: ${{ secrets[matrix.database_port_secret] }}
           DATABASE_NAME: ${{ secrets[matrix.database_name_secret] }}
           DATABASE_USER: ${{ secrets[matrix.database_user_secret] }}
           DATABASE_PASSWORD: ${{ secrets[matrix.database_password_secret] }}
           DATABASE_SSLMODE: ${{ secrets[matrix.database_sslmode_secret] }}
           MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
-          DATABASE_HOST: "10.55.0.1"
+          
         run: |
           set -euo pipefail
 
