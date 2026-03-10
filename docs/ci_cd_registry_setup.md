@@ -18,6 +18,24 @@ The workflows expect the following secrets:
 | `PROD_DEPLOY_WEBHOOK_URL` | HTTPS endpoint of your deployment handler for the `main` environment. | Receives image metadata and boots the container. |
 | `DEV_DEPLOY_HEALTHCHECK_URL` | Base URL of the running dev environment (e.g. `https://dev.funpot.live/readyz`). | Polled by the CD workflow to confirm the application is up after the webhook finishes. |
 | `PROD_DEPLOY_HEALTHCHECK_URL` | Base URL of the running production environment (e.g. `https://funpot.live/readyz`). | Optional health probe for the production rollout; leave blank to skip verification. |
+| `DEV_DATABASE_URL` | PostgreSQL DSN for development (URL-encoded, includes `sslmode`). | Used by CD to run `golang-migrate` before deploy. |
+| `PROD_DATABASE_URL` | PostgreSQL DSN for production (URL-encoded, includes `sslmode`). | Used by CD to run `golang-migrate` before deploy. |
+| `DEV_MIGRATIONS_MODE` | `check` or `apply`. | Controls whether CD only validates migration state (`check`) or applies pending migrations (`apply`) in development. |
+| `PROD_MIGRATIONS_MODE` | `check` or `apply`. | Controls whether CD only validates migration state (`check`) or applies pending migrations (`apply`) in production. Recommended default: `check` with manual promotion to `apply`. |
+
+
+## Database Migration Stage in CD
+The CD workflow now executes a dedicated migration stage before deployment for
+each environment. Behavior is controlled with the `*_MIGRATIONS_MODE` secret:
+
+- `check` (default): validates migration metadata (`migrate version`) and exits
+  without applying schema changes.
+- `apply`: runs the same preflight check and then executes `migrate up` against
+  the target database URL.
+
+This keeps migrations reproducible in Gitea Actions while still allowing a
+conservative production posture (preflight in CI/CD, manual switch to `apply`
+when rollout window is approved).
 
 ## Where to Obtain the Values
 1. **Registry URL & Repository** – defined when you create a project in your

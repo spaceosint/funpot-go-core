@@ -31,12 +31,16 @@ jobs:
             branch: dev
             webhook_secret: DEV_DEPLOY_WEBHOOK_URL
             healthcheck_secret: DEV_DEPLOY_HEALTHCHECK_URL
+            database_url_secret: DEV_DATABASE_URL
+            migration_mode_secret: DEV_MIGRATIONS_MODE
             healthcheck_timeout: 240
             healthcheck_interval: 5
           - environment: production
             branch: main
             webhook_secret: PROD_DEPLOY_WEBHOOK_URL
             healthcheck_secret: PROD_DEPLOY_HEALTHCHECK_URL
+            database_url_secret: PROD_DATABASE_URL
+            migration_mode_secret: PROD_MIGRATIONS_MODE
             healthcheck_timeout: 420
             healthcheck_interval: 10
     if: >-
@@ -83,6 +87,45 @@ jobs:
         run: |
           set -euo pipefail
           docker pull "$IMAGE_REF"
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: ${{ secrets[matrix.database_url_secret] }}
+          MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "Database URL secret '${{ matrix.database_url_secret }}' is missing; skipping migrations."
+            exit 0
+          fi
+
+          MODE="${MIGRATIONS_MODE:-check}"
+          MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
+          if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
+            echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
+            exit 1
+          fi
+
+          echo "Running migration preflight (mode=${MODE})"
+          docker run --rm \
+            -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.17.1 \
+            -path=/migrations \
+            -database "$DATABASE_URL" \
+            version
+
+          if [ "$MODE" = "check" ]; then
+            echo "Migrations mode is 'check'; skipping apply step."
+            exit 0
+          fi
+
+          docker run --rm \
+            -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.17.1 \
+            -path=/migrations \
+            -database "$DATABASE_URL" \
+            -verbose \
+            up
 
       - name: Trigger environment webhook
         env:
