@@ -242,6 +242,7 @@ jobs:
           DATABASE_PASSWORD: ${{ secrets[matrix.database_password_secret] }}
           DATABASE_SSLMODE: ${{ secrets[matrix.database_sslmode_secret] }}
           MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
+          DATABASE_HOST: "10.55.0.1"
         run: |
           set -euo pipefail
 
