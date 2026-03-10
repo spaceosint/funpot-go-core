@@ -308,14 +308,14 @@ jobs:
           DATABASE_URL="postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
 
           echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
-          docker run --rm \
+          docker run --rm --network host \
             -v "$PWD/migrations:/migrations:ro" \
             migrate/migrate:v4.17.1 \
             -path=/migrations \
             -database "$DATABASE_URL" \
             version
 
-          docker run --rm \
+          docker run --rm --network host \
             -v "$PWD/migrations:/migrations:ro" \
             migrate/migrate:v4.17.1 \
             -path=/migrations \
