@@ -138,14 +138,8 @@ jobs:
             echo "Webhook URL secret '${{ matrix.webhook_secret }}' is missing." >&2
             exit 1
           fi
-          cat <<EOF >payload.json
-{
-  "environment": "${ENVIRONMENT}",
-  "branch": "${BRANCH}",
-  "image": "${IMAGE_REF}",
-  "sha": "${HEAD_SHA}"
-}
-EOF
+          printf '{"environment":"%s","branch":"%s","image":"%s","sha":"%s"}\n' \
+            "$ENVIRONMENT" "$BRANCH" "$IMAGE_REF" "$HEAD_SHA" >payload.json
           curl -fsSL -X POST -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK_URL"
 
       - name: Resolve healthcheck target
