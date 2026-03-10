@@ -146,8 +146,8 @@ Recommended tag mapping:
 ### Migration checks in CI
 Database migration validation now runs in `FunPot Core CI`:
 
-- `dev` branch uses `DEV_DATABASE_URL` + `DEV_MIGRATIONS_MODE`
-- `main` branch uses `PROD_DATABASE_URL` + `PROD_MIGRATIONS_MODE`
+- `dev` branch uses `DEV_DATABASE_HOST/PORT/NAME/USER/PASSWORD(/SSLMODE)` + `DEV_MIGRATIONS_MODE`
+- `main` branch uses `PROD_DATABASE_HOST/PORT/NAME/USER/PASSWORD(/SSLMODE)` + `PROD_MIGRATIONS_MODE`
 
 Mode behavior:
 
@@ -156,7 +156,17 @@ Mode behavior:
 
 Set these repository secrets before enabling branch deployment automation:
 
-- `DEV_DATABASE_URL`
-- `PROD_DATABASE_URL`
+- `DEV_DATABASE_HOST`
+- `DEV_DATABASE_PORT`
+- `DEV_DATABASE_NAME`
+- `DEV_DATABASE_USER`
+- `DEV_DATABASE_PASSWORD`
+- `DEV_DATABASE_SSLMODE` (optional, defaults to `require`)
+- `PROD_DATABASE_HOST`
+- `PROD_DATABASE_PORT`
+- `PROD_DATABASE_NAME`
+- `PROD_DATABASE_USER`
+- `PROD_DATABASE_PASSWORD`
+- `PROD_DATABASE_SSLMODE` (optional, defaults to `require`)
 - `DEV_MIGRATIONS_MODE` (`check` or `apply`)
 - `PROD_MIGRATIONS_MODE` (`check` or `apply`)

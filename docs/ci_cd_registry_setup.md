@@ -14,16 +14,26 @@ The `FunPot Core CI` workflow expects these secrets:
 | `REGISTRY_USERNAME` | Service account or robot user with push/pull permissions. | Authenticates Docker login in CI. |
 | `REGISTRY_PASSWORD` | Token or password generated for the above user. | Authenticates Docker login in CI. |
 | `FUNPOT_AUTH_TELEGRAM_BOT_TOKEN` | Token issued by BotFather for the Telegram Mini App bot. | Enables smoke tests to authenticate against the container. |
-| `DEV_DATABASE_URL` | PostgreSQL DSN for development (URL-encoded, includes `sslmode`). | Used by CI migration preflight on `dev` branch. |
-| `PROD_DATABASE_URL` | PostgreSQL DSN for production (URL-encoded, includes `sslmode`). | Used by CI migration preflight on `main` branch. |
+| `DEV_DATABASE_HOST` | Development PostgreSQL host. | Used to compose CI migration DSN on `dev` branch. |
+| `DEV_DATABASE_PORT` | Development PostgreSQL port. | Used to compose CI migration DSN on `dev` branch. |
+| `DEV_DATABASE_NAME` | Development PostgreSQL database name. | Used to compose CI migration DSN on `dev` branch. |
+| `DEV_DATABASE_USER` | Development PostgreSQL user. | Used to compose CI migration DSN on `dev` branch. |
+| `DEV_DATABASE_PASSWORD` | Development PostgreSQL password. | Used to compose CI migration DSN on `dev` branch. |
+| `DEV_DATABASE_SSLMODE` | Development PostgreSQL sslmode (`disable`, `require`, etc.). | Optional, defaults to `require` in CI migration stage. |
+| `PROD_DATABASE_HOST` | Production PostgreSQL host. | Used to compose CI migration DSN on `main` branch. |
+| `PROD_DATABASE_PORT` | Production PostgreSQL port. | Used to compose CI migration DSN on `main` branch. |
+| `PROD_DATABASE_NAME` | Production PostgreSQL database name. | Used to compose CI migration DSN on `main` branch. |
+| `PROD_DATABASE_USER` | Production PostgreSQL user. | Used to compose CI migration DSN on `main` branch. |
+| `PROD_DATABASE_PASSWORD` | Production PostgreSQL password. | Used to compose CI migration DSN on `main` branch. |
+| `PROD_DATABASE_SSLMODE` | Production PostgreSQL sslmode (`disable`, `require`, etc.). | Optional, defaults to `require` in CI migration stage. |
 | `DEV_MIGRATIONS_MODE` | `check` or `apply`. | Controls dev migration behavior in CI (`check` default). |
 | `PROD_MIGRATIONS_MODE` | `check` or `apply`. | Controls production migration behavior in CI (`check` default, recommended). |
 
 ## Migration Stage in CI
 Migration execution was moved from CD to the CI workflow:
 
-- On `dev` pushes CI uses `DEV_DATABASE_URL` + `DEV_MIGRATIONS_MODE`.
-- On `main` pushes CI uses `PROD_DATABASE_URL` + `PROD_MIGRATIONS_MODE`.
+- On `dev` pushes CI uses `DEV_DATABASE_HOST/PORT/NAME/USER/PASSWORD(/SSLMODE)` + `DEV_MIGRATIONS_MODE`.
+- On `main` pushes CI uses `PROD_DATABASE_HOST/PORT/NAME/USER/PASSWORD(/SSLMODE)` + `PROD_MIGRATIONS_MODE`.
 - `check` (default): validates migration metadata (`migrate version`) and exits.
 - `apply`: runs preflight and then executes `migrate up`.
 

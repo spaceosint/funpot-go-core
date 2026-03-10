@@ -210,11 +210,21 @@ jobs:
         include:
           - environment: development
             branch: dev
-            database_url_secret: DEV_DATABASE_URL
+            database_host_secret: DEV_DATABASE_HOST
+            database_port_secret: DEV_DATABASE_PORT
+            database_name_secret: DEV_DATABASE_NAME
+            database_user_secret: DEV_DATABASE_USER
+            database_password_secret: DEV_DATABASE_PASSWORD
+            database_sslmode_secret: DEV_DATABASE_SSLMODE
             migration_mode_secret: DEV_MIGRATIONS_MODE
           - environment: production
             branch: main
-            database_url_secret: PROD_DATABASE_URL
+            database_host_secret: PROD_DATABASE_HOST
+            database_port_secret: PROD_DATABASE_PORT
+            database_name_secret: PROD_DATABASE_NAME
+            database_user_secret: PROD_DATABASE_USER
+            database_password_secret: PROD_DATABASE_PASSWORD
+            database_sslmode_secret: PROD_DATABASE_SSLMODE
             migration_mode_secret: PROD_MIGRATIONS_MODE
 
     steps:
@@ -225,15 +235,33 @@ jobs:
 
       - name: Run migration preflight
         env:
-          DATABASE_URL: ${{ secrets[matrix.database_url_secret] }}
+          DATABASE_HOST: ${{ secrets[matrix.database_host_secret] }}
+          DATABASE_PORT: ${{ secrets[matrix.database_port_secret] }}
+          DATABASE_NAME: ${{ secrets[matrix.database_name_secret] }}
+          DATABASE_USER: ${{ secrets[matrix.database_user_secret] }}
+          DATABASE_PASSWORD: ${{ secrets[matrix.database_password_secret] }}
+          DATABASE_SSLMODE: ${{ secrets[matrix.database_sslmode_secret] }}
           MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
         run: |
           set -euo pipefail
 
-          if [ -z "${DATABASE_URL:-}" ]; then
-            echo "Database URL secret '${{ matrix.database_url_secret }}' is missing; skipping migrations."
+          required_vars=(DATABASE_HOST DATABASE_PORT DATABASE_NAME DATABASE_USER DATABASE_PASSWORD)
+          missing=0
+          for v in "${required_vars[@]}"; do
+            if [ -z "${!v:-}" ]; then
+              echo "Database secret for $v is missing; skipping migrations."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
             exit 0
           fi
+
+          if [ -z "${DATABASE_SSLMODE:-}" ]; then
+            DATABASE_SSLMODE="require"
+          fi
+
+          DATABASE_URL="postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
 
           MODE="${MIGRATIONS_MODE:-check}"
           MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"

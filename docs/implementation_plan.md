@@ -97,7 +97,7 @@ approximate sequencing, and validation criteria.
 ### Operational Automation
 - [x] Ship CI workflow that publishes per-branch images for external deployment
   automation (`dev` and `main`).
-- [x] Move migration preflight/apply stage into CI (`DEV/PROD_DATABASE_URL`,
+- [x] Move migration preflight/apply stage into CI (`DEV/PROD_DATABASE_HOST|PORT|NAME|USER|PASSWORD|SSLMODE`,
   `DEV/PROD_MIGRATIONS_MODE`).
 - [x] Document Watchtower as the deployment mechanism outside repository
   workflows.
