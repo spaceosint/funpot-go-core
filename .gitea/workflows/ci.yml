@@ -200,6 +200,69 @@ jobs:
           build-args: |
             VCS_REF=${{ github.sha }}
 
+  migrations:
+    name: Migration Preflight (${{ matrix.environment }})
+    runs-on: ubuntu-build
+    timeout-minutes: 15
+    if: ${{ github.event_name != 'pull_request' && github.ref_name == matrix.branch }}
+    strategy:
+      matrix:
+        include:
+          - environment: development
+            branch: dev
+            database_url_secret: DEV_DATABASE_URL
+            migration_mode_secret: DEV_MIGRATIONS_MODE
+          - environment: production
+            branch: main
+            database_url_secret: PROD_DATABASE_URL
+            migration_mode_secret: PROD_MIGRATIONS_MODE
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run migration preflight
+        env:
+          DATABASE_URL: ${{ secrets[matrix.database_url_secret] }}
+          MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "Database URL secret '${{ matrix.database_url_secret }}' is missing; skipping migrations."
+            exit 0
+          fi
+
+          MODE="${MIGRATIONS_MODE:-check}"
+          MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
+          if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
+            echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
+            exit 1
+          fi
+
+          echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
+          docker run --rm \
+            -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.17.1 \
+            -path=/migrations \
+            -database "$DATABASE_URL" \
+            version
+
+          if [ "$MODE" = "check" ]; then
+            echo "Migrations mode is 'check'; skipping apply step."
+            exit 0
+          fi
+
+          docker run --rm \
+            -v "$PWD/migrations:/migrations:ro" \
+            migrate/migrate:v4.17.1 \
+            -path=/migrations \
+            -database "$DATABASE_URL" \
+            -verbose \
+            up
+
   smoke:
     name: Smoke Test
     needs: build

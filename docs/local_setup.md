@@ -133,34 +133,30 @@ connectivity and `/readyz` depends on successful DB ping checks.
 Set `FUNPOT_DATABASE_ENABLED=false` to run with in-memory users persistence for
 quick smoke testing.
 
-## Continuous Delivery
-The repository ships with an automated CD workflow defined in
-`.gitea/workflows/cd.yml`. The pipeline listens for successful runs of the
-"FunPot Core CI" workflow on pushes to `dev` and `main`, and performs the
-following for each environment:
+## Deployment (Watchtower)
+Deployment is handled outside this repository by Watchtower. The CI pipeline
+builds and publishes images; Watchtower is responsible for pulling updated
+rolling tags and restarting containers.
 
-1. Checks out the commit that produced the passing CI build.
-2. Resolves the container image pushed by the CI pipeline using the configured
-   registry secrets.
-3. Pulls the image to verify that it is available to downstream infrastructure.
-4. Calls an HTTP webhook to trigger the deployment in the corresponding
-   environment without relying on SSH access.
-5. Polls the environment-specific healthcheck URL to confirm that the
-   application is serving `/readyz` successfully before marking the job as
-   finished.
+Recommended tag mapping:
 
-### Required secrets
-Configure the following repository secrets before enabling the workflow:
+- `dev` branch → `<REGISTRY_URL>/<REGISTRY_REPOSITORY>:dev`
+- `main` branch → `<REGISTRY_URL>/<REGISTRY_REPOSITORY>:prod`
 
-- `DEV_DEPLOY_WEBHOOK_URL` – HTTPS endpoint that accepts a POST request to
-  deploy the dev environment.
-- `PROD_DEPLOY_WEBHOOK_URL` – HTTPS endpoint for the production deployment.
-- `DEV_DEPLOY_HEALTHCHECK_URL` – HTTPS address (e.g. `https://dev.funpot.live/readyz`)
-  that returns `200` once the dev environment is ready. Used to confirm the
-  deployment booted correctly.
-- `PROD_DEPLOY_HEALTHCHECK_URL` – Optional HTTPS address for the production
-  readiness probe. Leave blank to skip the post-deploy health poll.
+### Migration checks in CI
+Database migration validation now runs in `FunPot Core CI`:
 
-Each webhook receives a JSON payload with the target environment label and Git
-SHA. Use those fields to orchestrate the rollout or kick off your own build
-process on the destination host.
+- `dev` branch uses `DEV_DATABASE_URL` + `DEV_MIGRATIONS_MODE`
+- `main` branch uses `PROD_DATABASE_URL` + `PROD_MIGRATIONS_MODE`
+
+Mode behavior:
+
+- `check` (default): execute migration metadata preflight only.
+- `apply`: execute preflight and then `migrate up`.
+
+Set these repository secrets before enabling branch deployment automation:
+
+- `DEV_DATABASE_URL`
+- `PROD_DATABASE_URL`
+- `DEV_MIGRATIONS_MODE` (`check` or `apply`)
+- `PROD_MIGRATIONS_MODE` (`check` or `apply`)
