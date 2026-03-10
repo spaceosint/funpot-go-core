@@ -245,6 +245,50 @@ jobs:
         run: |
           set -euo pipefail
 
+          MODE="${MIGRATIONS_MODE:-check}"
+          MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
+          if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
+            echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
+            exit 1
+          fi
+
+          if [ "$MODE" = "check" ]; then
+            echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
+            echo "Validating migration files naming and up/down pairs (database connection is not required in check mode)."
+
+            mapfile -t up_files < <(find migrations -maxdepth 1 -type f -name '*.up.sql' -printf '%f\n' | sort)
+            mapfile -t down_files < <(find migrations -maxdepth 1 -type f -name '*.down.sql' -printf '%f\n' | sort)
+
+            if [ "${#up_files[@]}" -eq 0 ]; then
+              echo "No '*.up.sql' files found in migrations/." >&2
+              exit 1
+            fi
+
+            if [ "${#up_files[@]}" -ne "${#down_files[@]}" ]; then
+              echo "Migrations mismatch: ${#up_files[@]} up files vs ${#down_files[@]} down files." >&2
+              exit 1
+            fi
+
+            for up_file in "${up_files[@]}"; do
+              version="${up_file%%_*}"
+              case "$version" in
+                ''|*[!0-9]*)
+                  echo "Invalid migration version prefix in '$up_file'. Expected '<number>_<name>.up.sql'." >&2
+                  exit 1
+                  ;;
+              esac
+
+              expected_down="${up_file%.up.sql}.down.sql"
+              if [ ! -f "migrations/$expected_down" ]; then
+                echo "Missing down migration for '$up_file' (expected '$expected_down')." >&2
+                exit 1
+              fi
+            done
+
+            echo "Migrations mode is 'check'; migration files preflight completed successfully."
+            exit 0
+          fi
+
           required_vars=(DATABASE_HOST DATABASE_PORT DATABASE_NAME DATABASE_USER DATABASE_PASSWORD)
           missing=0
           for v in "${required_vars[@]}"; do
@@ -263,13 +307,6 @@ jobs:
 
           DATABASE_URL="postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
 
-          MODE="${MIGRATIONS_MODE:-check}"
-          MODE="$(printf '%s' "$MODE" | tr '[:upper:]' '[:lower:]')"
-          if [ "$MODE" != "check" ] && [ "$MODE" != "apply" ]; then
-            echo "Invalid migrations mode '$MODE'. Allowed values: check, apply." >&2
-            exit 1
-          fi
-
           echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
           docker run --rm \
             -v "$PWD/migrations:/migrations:ro" \
@@ -277,11 +314,6 @@ jobs:
             -path=/migrations \
             -database "$DATABASE_URL" \
             version
-
-          if [ "$MODE" = "check" ]; then
-            echo "Migrations mode is 'check'; skipping apply step."
-            exit 0
-          fi
 
           docker run --rm \
             -v "$PWD/migrations:/migrations:ro" \
