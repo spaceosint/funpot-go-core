@@ -63,7 +63,7 @@ jobs:
           echo "RUNNER_OS=${RUNNER_OS:-unknown}"
           echo "RUNNER_ARCH=${RUNNER_ARCH:-unknown}"
           which node || true
-          node -v
+          node -v || true
           go version
           git --version
           docker version
@@ -242,7 +242,6 @@ jobs:
           DATABASE_PASSWORD: ${{ secrets[matrix.database_password_secret] }}
           DATABASE_SSLMODE: ${{ secrets[matrix.database_sslmode_secret] }}
           MIGRATIONS_MODE: ${{ secrets[matrix.migration_mode_secret] }}
-          
         run: |
           set -euo pipefail
 
@@ -313,26 +312,75 @@ jobs:
           echo "  DATABASE_USER=${DATABASE_USER}"
           echo "  DATABASE_SSLMODE=${DATABASE_SSLMODE}"
 
-          DATABASE_URL="postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
-          DATABASE_URL_REDACTED="postgres://${DATABASE_USER}:***@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
+          DATABASE_URL="$(
+            python3 - <<'PY'
+import os
+from urllib.parse import quote
 
+user = quote(os.environ["DATABASE_USER"], safe="")
+password = quote(os.environ["DATABASE_PASSWORD"], safe="")
+host = os.environ["DATABASE_HOST"]
+port = os.environ["DATABASE_PORT"]
+name = os.environ["DATABASE_NAME"]
+sslmode = os.environ.get("DATABASE_SSLMODE", "require")
+
+print(f"postgres://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}")
+PY
+          )"
+
+          DATABASE_URL_REDACTED="postgres://${DATABASE_USER}:***@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
           echo "  DATABASE_URL=${DATABASE_URL_REDACTED}"
 
           echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
-          docker run --rm --network host \
-            -v "$PWD/migrations:/migrations:ro" \
-            migrate/migrate:v4.17.1 \
-            -path=/migrations \
-            -database "$DATABASE_URL" \
-            version
 
-          docker run --rm --network host \
-            -v "$PWD/migrations:/migrations:ro" \
-            migrate/migrate:v4.17.1 \
-            -path=/migrations \
-            -database "$DATABASE_URL" \
-            -verbose \
-            up
+          echo "Checking current migration version..."
+          set +e
+          version_output="$(
+            docker run --rm --network host \
+              -v "$PWD/migrations:/migrations:ro" \
+              migrate/migrate:v4.17.1 \
+              -path=/migrations \
+              -database "$DATABASE_URL" \
+              version 2>&1
+          )"
+          version_status=$?
+          set -e
+
+          if [ "$version_status" -ne 0 ]; then
+            if printf '%s' "$version_output" | grep -qi 'no migration'; then
+              echo "Database has no applied migrations yet. Continuing with migration apply."
+            else
+              echo "$version_output" >&2
+              exit 1
+            fi
+          else
+            echo "$version_output"
+          fi
+
+          echo "Applying migrations..."
+          set +e
+          up_output="$(
+            docker run --rm --network host \
+              -v "$PWD/migrations:/migrations:ro" \
+              migrate/migrate:v4.17.1 \
+              -path=/migrations \
+              -database "$DATABASE_URL" \
+              -verbose \
+              up 2>&1
+          )"
+          up_status=$?
+          set -e
+
+          if [ "$up_status" -ne 0 ]; then
+            if printf '%s' "$up_output" | grep -qi 'no change'; then
+              echo "No new migrations to apply."
+            else
+              echo "$up_output" >&2
+              exit 1
+            fi
+          else
+            echo "$up_output"
+          fi
 
   smoke:
     name: Smoke Test
