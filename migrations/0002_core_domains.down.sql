@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS media_clips;
+DROP TABLE IF EXISTS referral_payouts;
+DROP TABLE IF EXISTS referral_invites;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS wallet_ledger;
+DROP TABLE IF EXISTS wallet_accounts;
+DROP TABLE IF EXISTS votes;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS games;
+DROP TABLE IF EXISTS streamers;
