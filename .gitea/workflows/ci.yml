@@ -235,7 +235,7 @@ jobs:
 
       - name: Run migration preflight
         env:
-          DATABASE_HOST: "10.55.0.1"
+          DATABASE_HOST: ${{ secrets[matrix.database_host_secret] }}
           DATABASE_PORT: ${{ secrets[matrix.database_port_secret] }}
           DATABASE_NAME: ${{ secrets[matrix.database_name_secret] }}
           DATABASE_USER: ${{ secrets[matrix.database_user_secret] }}
