@@ -305,7 +305,17 @@ jobs:
             DATABASE_SSLMODE="require"
           fi
 
+          echo "Resolved database connection settings for ${{ matrix.environment }}:"
+          echo "  DATABASE_HOST=${DATABASE_HOST}"
+          echo "  DATABASE_PORT=${DATABASE_PORT}"
+          echo "  DATABASE_NAME=${DATABASE_NAME}"
+          echo "  DATABASE_USER=${DATABASE_USER}"
+          echo "  DATABASE_SSLMODE=${DATABASE_SSLMODE}"
+
           DATABASE_URL="postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
+          DATABASE_URL_REDACTED="postgres://${DATABASE_USER}:***@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSLMODE}"
+
+          echo "  DATABASE_URL=${DATABASE_URL_REDACTED}"
 
           echo "Running migration preflight for ${{ matrix.environment }} (mode=${MODE})"
           docker run --rm --network host \
