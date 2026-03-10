@@ -95,9 +95,12 @@ approximate sequencing, and validation criteria.
   configured, runbooks updated.
 
 ### Operational Automation
-- [x] Ship CD workflow that publishes per-branch images and triggers webhook-based
-  deploys for `dev` and `main` environments.
-- [x] Add automated post-deployment smoke tests for webhook-driven rollouts.
+- [x] Ship CI workflow that publishes per-branch images for external deployment
+  automation (`dev` and `main`).
+- [x] Move migration preflight/apply stage into CI (`DEV/PROD_DATABASE_URL`,
+  `DEV/PROD_MIGRATIONS_MODE`).
+- [x] Document Watchtower as the deployment mechanism outside repository
+  workflows.
 
 ## Cross-Cutting Workstreams
 - Security reviews, secrets rotation, and compliance updates each milestone.
