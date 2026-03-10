@@ -1,10 +1,11 @@
 name: FunPot Core CD
 
 on:
-  workflow_run:
-    workflows: ["FunPot Core CI"]
-    types:
-      - completed
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,14 +44,11 @@ jobs:
             migration_mode_secret: PROD_MIGRATIONS_MODE
             healthcheck_timeout: 420
             healthcheck_interval: 10
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == matrix.branch
+    if: ${{ github.ref_name == matrix.branch }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Verify registry configuration
         run: |
@@ -75,7 +73,7 @@ jobs:
       - name: Resolve image reference
         id: image
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           IMAGE_REF="${REGISTRY_URL}/${REGISTRY_REPOSITORY}:${HEAD_SHA}"
@@ -133,7 +131,7 @@ jobs:
           WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
           ENVIRONMENT: ${{ matrix.environment }}
           BRANCH: ${{ matrix.branch }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ -z "${WEBHOOK_URL:-}" ]; then
