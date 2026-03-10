@@ -84,7 +84,24 @@ jobs:
           IMAGE_REF: ${{ steps.image.outputs.image_ref }}
         run: |
           set -euo pipefail
-          docker pull "$IMAGE_REF"
+          timeout_seconds=300
+          interval_seconds=10
+          max_attempts=$(( (timeout_seconds + interval_seconds - 1) / interval_seconds ))
+
+          attempt=1
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if docker pull "$IMAGE_REF"; then
+              echo "Published image is available: $IMAGE_REF"
+              exit 0
+            fi
+
+            echo "Attempt $attempt/$max_attempts: image is not published yet, retrying in ${interval_seconds}s"
+            sleep "$interval_seconds"
+            attempt=$((attempt + 1))
+          done
+
+          echo "Image was not published in time: $IMAGE_REF" >&2
+          exit 1
 
       - name: Run database migrations
         env:
