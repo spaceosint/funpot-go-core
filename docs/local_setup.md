@@ -151,8 +151,8 @@ Database migration validation now runs in `FunPot Core CI`:
 
 Mode behavior:
 
-- `check` (default): execute migration metadata preflight only.
-- `apply`: execute preflight and then `migrate up`.
+- `check` (default): validate migration files naming and up/down pair consistency only (no DB connectivity required).
+- `apply`: execute DB preflight and then `migrate up`.
 
 Set these repository secrets before enabling branch deployment automation:
 
