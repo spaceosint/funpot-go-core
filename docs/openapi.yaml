@@ -6,6 +6,36 @@ info:
 servers:
   - url: https://api.funpot.example
 paths:
+  /api/auth/telegram:
+    post:
+      summary: Authenticate via Telegram Mini App initData
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData]
+              properties:
+                initData:
+                  type: string
+      responses:
+        '200':
+          description: Authentication succeeded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
   /api/me:
     get:
       summary: Get current user profile
@@ -867,4 +897,3 @@ components:
         checkedAt:
           type: string
           format: date-time
-

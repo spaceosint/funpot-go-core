@@ -13,6 +13,8 @@ import (
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
@@ -80,6 +82,8 @@ func main() {
 	}
 
 	userService := users.NewService(userRepo)
+	streamersService := streamers.NewService()
+	eventsService := events.NewService(nil)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
 	if err != nil {
@@ -97,7 +101,16 @@ func main() {
 		return db.PingContext(pingCtx) == nil
 	}
 
-	handler := app.NewHandler(logger, readyFn, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
+	handler := app.NewHandler(
+		logger,
+		readyFn,
+		telemetryProvider.MetricsHandler(),
+		authService,
+		userService,
+		streamersService,
+		eventsService,
+		app.ConfigResponseFromConfig(cfg),
+	)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {

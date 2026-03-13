@@ -21,6 +21,7 @@ type Config struct {
 	Auth        AuthConfig
 	Database    DatabaseConfig
 	Features    FeatureConfig
+	Client      ClientConfig
 }
 
 // ServerConfig holds HTTP server settings.
@@ -105,6 +106,14 @@ type FeatureConfig struct {
 	Flags map[string]bool
 }
 
+// ClientConfig is returned by /api/config for Mini App runtime behavior.
+type ClientConfig struct {
+	StarsRate  float64
+	MinViewers int
+	Currencies []string
+	VotePerMin int
+}
+
 // Load reads configuration from the environment, applying defaults and .env overrides.
 func Load() (Config, error) {
 	_ = godotenv.Load()
@@ -174,6 +183,23 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	starsRate, err := getFloat("FUNPOT_CLIENT_STARS_RATE", 1)
+	if err != nil {
+		return Config{}, err
+	}
+
+	minViewers, err := getInt("FUNPOT_CLIENT_MIN_VIEWERS", 100)
+	if err != nil {
+		return Config{}, err
+	}
+
+	votePerMin, err := getInt("FUNPOT_CLIENT_LIMIT_VOTE_PER_MIN", 30)
+	if err != nil {
+		return Config{}, err
+	}
+
+	currencies := getCSVStrings("FUNPOT_CLIENT_CURRENCIES", []string{"INT"})
+
 	maxIdleConns, err := getInt("FUNPOT_DATABASE_MAX_IDLE_CONNS", 5)
 	if err != nil {
 		return Config{}, err
@@ -240,6 +266,12 @@ func Load() (Config, error) {
 		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
+		},
+		Client: ClientConfig{
+			StarsRate:  starsRate,
+			MinViewers: minViewers,
+			Currencies: currencies,
+			VotePerMin: votePerMin,
 		},
 	}
 
@@ -338,4 +370,23 @@ func getFeatureFlags(key string) (map[string]bool, error) {
 		flags[key] = enabled
 	}
 	return flags, nil
+}
+
+func getCSVStrings(key string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	rawItems := strings.Split(value, ",")
+	items := make([]string, 0, len(rawItems))
+	for _, item := range rawItems {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	if len(items) == 0 {
+		return fallback
+	}
+	return items
 }

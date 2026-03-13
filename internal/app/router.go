@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/funpot/funpot-go-core/internal/auth"
+	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 )
 
@@ -24,12 +28,45 @@ type telegramAuthRequest struct {
 	InitData string `json:"initData"`
 }
 
-type configResponse struct {
-	Features map[string]bool `json:"features"`
+type ClientConfigResponse struct {
+	StarsRate  float64         `json:"starsRate"`
+	MinViewers int             `json:"minViewers"`
+	Features   map[string]bool `json:"features"`
+	Currencies []string        `json:"currencies"`
+	Limits     configLimits    `json:"limits"`
+}
+
+func ConfigResponseFromConfig(cfg config.Config) ClientConfigResponse {
+	return ClientConfigResponse{
+		StarsRate:  cfg.Client.StarsRate,
+		MinViewers: cfg.Client.MinViewers,
+		Features:   cfg.Features.Flags,
+		Currencies: cfg.Client.Currencies,
+		Limits: configLimits{
+			VotePerMin: cfg.Client.VotePerMin,
+		},
+	}
+}
+
+type configLimits struct {
+	VotePerMin int `json:"votePerMin"`
+}
+
+type streamerSubmitRequest struct {
+	TwitchUsername string `json:"twitchUsername"`
 }
 
 // NewHandler wires the base HTTP routes for the service.
-func NewHandler(logger *zap.Logger, readyFn func() bool, metricsHandler http.Handler, authService *auth.Service, userService *users.Service, featureFlags map[string]bool) http.Handler {
+func NewHandler(
+	logger *zap.Logger,
+	readyFn func() bool,
+	metricsHandler http.Handler,
+	authService *auth.Service,
+	userService *users.Service,
+	streamersService *streamers.Service,
+	eventsService *events.Service,
+	clientConfig ClientConfigResponse,
+) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -137,8 +174,68 @@ func NewHandler(logger *zap.Logger, readyFn func() bool, metricsHandler http.Han
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			writeJSON(w, http.StatusOK, configResponse{Features: featureFlags})
+			writeJSON(w, http.StatusOK, clientConfig)
 		})))
+
+		if streamersService != nil {
+			mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodGet:
+					page, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("page")))
+					if err != nil && r.URL.Query().Get("page") != "" {
+						writeError(w, http.StatusBadRequest, "page must be a positive integer")
+						return
+					}
+					items := streamersService.List(r.Context(), r.URL.Query().Get("query"), page)
+					writeJSON(w, http.StatusOK, items)
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req streamerSubmitRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					claims, ok := auth.ClaimsFromContext(r.Context())
+					if !ok {
+						writeError(w, http.StatusUnauthorized, "missing auth claims")
+						return
+					}
+					submission, err := streamersService.Submit(r.Context(), req.TwitchUsername, claims.Subject)
+					if err != nil {
+						if errors.Is(err, streamers.ErrInvalidUsername) {
+							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						logger.Error("failed to submit streamer", zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to submit streamer")
+						return
+					}
+					writeJSON(w, http.StatusOK, submission)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+		}
+
+		if eventsService != nil {
+			mux.Handle("/api/events/live", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				streamerID := strings.TrimSpace(r.URL.Query().Get("streamerId"))
+				if streamerID == "" {
+					writeError(w, http.StatusBadRequest, "streamerId is required")
+					return
+				}
+				writeJSON(w, http.StatusOK, eventsService.ListLiveByStreamer(r.Context(), streamerID))
+			})))
+		}
 	}
 
 	return mux
