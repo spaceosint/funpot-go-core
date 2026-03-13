@@ -33,7 +33,22 @@ type telegramAuthRequest struct {
 }
 
 type configResponse struct {
-	Features map[string]bool `json:"features"`
+	StarsRate  float64                `json:"starsRate"`
+	MinViewers int                    `json:"minViewers"`
+	Features   configFeaturesResponse `json:"features"`
+	Currencies []string               `json:"currencies"`
+	Limits     configLimitsResponse   `json:"limits"`
+}
+
+type configFeaturesResponse struct {
+	PaymentsEnabled  bool `json:"paymentsEnabled"`
+	ReferralsEnabled bool `json:"referralsEnabled"`
+	MediaEnabled     bool `json:"mediaEnabled"`
+	AdminEnabled     bool `json:"adminEnabled"`
+}
+
+type configLimitsResponse struct {
+	VotePerMin int `json:"votePerMin"`
 }
 
 type createStreamerRequest struct {
@@ -159,7 +174,20 @@ func NewHandler(logger *zap.Logger, readyFn func() bool, metricsHandler http.Han
 				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
-			writeJSON(w, http.StatusOK, configResponse{Features: featureFlags})
+			writeJSON(w, http.StatusOK, configResponse{
+				StarsRate:  1,
+				MinViewers: 10,
+				Features: configFeaturesResponse{
+					PaymentsEnabled:  featureFlags["payments"],
+					ReferralsEnabled: featureFlags["referrals"],
+					MediaEnabled:     featureFlags["media"],
+					AdminEnabled:     featureFlags["admin"],
+				},
+				Currencies: []string{"INT"},
+				Limits: configLimitsResponse{
+					VotePerMin: 30,
+				},
+			})
 		})))
 
 		mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,12 +215,12 @@ func NewHandler(logger *zap.Logger, readyFn func() bool, metricsHandler http.Han
 					writeError(w, http.StatusBadRequest, "twitchUsername is required")
 					return
 				}
-				item, err := streamerService.Create(r.Context(), req.TwitchUsername)
+				submission, err := streamerService.Create(r.Context(), req.TwitchUsername)
 				if err != nil {
 					writeError(w, http.StatusInternalServerError, "failed to create streamer")
 					return
 				}
-				writeJSON(w, http.StatusOK, item)
+				writeJSON(w, http.StatusOK, submission)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
@@ -234,7 +262,12 @@ func NewHandler(logger *zap.Logger, readyFn func() bool, metricsHandler http.Han
 				writeError(w, http.StatusBadRequest, "streamerId is required")
 				return
 			}
-			items, err := eventsService.ListLive(r.Context(), streamerID)
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+			items, err := eventsService.ListLive(r.Context(), streamerID, claims.TelegramID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to load live events")
 				return
