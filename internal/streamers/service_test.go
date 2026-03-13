@@ -1,16 +1,19 @@
 package streamers
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSubmitAndList(t *testing.T) {
 	svc := NewService()
 
-	_, err := svc.Submit(t.Context(), "", "user-1")
+	_, err := svc.Submit(context.Background(), "", "user-1")
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
 
-	sub, err := svc.Submit(t.Context(), "best_streamer", "user-1")
+	sub, err := svc.Submit(context.Background(), "best_streamer", "user-1")
 	if err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
@@ -18,7 +21,7 @@ func TestSubmitAndList(t *testing.T) {
 		t.Fatalf("expected pending status, got %s", sub.Status)
 	}
 
-	items := svc.List(t.Context(), "best", 1)
+	items := svc.List(context.Background(), "best", 1)
 	if len(items) != 1 {
 		t.Fatalf("expected one result, got %d", len(items))
 	}
