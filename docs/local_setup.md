@@ -42,6 +42,10 @@ FUNPOT_DATABASE_MIN_OPEN_CONNS=1
 FUNPOT_DATABASE_CONNECT_TIMEOUT=5s
 FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT=1s
 FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
+FUNPOT_CLIENT_STARS_RATE=1
+FUNPOT_CLIENT_MIN_VIEWERS=100
+FUNPOT_CLIENT_CURRENCIES=INT
+FUNPOT_CLIENT_LIMIT_VOTE_PER_MIN=30
 FUNPOT_DATABASE_MAX_OPEN_CONNS=10
 FUNPOT_DATABASE_MAX_IDLE_CONNS=5
 FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
@@ -109,7 +113,10 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /metrics` – Prometheus metrics when enabled, `204 No Content` otherwise.
 - `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
-- `GET /api/config` – exposes seeded feature flags for the authenticated user.
+- `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
+- `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
+- `POST /api/streamers` – submits a Twitch streamer username for moderation/validation.
+- `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
