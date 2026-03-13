@@ -9,31 +9,43 @@ import (
 )
 
 type Streamer struct {
-	ID             string    `json:"id"`
-	TwitchUsername string    `json:"twitchUsername"`
-	DisplayName    string    `json:"displayName"`
-	Status         string    `json:"status"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID          string `json:"id"`
+	Platform    string `json:"platform"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Online      bool   `json:"online"`
+	Viewers     int    `json:"viewers"`
+	AddedBy     string `json:"addedBy"`
+	Status      string `json:"status"`
+}
+
+type Submission struct {
+	ID     string  `json:"id"`
+	Status string  `json:"status"`
+	Reason *string `json:"reason"`
 }
 
 type Service struct{ db *sql.DB }
 
 func NewService(db *sql.DB) *Service { return &Service{db: db} }
 
-func (s *Service) Create(ctx context.Context, twitchUsername string) (Streamer, error) {
+func (s *Service) Create(ctx context.Context, twitchUsername string) (Submission, error) {
 	normalized := strings.ToLower(strings.TrimSpace(twitchUsername))
 	item := Streamer{
-		ID:             fmt.Sprintf("str_%d", time.Now().UTC().UnixNano()),
-		TwitchUsername: normalized,
-		DisplayName:    normalized,
-		Status:         "pending",
-		CreatedAt:      time.Now().UTC(),
+		ID:          fmt.Sprintf("str_%d", time.Now().UTC().UnixNano()),
+		Platform:    "twitch",
+		Username:    normalized,
+		DisplayName: normalized,
+		Online:      false,
+		Viewers:     0,
+		AddedBy:     "",
+		Status:      "pending",
 	}
 	const q = `INSERT INTO streamers (id, twitch_username, display_name, status, created_at) VALUES ($1,$2,$3,$4,$5)`
-	if _, err := s.db.ExecContext(ctx, q, item.ID, item.TwitchUsername, item.DisplayName, item.Status, item.CreatedAt); err != nil {
-		return Streamer{}, err
+	if _, err := s.db.ExecContext(ctx, q, item.ID, item.Username, item.DisplayName, item.Status, time.Now().UTC()); err != nil {
+		return Submission{}, err
 	}
-	return item, nil
+	return Submission{ID: item.ID, Status: item.Status, Reason: nil}, nil
 }
 
 func (s *Service) List(ctx context.Context, query string, page, pageSize int) ([]Streamer, error) {
@@ -58,10 +70,15 @@ func (s *Service) List(ctx context.Context, query string, page, pageSize int) ([
 
 	items := make([]Streamer, 0)
 	for rows.Next() {
+		var createdAt time.Time
 		var item Streamer
-		if err := rows.Scan(&item.ID, &item.TwitchUsername, &item.DisplayName, &item.Status, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Username, &item.DisplayName, &item.Status, &createdAt); err != nil {
 			return nil, err
 		}
+		item.Platform = "twitch"
+		item.Online = false
+		item.Viewers = 0
+		item.AddedBy = ""
 		items = append(items, item)
 	}
 	return items, rows.Err()
