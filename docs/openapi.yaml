@@ -124,18 +124,11 @@ paths:
                 $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
-  /api/games:
+  /api/admin/games:
     get:
-      summary: List games for a streamer
+      summary: List games (admin)
       security:
         - bearerAuth: []
-      parameters:
-        - in: query
-          name: streamerId
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: Game list
@@ -145,6 +138,66 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create game (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameUpsertRequest'
+      responses:
+        '201':
+          description: Created game
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/games/{gameId}:
+    put:
+      summary: Update game (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameUpsertRequest'
+      responses:
+        '200':
+          description: Updated game
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete game (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Game deleted
         default:
           $ref: '#/components/responses/Error'
   /api/events/live:
@@ -622,6 +675,23 @@ components:
         reason:
           type: string
           nullable: true
+    GameUpsertRequest:
+      type: object
+      required: [slug, title, status]
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [draft, active, archived]
     Game:
       type: object
       properties:

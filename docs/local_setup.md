@@ -30,6 +30,7 @@ FUNPOT_SENTRY_DEBUG=false
 FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
 FUNPOT_AUTH_JWT_SECRET=dev-secret
 FUNPOT_AUTH_JWT_TTL=15m
+FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
 FUNPOT_DATABASE_PORT=5432
@@ -117,6 +118,10 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
 - `POST /api/streamers` – submits a Twitch streamer username for moderation/validation.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
+- `GET /api/admin/games` – admin-only endpoint listing all configured games.
+- `POST /api/admin/games` – admin-only endpoint creating a game definition.
+- `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
+- `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

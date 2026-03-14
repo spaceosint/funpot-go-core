@@ -12,9 +12,11 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/funpot/funpot-go-core/internal/admin"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/games"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 )
@@ -56,14 +58,24 @@ type streamerSubmitRequest struct {
 	TwitchUsername string `json:"twitchUsername"`
 }
 
+type gameUpsertRequest struct {
+	Slug        string   `json:"slug"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Rules       []string `json:"rules"`
+	Status      string   `json:"status"`
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
 	readyFn func() bool,
 	metricsHandler http.Handler,
 	authService *auth.Service,
+	adminService *admin.Service,
 	userService *users.Service,
 	streamersService *streamers.Service,
+	gamesService *games.Service,
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
 ) http.Handler {
@@ -225,6 +237,128 @@ func NewHandler(
 						return
 					}
 					writeJSON(w, http.StatusOK, submission)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+		}
+
+		if gamesService != nil {
+			mux.Handle("/api/admin/games", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, gamesService.List(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req gameUpsertRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := gamesService.Create(r.Context(), games.UpsertRequest{
+						Slug:        req.Slug,
+						Title:       req.Title,
+						Description: req.Description,
+						Rules:       req.Rules,
+						Status:      req.Status,
+					})
+					if err != nil {
+						switch {
+						case errors.Is(err, games.ErrInvalidSlug), errors.Is(err, games.ErrInvalidTitle), errors.Is(err, games.ErrInvalidStatus), errors.Is(err, games.ErrDuplicateSlug):
+							writeError(w, http.StatusBadRequest, err.Error())
+						default:
+							logger.Error("failed to create game", zap.Error(err))
+							writeError(w, http.StatusInternalServerError, "failed to create game")
+						}
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/games/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+
+				gameID := strings.TrimPrefix(r.URL.Path, "/api/admin/games/")
+				if strings.TrimSpace(gameID) == "" || strings.Contains(gameID, "/") {
+					writeError(w, http.StatusBadRequest, "game id is required")
+					return
+				}
+
+				switch r.Method {
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req gameUpsertRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					updated, err := gamesService.Update(r.Context(), gameID, games.UpsertRequest{
+						Slug:        req.Slug,
+						Title:       req.Title,
+						Description: req.Description,
+						Rules:       req.Rules,
+						Status:      req.Status,
+					})
+					if err != nil {
+						switch {
+						case errors.Is(err, games.ErrInvalidID), errors.Is(err, games.ErrInvalidSlug), errors.Is(err, games.ErrInvalidTitle), errors.Is(err, games.ErrInvalidStatus), errors.Is(err, games.ErrDuplicateSlug):
+							writeError(w, http.StatusBadRequest, err.Error())
+						case errors.Is(err, games.ErrNotFound):
+							writeError(w, http.StatusNotFound, err.Error())
+						default:
+							logger.Error("failed to update game", zap.Error(err))
+							writeError(w, http.StatusInternalServerError, "failed to update game")
+						}
+						return
+					}
+					writeJSON(w, http.StatusOK, updated)
+				case http.MethodDelete:
+					err := gamesService.Delete(r.Context(), gameID)
+					if err != nil {
+						if errors.Is(err, games.ErrInvalidID) {
+							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						if errors.Is(err, games.ErrNotFound) {
+							writeError(w, http.StatusNotFound, err.Error())
+							return
+						}
+						logger.Error("failed to delete game", zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to delete game")
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
 				default:
 					w.WriteHeader(http.StatusMethodNotAllowed)
 				}
