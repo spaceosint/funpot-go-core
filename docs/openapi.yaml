@@ -79,6 +79,11 @@ paths:
           schema:
             type: integer
             minimum: 1
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
       responses:
         '200':
           description: Streamer list
@@ -91,7 +96,7 @@ paths:
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Submit a streamer for validation
+      summary: Submit a streamer for Twitch validation
       security:
         - bearerAuth: []
       requestBody:
@@ -111,6 +116,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StreamerSubmission'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
   /api/games:
