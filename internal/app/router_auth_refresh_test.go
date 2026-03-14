@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func TestAuthRefreshEndpointRotatesTokens(t *testing.T) {
 
 	now := time.Now().UTC()
 	refreshToken := "session-1.secret-1"
-	if err := store.Create(t.Context(), auth.RefreshSession{
+	if err := store.Create(context.Background(), auth.RefreshSession{
 		SessionID:   "session-1",
 		UserID:      "user-1",
 		TelegramID:  42,
@@ -59,7 +60,7 @@ func TestAuthLogoutAllEndpoint(t *testing.T) {
 	store := auth.NewInMemoryRefreshSessionStore(5)
 	authService.WithRefreshSessionStore(store)
 	now := time.Now().UTC()
-	if err := store.Create(t.Context(), auth.RefreshSession{
+	if err := store.Create(context.Background(), auth.RefreshSession{
 		SessionID:   "session-2",
 		UserID:      "user-1",
 		TelegramID:  42,
@@ -81,7 +82,7 @@ func TestAuthLogoutAllEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d (%s)", res.Code, res.Body.String())
 	}
 
-	session, err := store.Get(t.Context(), "session-2")
+	session, err := store.Get(context.Background(), "session-2")
 	if err != nil {
 		t.Fatalf("store.Get() error = %v", err)
 	}
