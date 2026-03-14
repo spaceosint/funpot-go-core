@@ -21,6 +21,7 @@ type Config struct {
 	Auth        AuthConfig
 	Admin       AdminConfig
 	Database    DatabaseConfig
+	Redis       RedisConfig
 	Features    FeatureConfig
 	Client      ClientConfig
 }
@@ -87,6 +88,21 @@ type DatabaseConfig struct {
 	ConnMaxIdleTime time.Duration
 	ConnMaxLifetime time.Duration
 	ConnectTimeout  time.Duration
+	HealthcheckPing time.Duration
+}
+
+// RedisConfig controls Redis connectivity and pool tuning.
+type RedisConfig struct {
+	Enabled         bool
+	Addr            string
+	Username        string
+	Password        string
+	DB              int
+	PoolSize        int
+	MinIdleConns    int
+	DialTimeout     time.Duration
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
 	HealthcheckPing time.Duration
 }
 
@@ -208,6 +224,46 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	redisEnabled, err := getBool("FUNPOT_REDIS_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisDB, err := getInt("FUNPOT_REDIS_DB", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisPoolSize, err := getInt("FUNPOT_REDIS_POOL_SIZE", 10)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisMinIdleConns, err := getInt("FUNPOT_REDIS_MIN_IDLE_CONNS", 1)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisDialTimeout, err := getDuration("FUNPOT_REDIS_DIAL_TIMEOUT", 3*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisReadTimeout, err := getDuration("FUNPOT_REDIS_READ_TIMEOUT", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisWriteTimeout, err := getDuration("FUNPOT_REDIS_WRITE_TIMEOUT", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisHealthcheckPing, err := getDuration("FUNPOT_REDIS_HEALTHCHECK_TIMEOUT", 1*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
 	if err != nil {
 		return Config{}, err
@@ -303,6 +359,19 @@ func Load() (Config, error) {
 			ConnectTimeout:  connectTimeout,
 			HealthcheckPing: healthcheckPing,
 		},
+		Redis: RedisConfig{
+			Enabled:         redisEnabled,
+			Addr:            getString("FUNPOT_REDIS_ADDR", "localhost:6379"),
+			Username:        os.Getenv("FUNPOT_REDIS_USERNAME"),
+			Password:        os.Getenv("FUNPOT_REDIS_PASSWORD"),
+			DB:              redisDB,
+			PoolSize:        redisPoolSize,
+			MinIdleConns:    redisMinIdleConns,
+			DialTimeout:     redisDialTimeout,
+			ReadTimeout:     redisReadTimeout,
+			WriteTimeout:    redisWriteTimeout,
+			HealthcheckPing: redisHealthcheckPing,
+		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
 		},
@@ -325,6 +394,22 @@ func Load() (Config, error) {
 
 	if cfg.Database.MinOpenConns < 0 || cfg.Database.MaxOpenConns < 1 || cfg.Database.MinOpenConns > cfg.Database.MaxOpenConns {
 		return Config{}, fmt.Errorf("invalid database pool bounds: min=%d max=%d", cfg.Database.MinOpenConns, cfg.Database.MaxOpenConns)
+	}
+
+	if cfg.Redis.Enabled {
+		if strings.TrimSpace(cfg.Redis.Addr) == "" {
+			return Config{}, fmt.Errorf("FUNPOT_REDIS_ADDR is required when FUNPOT_REDIS_ENABLED=true")
+		}
+		if cfg.Redis.DB < 0 {
+			return Config{}, fmt.Errorf("FUNPOT_REDIS_DB must be >= 0")
+		}
+		if cfg.Redis.MinIdleConns < 0 || cfg.Redis.PoolSize < 1 || cfg.Redis.MinIdleConns > cfg.Redis.PoolSize {
+			return Config{}, fmt.Errorf("invalid redis pool bounds: min_idle=%d pool_size=%d", cfg.Redis.MinIdleConns, cfg.Redis.PoolSize)
+		}
+	}
+
+	if cfg.Auth.Refresh.Enabled && !cfg.Redis.Enabled {
+		return Config{}, fmt.Errorf("FUNPOT_REDIS_ENABLED=true is required when FUNPOT_AUTH_REFRESH_ENABLED=true")
 	}
 
 	return cfg, nil

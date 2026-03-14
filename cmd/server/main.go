@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
+	"github.com/funpot/funpot-go-core/pkg/cache"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
@@ -57,8 +59,9 @@ func main() {
 	defer telemetry.FlushSentry(2 * time.Second)
 
 	var (
-		db       *sql.DB
-		userRepo users.Repository
+		db          *sql.DB
+		redisClient *redis.Client
+		userRepo    users.Repository
 	)
 
 	if cfg.Database.DSN() != "" {
@@ -84,6 +87,20 @@ func main() {
 		userRepo = users.NewInMemoryRepository()
 	}
 
+	if cfg.Redis.Enabled {
+		redisCtx, cancel := context.WithTimeout(context.Background(), cfg.Redis.HealthcheckPing)
+		redisClient, err = cache.OpenRedis(redisCtx, cfg.Redis)
+		cancel()
+		if err != nil {
+			logger.Fatal("failed to connect to redis", zap.Error(err))
+		}
+		defer func() {
+			if err := redisClient.Close(); err != nil {
+				logger.Error("failed to close redis", zap.Error(err))
+			}
+		}()
+	}
+
 	userService := users.NewService(userRepo)
 	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamersService := streamers.NewService()
@@ -95,16 +112,37 @@ func main() {
 	if err != nil {
 		logger.Fatal("failed to create auth service", zap.Error(err))
 	}
+	if cfg.Auth.Refresh.Enabled {
+		refreshStore, err := auth.NewRedisRefreshSessionStore(redisClient, auth.RefreshStoreConfig{
+			KeyPrefix:          cfg.Auth.Refresh.KeyPrefix,
+			MaxSessionsPerUser: cfg.Auth.Refresh.MaxSessionsPerUser,
+		})
+		if err != nil {
+			logger.Fatal("failed to configure refresh session store", zap.Error(err))
+		}
+		authService.WithRefreshSessionStore(refreshStore)
+	}
 
 	readyFn := func() bool {
-		if db == nil {
-			return true
+		if db != nil {
+			pingCtx, cancel := context.WithTimeout(context.Background(), cfg.Database.HealthcheckPing)
+			err := db.PingContext(pingCtx)
+			cancel()
+			if err != nil {
+				return false
+			}
 		}
 
-		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+		if redisClient != nil {
+			pingCtx, cancel := context.WithTimeout(context.Background(), cfg.Redis.HealthcheckPing)
+			err := redisClient.Ping(pingCtx).Err()
+			cancel()
+			if err != nil {
+				return false
+			}
+		}
 
-		return db.PingContext(pingCtx) == nil
+		return true
 	}
 
 	handler := app.NewHandler(

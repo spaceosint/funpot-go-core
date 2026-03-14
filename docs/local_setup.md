@@ -34,6 +34,17 @@ FUNPOT_AUTH_REFRESH_ENABLED=false
 FUNPOT_AUTH_REFRESH_TTL=720h
 FUNPOT_AUTH_REFRESH_MAX_SESSIONS=5
 FUNPOT_AUTH_REFRESH_KEY_PREFIX=funpot:auth
+FUNPOT_REDIS_ENABLED=false
+FUNPOT_REDIS_ADDR=localhost:6379
+FUNPOT_REDIS_USERNAME=
+FUNPOT_REDIS_PASSWORD=
+FUNPOT_REDIS_DB=0
+FUNPOT_REDIS_POOL_SIZE=10
+FUNPOT_REDIS_MIN_IDLE_CONNS=1
+FUNPOT_REDIS_DIAL_TIMEOUT=3s
+FUNPOT_REDIS_READ_TIMEOUT=2s
+FUNPOT_REDIS_WRITE_TIMEOUT=2s
+FUNPOT_REDIS_HEALTHCHECK_TIMEOUT=1s
 FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
@@ -56,6 +67,9 @@ FUNPOT_DATABASE_MAX_IDLE_CONNS=5
 FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
 FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 ```
+
+> `FUNPOT_AUTH_REFRESH_ENABLED=true` requires `FUNPOT_REDIS_ENABLED=true`
+> because refresh sessions are stored in Redis.
 
 Update this table whenever you introduce a new configuration surface.
 
@@ -81,6 +95,12 @@ go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
 ```
 
 ## Running the Server
+If you plan to use refresh sessions, run Redis locally (example with Docker):
+
+```bash
+docker run --name funpot-redis -p 6379:6379 -d redis:7
+```
+
 Run PostgreSQL locally (example with Docker):
 
 ```bash
@@ -138,7 +158,9 @@ full stack.
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is
 provided. When `FUNPOT_DATABASE_ENABLED=true`, startup validates PostgreSQL
-connectivity and `/readyz` depends on successful DB ping checks.
+connectivity and `/readyz` depends on successful DB ping checks. When
+`FUNPOT_REDIS_ENABLED=true`, startup validates Redis connectivity and includes
+Redis ping in `/readyz` checks.
 
 ## Observability Notes
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.
