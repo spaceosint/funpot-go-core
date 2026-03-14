@@ -16,3 +16,21 @@ type Submission struct {
 	Status string  `json:"status"`
 	Reason *string `json:"reason"`
 }
+
+type LLMDecision struct {
+	ID         string  `json:"id"`
+	RunID      string  `json:"runId"`
+	StreamerID string  `json:"streamerId"`
+	Stage      string  `json:"stage"`
+	Label      string  `json:"label"`
+	Confidence float64 `json:"confidence"`
+	CreatedAt  string  `json:"createdAt"`
+}
+
+type RecordDecisionRequest struct {
+	RunID      string
+	StreamerID string
+	Stage      string
+	Label      string
+	Confidence float64
+}

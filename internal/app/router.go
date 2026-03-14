@@ -80,6 +80,13 @@ type promptCreateRequest struct {
 	MinConfidence float64 `json:"minConfidence"`
 }
 
+type llmDecisionRecordRequest struct {
+	RunID      string  `json:"runId"`
+	Stage      string  `json:"stage"`
+	Label      string  `json:"label"`
+	Confidence float64 `json:"confidence"`
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
@@ -254,6 +261,80 @@ func NewHandler(
 					writeJSON(w, http.StatusOK, submission)
 				default:
 					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/streamers/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				path := strings.TrimPrefix(r.URL.Path, "/api/streamers/")
+				if path == "" {
+					writeError(w, http.StatusNotFound, "streamer route not found")
+					return
+				}
+
+				parts := strings.Split(path, "/")
+				if len(parts) != 2 {
+					writeError(w, http.StatusNotFound, "streamer route not found")
+					return
+				}
+				streamerID := strings.TrimSpace(parts[0])
+				action := strings.TrimSpace(parts[1])
+				if streamerID == "" {
+					writeError(w, http.StatusBadRequest, "streamer id is required")
+					return
+				}
+
+				switch action {
+				case "llm-decisions":
+					switch r.Method {
+					case http.MethodGet:
+						limit, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+						if err != nil && r.URL.Query().Get("limit") != "" {
+							writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+							return
+						}
+						if limit < 0 {
+							writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+							return
+						}
+						writeJSON(w, http.StatusOK, streamersService.ListLLMDecisions(r.Context(), streamerID, limit))
+					case http.MethodPost:
+						claims, ok := auth.ClaimsFromContext(r.Context())
+						if !ok {
+							writeError(w, http.StatusUnauthorized, "missing auth claims")
+							return
+						}
+						if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+							writeError(w, http.StatusForbidden, "admin role is required")
+							return
+						}
+						defer r.Body.Close() //nolint:errcheck
+						body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+						if err != nil {
+							writeError(w, http.StatusBadRequest, "failed to read request body")
+							return
+						}
+						var req llmDecisionRecordRequest
+						if err := json.Unmarshal(body, &req); err != nil {
+							writeError(w, http.StatusBadRequest, "invalid request body")
+							return
+						}
+						item, err := streamersService.RecordLLMDecision(r.Context(), streamers.RecordDecisionRequest{
+							RunID:      req.RunID,
+							StreamerID: streamerID,
+							Stage:      req.Stage,
+							Label:      req.Label,
+							Confidence: req.Confidence,
+						})
+						if err != nil {
+							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						writeJSON(w, http.StatusCreated, item)
+					default:
+						w.WriteHeader(http.StatusMethodNotAllowed)
+					}
+				default:
+					writeError(w, http.StatusNotFound, "streamer route not found")
 				}
 			})))
 		}
