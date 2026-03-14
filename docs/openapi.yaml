@@ -212,6 +212,20 @@ paths:
                 $ref: '#/components/schemas/Game'
         default:
           $ref: '#/components/responses/Error'
+  /api/admin/me:
+    get:
+      summary: Get admin capabilities for current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Admin capability flags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminMeResponse'
+        default:
+          $ref: '#/components/responses/Error'
   /api/admin/games/{gameId}:
     put:
       summary: Update game (admin)
@@ -859,6 +873,12 @@ components:
           type: string
           format: date-time
           nullable: true
+    AdminMeResponse:
+      type: object
+      required: [isAdmin]
+      properties:
+        isAdmin:
+          type: boolean
     PromptCreateRequest:
       type: object
       required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
