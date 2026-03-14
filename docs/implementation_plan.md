@@ -35,9 +35,9 @@ approximate sequencing, and validation criteria.
   feature flags.
 
 ### M2 – Streamer Catalog & Games Skeleton
-- [ ] Implement streamer onboarding (`POST /api/streamers`) with Twitch
+- [x] Implement streamer onboarding (`POST /api/streamers`) with Twitch
   validation integration stub and rate limits.
-- [ ] Expose streamer listings (`GET /api/streamers`) with pagination and
+- [x] Expose streamer listings (`GET /api/streamers`) with pagination and
   moderation states.
 - [ ] Create `games` module storing rules, statuses, and admin CRUD endpoints.
 - [ ] Introduce admin role enforcement and basic UI scaffolds.

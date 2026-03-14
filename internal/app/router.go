@@ -121,7 +121,7 @@ func NewHandler(
 
 			resp, err := authService.Authenticate(r.Context(), req.InitData, time.Now().UTC())
 			if err != nil {
-				status := http.StatusBadRequest
+				var status int
 				switch {
 				case errors.Is(err, auth.ErrInvalidHash), errors.Is(err, auth.ErrExpired):
 					status = http.StatusUnauthorized
@@ -186,7 +186,12 @@ func NewHandler(
 						writeError(w, http.StatusBadRequest, "page must be a positive integer")
 						return
 					}
-					items := streamersService.List(r.Context(), r.URL.Query().Get("query"), page)
+					statusFilter := r.URL.Query().Get("status")
+					if !streamers.IsSupportedStatus(statusFilter) {
+						writeError(w, http.StatusBadRequest, streamers.ErrInvalidStatus.Error())
+						return
+					}
+					items := streamersService.List(r.Context(), r.URL.Query().Get("query"), statusFilter, page)
 					writeJSON(w, http.StatusOK, items)
 				case http.MethodPost:
 					defer r.Body.Close() //nolint:errcheck
@@ -207,8 +212,12 @@ func NewHandler(
 					}
 					submission, err := streamersService.Submit(r.Context(), req.TwitchUsername, claims.Subject)
 					if err != nil {
-						if errors.Is(err, streamers.ErrInvalidUsername) {
+						if errors.Is(err, streamers.ErrInvalidUsername) || errors.Is(err, streamers.ErrTwitchUnavailable) {
 							writeError(w, http.StatusBadRequest, err.Error())
+							return
+						}
+						if errors.Is(err, streamers.ErrRateLimited) {
+							writeError(w, http.StatusTooManyRequests, err.Error())
 							return
 						}
 						logger.Error("failed to submit streamer", zap.Error(err))

@@ -2,30 +2,80 @@ package streamers
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 )
 
-func TestSubmitAndList(t *testing.T) {
-	svc := NewService()
+type validatorStub struct {
+	displayName string
+	err         error
+}
 
-	_, err := svc.Submit(context.Background(), "", "user-1")
-	if err == nil {
-		t.Fatalf("expected validation error")
+func (v validatorStub) ValidateUsername(_ context.Context, _ string) (string, error) {
+	if v.err != nil {
+		return "", v.err
+	}
+	return v.displayName, nil
+}
+
+func TestServiceSubmitValidationAndListing(t *testing.T) {
+	tests := []struct {
+		name          string
+		username      string
+		validator     TwitchValidator
+		expectedError error
+	}{
+		{name: "empty username", username: "", expectedError: ErrInvalidUsername},
+		{name: "validator failure", username: "bad@user", validator: validatorStub{err: errors.New("not found")}, expectedError: ErrTwitchUnavailable},
+		{name: "success", username: "Best_Streamer", validator: validatorStub{displayName: "Best Streamer"}},
 	}
 
-	sub, err := svc.Submit(context.Background(), "best_streamer", "user-1")
-	if err != nil {
-		t.Fatalf("Submit() error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewServiceWithValidator(tt.validator)
+			sub, err := svc.Submit(context.Background(), tt.username, "user-1")
+			if tt.expectedError != nil {
+				if !errors.Is(err, tt.expectedError) {
+					t.Fatalf("expected error %v, got %v", tt.expectedError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Submit() error = %v", err)
+			}
+			if sub.Status != "pending" {
+				t.Fatalf("expected pending status, got %s", sub.Status)
+			}
+
+			items := svc.List(context.Background(), "best", "pending", 1)
+			if len(items) != 1 {
+				t.Fatalf("expected one result, got %d", len(items))
+			}
+			if items[0].Username != "best_streamer" {
+				t.Fatalf("unexpected username: %s", items[0].Username)
+			}
+		})
 	}
-	if sub.Status != "pending" {
-		t.Fatalf("expected pending status, got %s", sub.Status)
+}
+
+func TestServiceSubmitRateLimit(t *testing.T) {
+	svc := NewServiceWithValidator(validatorStub{displayName: "Display"})
+	clock := time.Now().UTC()
+	svc.nowFn = func() time.Time { return clock }
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Submit(context.Background(), "streamername", "user-1"); err != nil {
+			t.Fatalf("unexpected error on submission %d: %v", i+1, err)
+		}
 	}
 
-	items := svc.List(context.Background(), "best", 1)
-	if len(items) != 1 {
-		t.Fatalf("expected one result, got %d", len(items))
+	if _, err := svc.Submit(context.Background(), "streamername", "user-1"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected rate limit error, got %v", err)
 	}
-	if items[0].Username != "best_streamer" {
-		t.Fatalf("unexpected username: %s", items[0].Username)
+
+	clock = clock.Add(time.Minute + time.Second)
+	if _, err := svc.Submit(context.Background(), "streamername", "user-1"); err != nil {
+		t.Fatalf("expected limiter reset after window, got %v", err)
 	}
 }
