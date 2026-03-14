@@ -131,6 +131,14 @@ func TestLoadDatabaseValidation(t *testing.T) {
 				"FUNPOT_DATABASE_USER":    "funpot",
 			},
 		},
+		{
+			name: "invalid redis pool bounds",
+			env: map[string]string{
+				"FUNPOT_REDIS_ENABLED":        "true",
+				"FUNPOT_REDIS_POOL_SIZE":      "2",
+				"FUNPOT_REDIS_MIN_IDLE_CONNS": "5",
+			},
+		},
 	}
 
 	for _, tt := range tests {

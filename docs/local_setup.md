@@ -62,6 +62,9 @@ FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
 FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 ```
 
+> `FUNPOT_AUTH_REFRESH_ENABLED=true` requires `FUNPOT_REDIS_ENABLED=true`
+> because refresh sessions are stored in Redis.
+
 Update this table whenever you introduce a new configuration surface.
 
 ### Database
@@ -86,6 +89,12 @@ go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
 ```
 
 ## Running the Server
+If you plan to use refresh sessions, run Redis locally (example with Docker):
+
+```bash
+docker run --name funpot-redis -p 6379:6379 -d redis:7
+```
+
 Run PostgreSQL locally (example with Docker):
 
 ```bash
@@ -143,7 +152,9 @@ full stack.
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is
 provided. When `FUNPOT_DATABASE_ENABLED=true`, startup validates PostgreSQL
-connectivity and `/readyz` depends on successful DB ping checks.
+connectivity and `/readyz` depends on successful DB ping checks. When
+`FUNPOT_REDIS_ENABLED=true`, startup validates Redis connectivity and includes
+Redis ping in `/readyz` checks.
 
 When `FUNPOT_AUTH_REFRESH_ENABLED=true`, the service configures refresh-session
 storage automatically. Set `FUNPOT_REDIS_ENABLED=true` to use Redis-backed
