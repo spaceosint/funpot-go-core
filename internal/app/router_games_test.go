@@ -25,10 +25,14 @@ func buildAuthService(t *testing.T) *auth.Service {
 			Secret: "test-secret",
 			TTL:    time.Hour,
 		},
+		Refresh: config.RefreshConfig{
+			TTL: 24 * time.Hour,
+		},
 	}, users.NewService(users.NewInMemoryRepository()))
 	if err != nil {
 		t.Fatalf("auth.NewService() error = %v", err)
 	}
+	svc.WithRefreshSessionStore(auth.NewInMemoryRefreshSessionStore(5))
 	return svc
 }
 

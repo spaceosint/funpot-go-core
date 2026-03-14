@@ -37,9 +37,9 @@ func TestRedisRefreshSessionStoreCreateAndLimit(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	cases := []RefreshSession{
-		{SessionID: "s1", UserID: "u1", TokenHash: "h1", ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now},
-		{SessionID: "s2", UserID: "u1", TokenHash: "h2", ExpiresAt: now.Add(6 * time.Minute), CreatedAt: now.Add(1 * time.Second)},
-		{SessionID: "s3", UserID: "u1", TokenHash: "h3", ExpiresAt: now.Add(7 * time.Minute), CreatedAt: now.Add(2 * time.Second)},
+		{SessionID: "s1", UserID: "u1", TelegramID: 1, TokenHash: "h1", ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now},
+		{SessionID: "s2", UserID: "u1", TelegramID: 1, TokenHash: "h2", ExpiresAt: now.Add(6 * time.Minute), CreatedAt: now.Add(1 * time.Second)},
+		{SessionID: "s3", UserID: "u1", TelegramID: 1, TokenHash: "h3", ExpiresAt: now.Add(7 * time.Minute), CreatedAt: now.Add(2 * time.Second)},
 	}
 	for _, session := range cases {
 		if err := store.Create(ctx, session); err != nil {
@@ -65,7 +65,7 @@ func TestRedisRefreshSessionStoreRotate(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	if err := store.Create(ctx, RefreshSession{SessionID: "s1", UserID: "u1", TokenHash: "old", ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now}); err != nil {
+	if err := store.Create(ctx, RefreshSession{SessionID: "s1", UserID: "u1", TelegramID: 1, TokenHash: "old", ExpiresAt: now.Add(5 * time.Minute), CreatedAt: now}); err != nil {
 		t.Fatalf("Create error: %v", err)
 	}
 
@@ -96,8 +96,8 @@ func TestRedisRefreshSessionStoreRevoke(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	sessions := []RefreshSession{
-		{SessionID: "s1", UserID: "u1", TokenHash: "h1", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now},
-		{SessionID: "s2", UserID: "u1", TokenHash: "h2", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now},
+		{SessionID: "s1", UserID: "u1", TelegramID: 1, TokenHash: "h1", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now},
+		{SessionID: "s2", UserID: "u1", TelegramID: 1, TokenHash: "h2", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now},
 	}
 	for _, session := range sessions {
 		if err := store.Create(ctx, session); err != nil {

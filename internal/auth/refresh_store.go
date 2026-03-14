@@ -22,6 +22,7 @@ var (
 type RefreshSession struct {
 	SessionID   string
 	UserID      string
+	TelegramID  int64
 	TokenHash   string
 	ExpiresAt   time.Time
 	CreatedAt   time.Time
@@ -120,6 +121,7 @@ func (s *RedisRefreshSessionStore) Create(ctx context.Context, session RefreshSe
 	pipe := s.client.TxPipeline()
 	pipe.HSet(ctx, s.sessionKey(session.SessionID), map[string]any{
 		"user_id":      session.UserID,
+		"telegram_id":  session.TelegramID,
 		"token_hash":   session.TokenHash,
 		"expires_at":   session.ExpiresAt.UTC().Unix(),
 		"created_at":   session.CreatedAt.UTC().Unix(),
@@ -258,6 +260,10 @@ func parseRefreshSession(sessionID string, fields map[string]string) (RefreshSes
 	if err != nil {
 		return RefreshSession{}, fmt.Errorf("parse last_rotated: %w", err)
 	}
+	telegramIDUnix, err := strconv.ParseInt(fields["telegram_id"], 10, 64)
+	if err != nil {
+		return RefreshSession{}, fmt.Errorf("parse telegram_id: %w", err)
+	}
 	var revokedAt *time.Time
 	if rawRevokedAt, ok := fields["revoked_at"]; ok && rawRevokedAt != "" {
 		revokedAtUnix, err := strconv.ParseInt(rawRevokedAt, 10, 64)
@@ -270,6 +276,7 @@ func parseRefreshSession(sessionID string, fields map[string]string) (RefreshSes
 	return RefreshSession{
 		SessionID:   sessionID,
 		UserID:      fields["user_id"],
+		TelegramID:  telegramIDUnix,
 		TokenHash:   fields["token_hash"],
 		ExpiresAt:   time.Unix(expiresAtUnix, 0).UTC(),
 		CreatedAt:   time.Unix(createdAtUnix, 0).UTC(),

@@ -30,6 +30,10 @@ FUNPOT_SENTRY_DEBUG=false
 FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
 FUNPOT_AUTH_JWT_SECRET=dev-secret
 FUNPOT_AUTH_JWT_TTL=15m
+FUNPOT_AUTH_REFRESH_ENABLED=false
+FUNPOT_AUTH_REFRESH_TTL=720h
+FUNPOT_AUTH_REFRESH_MAX_SESSIONS=5
+FUNPOT_AUTH_REFRESH_KEY_PREFIX=funpot:auth
 FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
@@ -112,7 +116,10 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
 - `GET /readyz` – readiness probe (`ready` by default; DB connectivity check when PostgreSQL mode is enabled).
 - `GET /metrics` – Prometheus metrics when enabled, `204 No Content` otherwise.
-- `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
+- `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns JWT + refresh pair when refresh sessions are enabled.
+- `POST /api/auth/refresh` – rotates refresh session and issues a new JWT + refresh token pair.
+- `POST /api/auth/logout` – revokes a single refresh session using refresh token.
+- `POST /api/auth/logout-all` – revokes all refresh sessions for authenticated user.
 - `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
 - `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.

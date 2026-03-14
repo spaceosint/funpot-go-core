@@ -31,6 +31,10 @@ type telegramAuthRequest struct {
 	InitData string `json:"initData"`
 }
 
+type refreshTokenRequest struct {
+	RefreshToken string `json:"refreshToken"`
+}
+
 type ClientConfigResponse struct {
 	StarsRate  float64         `json:"starsRate"`
 	MinViewers int             `json:"minViewers"`
@@ -183,7 +187,99 @@ func NewHandler(
 			writeJSON(w, http.StatusOK, resp)
 		})
 
+		mux.HandleFunc("/api/auth/refresh", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			defer r.Body.Close() //nolint:errcheck
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "failed to read request body")
+				return
+			}
+
+			var req refreshTokenRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+
+			resp, err := authService.Refresh(r.Context(), req.RefreshToken, time.Now().UTC())
+			if err != nil {
+				switch {
+				case errors.Is(err, auth.ErrRefreshTokenRequired), errors.Is(err, auth.ErrInvalidRefreshToken):
+					writeError(w, http.StatusBadRequest, err.Error())
+				case errors.Is(err, auth.ErrRefreshSessionNotFound), errors.Is(err, auth.ErrRefreshSessionRevoked), errors.Is(err, auth.ErrRefreshTokenMismatch):
+					writeError(w, http.StatusUnauthorized, err.Error())
+				default:
+					logger.Error("failed to refresh auth token", zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to refresh token")
+				}
+				return
+			}
+
+			writeJSON(w, http.StatusOK, resp)
+		})
+
+		mux.HandleFunc("/api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			defer r.Body.Close() //nolint:errcheck
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "failed to read request body")
+				return
+			}
+
+			var req refreshTokenRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+
+			if err := authService.Logout(r.Context(), req.RefreshToken, time.Now().UTC()); err != nil {
+				switch {
+				case errors.Is(err, auth.ErrInvalidRefreshToken), errors.Is(err, auth.ErrRefreshTokenRequired):
+					writeError(w, http.StatusBadRequest, err.Error())
+				case errors.Is(err, auth.ErrRefreshSessionNotFound), errors.Is(err, auth.ErrRefreshTokenMismatch):
+					writeError(w, http.StatusUnauthorized, err.Error())
+				default:
+					logger.Error("failed to logout refresh session", zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to logout")
+				}
+				return
+			}
+
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		})
+
 		authed := authService.ClaimsMiddleware()
+
+		mux.Handle("/api/auth/logout-all", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+
+			if err := authService.LogoutAll(r.Context(), claims.Subject, time.Now().UTC()); err != nil {
+				logger.Error("failed to revoke all sessions", zap.Error(err), zap.String("userID", claims.Subject))
+				writeError(w, http.StatusInternalServerError, "failed to logout all sessions")
+				return
+			}
+
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		})))
 
 		mux.Handle("/api/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {

@@ -32,8 +32,57 @@ paths:
                   expiresAt:
                     type: string
                     format: date-time
+                  refreshToken:
+                    type: string
+                  refreshExpiresAt:
+                    type: string
+                    format: date-time
+                  sessionId:
+                    type: string
                   user:
                     $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/refresh:
+    post:
+      summary: Rotate refresh session and issue new tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token pair rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/logout:
+    post:
+      summary: Revoke a single refresh session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Session revoked
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/logout-all:
+    post:
+      summary: Revoke all refresh sessions for authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked
         default:
           $ref: '#/components/responses/Error'
   /api/me:
@@ -704,6 +753,27 @@ components:
                     type: object
                     additionalProperties: true
   schemas:
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    RefreshResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+        refreshExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
     UserProfile:
       type: object
       properties:
