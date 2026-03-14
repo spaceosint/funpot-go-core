@@ -124,6 +124,59 @@ paths:
                 $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
+  /api/streamers/{streamerId}/llm-decisions:
+    get:
+      summary: List latest LLM stage decisions for streamer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Decision history ordered by latest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMDecision'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Record LLM stage decision for streamer (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMDecisionRecordRequest'
+      responses:
+        '201':
+          description: Recorded LLM decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMDecision'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/admin/games:
     get:
       summary: List games (admin)
@@ -730,6 +783,41 @@ components:
         reason:
           type: string
           nullable: true
+
+    LLMDecisionRecordRequest:
+      type: object
+      required: [runId, stage, label, confidence]
+      properties:
+        runId:
+          type: string
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        label:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    LLMDecision:
+      type: object
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        streamerId:
+          type: string
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        label:
+          type: string
+        confidence:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
     GameUpsertRequest:
       type: object
       required: [slug, title, status]

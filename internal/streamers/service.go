@@ -40,10 +40,13 @@ type submissionLimit struct {
 type Service struct {
 	mu             sync.RWMutex
 	items          []Streamer
+	decisions      map[string][]LLMDecision
 	validator      TwitchValidator
 	rateLimitMu    sync.Mutex
 	rateLimitByKey map[string]submissionLimit
 	nowFn          func() time.Time
+	counterMu      sync.Mutex
+	counter        int64
 }
 
 func NewService() *Service {
@@ -56,6 +59,7 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 	}
 	return &Service{
 		items:          []Streamer{},
+		decisions:      make(map[string][]LLMDecision),
 		validator:      validator,
 		rateLimitByKey: make(map[string]submissionLimit),
 		nowFn: func() time.Time {
@@ -134,6 +138,86 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 	s.mu.Unlock()
 
 	return Submission{ID: id, Status: "pending", Reason: nil}, nil
+}
+
+func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest) (LLMDecision, error) {
+	streamerID := strings.TrimSpace(req.StreamerID)
+	if streamerID == "" {
+		return LLMDecision{}, errors.New("streamerId is required")
+	}
+	runID := strings.TrimSpace(req.RunID)
+	if runID == "" {
+		return LLMDecision{}, errors.New("runId is required")
+	}
+	stage := strings.ToLower(strings.TrimSpace(req.Stage))
+	if !isSupportedStage(stage) {
+		return LLMDecision{}, errors.New("stage must be one of: stage_a, stage_b, stage_c, stage_d")
+	}
+	label := strings.TrimSpace(req.Label)
+	if label == "" {
+		return LLMDecision{}, errors.New("label is required")
+	}
+	if req.Confidence < 0 || req.Confidence > 1 {
+		return LLMDecision{}, errors.New("confidence must be between 0 and 1")
+	}
+
+	s.counterMu.Lock()
+	s.counter++
+	id := fmt.Sprintf("llm_%d", s.counter)
+	s.counterMu.Unlock()
+
+	item := LLMDecision{
+		ID:         id,
+		RunID:      runID,
+		StreamerID: streamerID,
+		Stage:      stage,
+		Label:      label,
+		Confidence: req.Confidence,
+		CreatedAt:  s.nowFn().UTC().Format(time.RFC3339Nano),
+	}
+
+	s.mu.Lock()
+	s.decisions[streamerID] = append(s.decisions[streamerID], item)
+	s.mu.Unlock()
+
+	return item, nil
+}
+
+func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit int) []LLMDecision {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return []LLMDecision{}
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := s.decisions[key]
+	if len(items) == 0 {
+		return []LLMDecision{}
+	}
+	if limit > len(items) {
+		limit = len(items)
+	}
+
+	start := len(items) - limit
+	out := make([]LLMDecision, 0, limit)
+	for i := len(items) - 1; i >= start; i-- {
+		out = append(out, items[i])
+	}
+	return out
+}
+
+func isSupportedStage(stage string) bool {
+	switch stage {
+	case "stage_a", "stage_b", "stage_c", "stage_d":
+		return true
+	default:
+		return false
+	}
 }
 
 func IsSupportedStatus(status string) bool {

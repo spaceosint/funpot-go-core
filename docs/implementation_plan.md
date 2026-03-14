@@ -57,8 +57,8 @@ approximate sequencing, and validation criteria.
   Stage D determines result (win / loss / unknown).
 - [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
   handling for failed LLM jobs.
-- [ ] Publish live LLM status updates to clients via WebSocket channel and
-  provide REST history endpoint for latest decisions.
+- [ ] Publish live LLM status updates to clients via WebSocket channel.
+- [x] Provide REST history endpoint for latest LLM stage decisions.
 - [ ] Introduce Redis-backed refresh session store for admin/user session
   revocation, rotation, and concurrent session controls.
 - [ ] Add observability: per-stage latency, success ratio, token usage, and
