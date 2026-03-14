@@ -45,7 +45,7 @@ approximate sequencing, and validation criteria.
   configure games ready for live events.
 
 ### M2.1 – LLM Stream Orchestration (Gemini) for Streamers
-- [ ] Deliver admin panel backend contracts for managing LLM request templates,
+- [x] Deliver admin panel backend contracts for managing LLM request templates,
   stage transitions, and safety limits (temperature, max tokens, timeout,
   fallback strategy).
 - [ ] Implement stream capture worker pipeline:

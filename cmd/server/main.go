@@ -16,6 +16,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
@@ -87,6 +88,7 @@ func main() {
 	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamersService := streamers.NewService()
 	gamesService := games.NewService()
+	promptsService := prompts.NewService()
 	eventsService := events.NewService(nil)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
@@ -114,6 +116,7 @@ func main() {
 		userService,
 		streamersService,
 		gamesService,
+		promptsService,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
 	)
