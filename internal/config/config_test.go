@@ -27,13 +27,8 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_AUTH_REFRESH_MAX_SESSIONS", "3")
 	t.Setenv("FUNPOT_REDIS_ENABLED", "true")
 	t.Setenv("FUNPOT_REDIS_ADDR", "localhost:6379")
-	t.Setenv("FUNPOT_REDIS_DB", "2")
-	t.Setenv("FUNPOT_REDIS_POOL_SIZE", "20")
-	t.Setenv("FUNPOT_REDIS_MIN_IDLE_CONNS", "2")
-	t.Setenv("FUNPOT_REDIS_DIAL_TIMEOUT", "4s")
-	t.Setenv("FUNPOT_REDIS_READ_TIMEOUT", "3s")
-	t.Setenv("FUNPOT_REDIS_WRITE_TIMEOUT", "3s")
-	t.Setenv("FUNPOT_REDIS_HEALTHCHECK_TIMEOUT", "1500ms")
+	t.Setenv("FUNPOT_REDIS_DB", "1")
+	t.Setenv("FUNPOT_REDIS_CONNECT_TIMEOUT", "3s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -85,26 +80,11 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Redis.Addr != "localhost:6379" {
 		t.Fatalf("expected redis addr localhost:6379, got %q", cfg.Redis.Addr)
 	}
-	if cfg.Redis.DB != 2 {
-		t.Fatalf("expected redis db 2, got %d", cfg.Redis.DB)
+	if cfg.Redis.DB != 1 {
+		t.Fatalf("expected redis db 1, got %d", cfg.Redis.DB)
 	}
-	if cfg.Redis.PoolSize != 20 {
-		t.Fatalf("expected redis pool size 20, got %d", cfg.Redis.PoolSize)
-	}
-	if cfg.Redis.MinIdleConns != 2 {
-		t.Fatalf("expected redis min idle conns 2, got %d", cfg.Redis.MinIdleConns)
-	}
-	if cfg.Redis.DialTimeout != 4*time.Second {
-		t.Fatalf("expected redis dial timeout 4s, got %s", cfg.Redis.DialTimeout)
-	}
-	if cfg.Redis.ReadTimeout != 3*time.Second {
-		t.Fatalf("expected redis read timeout 3s, got %s", cfg.Redis.ReadTimeout)
-	}
-	if cfg.Redis.WriteTimeout != 3*time.Second {
-		t.Fatalf("expected redis write timeout 3s, got %s", cfg.Redis.WriteTimeout)
-	}
-	if cfg.Redis.HealthcheckPing != 1500*time.Millisecond {
-		t.Fatalf("expected redis healthcheck timeout 1500ms, got %s", cfg.Redis.HealthcheckPing)
+	if cfg.Redis.ConnectTimeout != 3*time.Second {
+		t.Fatalf("expected redis connect timeout 3s, got %s", cfg.Redis.ConnectTimeout)
 	}
 }
 
@@ -135,10 +115,10 @@ func TestLoadDatabaseValidation(t *testing.T) {
 			},
 		},
 		{
-			name: "refresh requires redis",
+			name: "invalid redis db",
 			env: map[string]string{
-				"FUNPOT_AUTH_REFRESH_ENABLED": "true",
-				"FUNPOT_REDIS_ENABLED":        "false",
+				"FUNPOT_REDIS_ENABLED": "true",
+				"FUNPOT_REDIS_DB":      "-1",
 			},
 		},
 		{

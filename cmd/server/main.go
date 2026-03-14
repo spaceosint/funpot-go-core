@@ -123,6 +123,12 @@ func main() {
 		authService.WithRefreshSessionStore(refreshStore)
 	}
 
+	cleanupRefreshStore, err := setupRefreshSessionStore(ctx, logger, cfg, authService)
+	if err != nil {
+		logger.Fatal("failed to configure refresh sessions", zap.Error(err))
+	}
+	defer cleanupRefreshStore()
+
 	readyFn := func() bool {
 		if db != nil {
 			pingCtx, cancel := context.WithTimeout(context.Background(), cfg.Database.HealthcheckPing)
@@ -179,4 +185,50 @@ func newLogger(level string) (*zap.Logger, error) {
 	cfg.EncoderConfig.TimeKey = "timestamp"
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	return cfg.Build()
+}
+
+func setupRefreshSessionStore(ctx context.Context, logger *zap.Logger, cfg config.Config, authService *auth.Service) (func(), error) {
+	if !cfg.Auth.Refresh.Enabled {
+		return func() {}, nil
+	}
+
+	if !cfg.Redis.Enabled {
+		logger.Warn("redis is disabled; using in-memory refresh session store")
+		authService.WithRefreshSessionStore(auth.NewInMemoryRefreshSessionStore(cfg.Auth.Refresh.MaxSessionsPerUser))
+		return func() {}, nil
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:         cfg.Redis.Addr,
+		Password:     cfg.Redis.Password,
+		DB:           cfg.Redis.DB,
+		DialTimeout:  cfg.Redis.ConnectTimeout,
+		ReadTimeout:  cfg.Redis.ConnectTimeout,
+		WriteTimeout: cfg.Redis.ConnectTimeout,
+	})
+
+	pingCtx, cancel := context.WithTimeout(ctx, cfg.Redis.ConnectTimeout)
+	defer cancel()
+	if err := redisClient.Ping(pingCtx).Err(); err != nil {
+		_ = redisClient.Close()
+		return nil, fmt.Errorf("ping redis: %w", err)
+	}
+
+	refreshStore, err := auth.NewRedisRefreshSessionStore(redisClient, auth.RefreshStoreConfig{
+		KeyPrefix:          cfg.Auth.Refresh.KeyPrefix,
+		MaxSessionsPerUser: cfg.Auth.Refresh.MaxSessionsPerUser,
+	})
+	if err != nil {
+		_ = redisClient.Close()
+		return nil, err
+	}
+
+	authService.WithRefreshSessionStore(refreshStore)
+	logger.Info("redis refresh session store enabled", zap.String("addr", cfg.Redis.Addr))
+
+	return func() {
+		if err := redisClient.Close(); err != nil {
+			logger.Warn("failed to close redis client", zap.Error(err))
+		}
+	}, nil
 }

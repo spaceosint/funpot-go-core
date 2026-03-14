@@ -35,16 +35,10 @@ FUNPOT_AUTH_REFRESH_TTL=720h
 FUNPOT_AUTH_REFRESH_MAX_SESSIONS=5
 FUNPOT_AUTH_REFRESH_KEY_PREFIX=funpot:auth
 FUNPOT_REDIS_ENABLED=false
-FUNPOT_REDIS_ADDR=localhost:6379
-FUNPOT_REDIS_USERNAME=
+FUNPOT_REDIS_ADDR=127.0.0.1:6379
 FUNPOT_REDIS_PASSWORD=
 FUNPOT_REDIS_DB=0
-FUNPOT_REDIS_POOL_SIZE=10
-FUNPOT_REDIS_MIN_IDLE_CONNS=1
-FUNPOT_REDIS_DIAL_TIMEOUT=3s
-FUNPOT_REDIS_READ_TIMEOUT=2s
-FUNPOT_REDIS_WRITE_TIMEOUT=2s
-FUNPOT_REDIS_HEALTHCHECK_TIMEOUT=1s
+FUNPOT_REDIS_CONNECT_TIMEOUT=2s
 FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
@@ -161,6 +155,11 @@ provided. When `FUNPOT_DATABASE_ENABLED=true`, startup validates PostgreSQL
 connectivity and `/readyz` depends on successful DB ping checks. When
 `FUNPOT_REDIS_ENABLED=true`, startup validates Redis connectivity and includes
 Redis ping in `/readyz` checks.
+
+When `FUNPOT_AUTH_REFRESH_ENABLED=true`, the service configures refresh-session
+storage automatically. Set `FUNPOT_REDIS_ENABLED=true` to use Redis-backed
+session revocation/rotation, or keep it `false` to use in-memory sessions for
+local smoke tests.
 
 ## Observability Notes
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.
