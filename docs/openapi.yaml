@@ -200,6 +200,61 @@ paths:
           description: Game deleted
         default:
           $ref: '#/components/responses/Error'
+  /api/admin/prompts:
+    get:
+      summary: List prompt versions (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Prompt versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create prompt version (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptCreateRequest'
+      responses:
+        '201':
+          description: Created prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/prompts/{promptId}/activate:
+    post:
+      summary: Activate prompt version (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: promptId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activated prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
   /api/events/live:
     get:
       summary: Get live events for a streamer
@@ -716,6 +771,64 @@ components:
           type: string
           format: date-time
           nullable: true
+    PromptCreateRequest:
+      type: object
+      required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      properties:
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        template:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        maxTokens:
+          type: integer
+          minimum: 1
+        timeoutMs:
+          type: integer
+          minimum: 1
+        retryCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+        backoffMs:
+          type: integer
+          minimum: 0
+        cooldownMs:
+          type: integer
+          minimum: 0
+        minConfidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    PromptVersion:
+      allOf:
+        - $ref: '#/components/schemas/PromptCreateRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+            version:
+              type: integer
+            isActive:
+              type: boolean
+            createdBy:
+              type: string
+            activatedBy:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+            activatedAt:
+              type: string
+              format: date-time
+              nullable: true
     LiveEvent:
       type: object
       properties:

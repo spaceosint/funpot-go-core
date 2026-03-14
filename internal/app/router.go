@@ -17,6 +17,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 )
@@ -66,6 +67,19 @@ type gameUpsertRequest struct {
 	Status      string   `json:"status"`
 }
 
+type promptCreateRequest struct {
+	Stage         string  `json:"stage"`
+	Template      string  `json:"template"`
+	Model         string  `json:"model"`
+	Temperature   float64 `json:"temperature"`
+	MaxTokens     int     `json:"maxTokens"`
+	TimeoutMS     int     `json:"timeoutMs"`
+	RetryCount    int     `json:"retryCount"`
+	BackoffMS     int     `json:"backoffMs"`
+	CooldownMS    int     `json:"cooldownMs"`
+	MinConfidence float64 `json:"minConfidence"`
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
@@ -76,6 +90,7 @@ func NewHandler(
 	userService *users.Service,
 	streamersService *streamers.Service,
 	gamesService *games.Service,
+	promptsService *prompts.Service,
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
 ) http.Handler {
@@ -362,6 +377,113 @@ func NewHandler(
 				default:
 					w.WriteHeader(http.StatusMethodNotAllowed)
 				}
+			})))
+		}
+
+		if promptsService != nil {
+			mux.Handle("/api/admin/prompts", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, promptsService.List(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req promptCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := promptsService.Create(r.Context(), prompts.CreateRequest{
+						Stage:         req.Stage,
+						Template:      req.Template,
+						Model:         req.Model,
+						Temperature:   req.Temperature,
+						MaxTokens:     req.MaxTokens,
+						TimeoutMS:     req.TimeoutMS,
+						RetryCount:    req.RetryCount,
+						BackoffMS:     req.BackoffMS,
+						CooldownMS:    req.CooldownMS,
+						MinConfidence: req.MinConfidence,
+						ActorID:       claims.Subject,
+					})
+					if err != nil {
+						switch {
+						case errors.Is(err, prompts.ErrInvalidStage),
+							errors.Is(err, prompts.ErrInvalidTemplate),
+							errors.Is(err, prompts.ErrInvalidModel),
+							errors.Is(err, prompts.ErrInvalidTemperature),
+							errors.Is(err, prompts.ErrInvalidMaxTokens),
+							errors.Is(err, prompts.ErrInvalidTimeoutMS),
+							errors.Is(err, prompts.ErrInvalidRetryCount),
+							errors.Is(err, prompts.ErrInvalidBackoffMS),
+							errors.Is(err, prompts.ErrInvalidCooldownMS),
+							errors.Is(err, prompts.ErrInvalidMinConfidence):
+							writeError(w, http.StatusBadRequest, err.Error())
+						default:
+							logger.Error("failed to create prompt", zap.Error(err))
+							writeError(w, http.StatusInternalServerError, "failed to create prompt")
+						}
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/prompts/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+
+				if !strings.HasSuffix(r.URL.Path, "/activate") {
+					writeError(w, http.StatusBadRequest, "prompt action is required")
+					return
+				}
+				promptID := strings.TrimPrefix(r.URL.Path, "/api/admin/prompts/")
+				promptID = strings.TrimSuffix(promptID, "/activate")
+				promptID = strings.Trim(promptID, "/")
+				if promptID == "" || strings.Contains(promptID, "/") {
+					writeError(w, http.StatusBadRequest, "prompt id is required")
+					return
+				}
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+
+				updated, err := promptsService.Activate(r.Context(), promptID, claims.Subject)
+				if err != nil {
+					if errors.Is(err, prompts.ErrNotFound) {
+						writeError(w, http.StatusNotFound, err.Error())
+						return
+					}
+					logger.Error("failed to activate prompt", zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to activate prompt")
+					return
+				}
+
+				writeJSON(w, http.StatusOK, updated)
 			})))
 		}
 
