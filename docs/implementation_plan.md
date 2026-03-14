@@ -41,8 +41,31 @@ approximate sequencing, and validation criteria.
   moderation states.
 - [ ] Create `games` module storing rules, statuses, and admin CRUD endpoints.
 - [ ] Introduce admin role enforcement and basic UI scaffolds.
-- Exit Criteria: admins can register streamers and configure games ready for
-  live events.
+- Exit Criteria: authenticated users can register streamers, while admins can
+  configure games ready for live events.
+
+### M2.1 – LLM Stream Orchestration (Gemini) for Streamers
+- [ ] Deliver admin panel backend contracts for managing LLM request templates,
+  stage transitions, and safety limits (temperature, max tokens, timeout,
+  fallback strategy).
+- [ ] Implement stream capture worker pipeline:
+  `streamlink -> media chunking -> Gemini request -> normalized stage result`.
+- [ ] Build staged game flow for Counter-Strike:
+  Stage A detects stream context (is streamer playing CS or not),
+  Stage B classifies match type (competitive / faceit / other),
+  Stage C tracks live match state (pre-game / in-progress / finished),
+  Stage D determines result (win / loss / unknown).
+- [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
+  handling for failed LLM jobs.
+- [ ] Publish live LLM status updates to clients via WebSocket channel and
+  provide REST history endpoint for latest decisions.
+- [ ] Introduce Redis-backed refresh session store for admin/user session
+  revocation, rotation, and concurrent session controls.
+- [ ] Add observability: per-stage latency, success ratio, token usage, and
+  drift alerts for prompt regressions.
+- Exit Criteria: admin can tune prompts per stage, worker pipeline produces
+  stage results for active streamers, and users observe near-real-time status
+  updates on streamer pages.
 
 ### M3 – Events Lifecycle & Realtime Delivery
 - [ ] Implement `/internal/worker/events` ingestion with validation, dedupe, and
