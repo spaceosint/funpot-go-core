@@ -945,10 +945,15 @@ components:
           nullable: true
     AdminMeResponse:
       type: object
-      required: [isAdmin]
+      required: [isAdmin, adminTabs]
       properties:
         isAdmin:
           type: boolean
+        adminTabs:
+          type: array
+          items:
+            type: string
+          description: Additional admin UI tabs available to the authenticated user.
     PromptCreateRequest:
       type: object
       required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]

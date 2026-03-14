@@ -92,8 +92,11 @@ type llmDecisionRecordRequest struct {
 }
 
 type adminMeResponse struct {
-	IsAdmin bool `json:"isAdmin"`
+	IsAdmin   bool     `json:"isAdmin"`
+	AdminTabs []string `json:"adminTabs"`
 }
+
+var defaultAdminTabs = []string{"settings", "games", "prompts"}
 
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
@@ -324,7 +327,13 @@ func NewHandler(
 					return
 				}
 
-				writeJSON(w, http.StatusOK, adminMeResponse{IsAdmin: adminService.IsAdmin(claims.Subject)})
+				isAdmin := adminService.IsAdmin(claims.Subject)
+				response := adminMeResponse{IsAdmin: isAdmin, AdminTabs: []string{}}
+				if isAdmin {
+					response.AdminTabs = append(response.AdminTabs, defaultAdminTabs...)
+				}
+
+				writeJSON(w, http.StatusOK, response)
 			})))
 		}
 

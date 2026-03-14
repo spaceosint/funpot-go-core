@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"go.uber.org/zap"
@@ -23,13 +24,21 @@ func TestAdminMeReturnsTrueForAdmin(t *testing.T) {
 		t.Fatalf("expected 200, got %d", res.Code)
 	}
 
-	var payload map[string]bool
+	var payload struct {
+		IsAdmin   bool     `json:"isAdmin"`
+		AdminTabs []string `json:"adminTabs"`
+	}
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if !payload["isAdmin"] {
-		t.Fatalf("expected isAdmin=true, got %v", payload["isAdmin"])
+	if !payload.IsAdmin {
+		t.Fatalf("expected isAdmin=true, got %v", payload.IsAdmin)
+	}
+
+	expectedTabs := []string{"settings", "games", "prompts"}
+	if !reflect.DeepEqual(payload.AdminTabs, expectedTabs) {
+		t.Fatalf("expected admin tabs %v, got %v", expectedTabs, payload.AdminTabs)
 	}
 }
 
@@ -45,12 +54,19 @@ func TestAdminMeReturnsFalseForNonAdmin(t *testing.T) {
 		t.Fatalf("expected 200, got %d", res.Code)
 	}
 
-	var payload map[string]bool
+	var payload struct {
+		IsAdmin   bool     `json:"isAdmin"`
+		AdminTabs []string `json:"adminTabs"`
+	}
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if payload["isAdmin"] {
-		t.Fatalf("expected isAdmin=false, got %v", payload["isAdmin"])
+	if payload.IsAdmin {
+		t.Fatalf("expected isAdmin=false, got %v", payload.IsAdmin)
+	}
+
+	if len(payload.AdminTabs) != 0 {
+		t.Fatalf("expected empty adminTabs for non-admin, got %v", payload.AdminTabs)
 	}
 }
