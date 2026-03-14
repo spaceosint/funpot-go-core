@@ -59,8 +59,10 @@ approximate sequencing, and validation criteria.
   handling for failed LLM jobs.
 - [ ] Publish live LLM status updates to clients via WebSocket channel.
 - [x] Provide REST history endpoint for latest LLM stage decisions.
-- [ ] Introduce Redis-backed refresh session store for admin/user session
+- [x] Introduce Redis-backed refresh session store for admin/user session
   revocation, rotation, and concurrent session controls.
+- [ ] Integrate refresh session store into auth refresh/login/logout flows
+  (token pair issuance, rotation endpoint, and revoke-all/user-device controls).
 - [ ] Add observability: per-stage latency, success ratio, token usage, and
   drift alerts for prompt regressions.
 - Exit Criteria: admin can tune prompts per stage, worker pipeline produces
