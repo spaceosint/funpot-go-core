@@ -22,7 +22,6 @@ type Config struct {
 	Admin       AdminConfig
 	Redis       RedisConfig
 	Database    DatabaseConfig
-	Redis       RedisConfig
 	Features    FeatureConfig
 	Client      ClientConfig
 }
@@ -74,15 +73,6 @@ type RefreshConfig struct {
 	KeyPrefix          string
 }
 
-// RedisConfig controls Redis connectivity for session and realtime features.
-type RedisConfig struct {
-	Enabled        bool
-	Addr           string
-	Password       string
-	DB             int
-	ConnectTimeout time.Duration
-}
-
 // DatabaseConfig controls PostgreSQL connectivity.
 type DatabaseConfig struct {
 	Enabled         bool
@@ -108,6 +98,7 @@ type RedisConfig struct {
 	Username        string
 	Password        string
 	DB              int
+	ConnectTimeout  time.Duration
 	PoolSize        int
 	MinIdleConns    int
 	DialTimeout     time.Duration
@@ -209,21 +200,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	redisEnabled, err := getBool("FUNPOT_REDIS_ENABLED", false)
-	if err != nil {
-		return Config{}, err
-	}
-
-	redisDB, err := getInt("FUNPOT_REDIS_DB", 0)
-	if err != nil {
-		return Config{}, err
-	}
-
-	redisConnectTimeout, err := getDuration("FUNPOT_REDIS_CONNECT_TIMEOUT", 2*time.Second)
-	if err != nil {
-		return Config{}, err
-	}
-
 	databaseEnabled, err := getBool("FUNPOT_DATABASE_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -255,6 +231,11 @@ func Load() (Config, error) {
 	}
 
 	redisDB, err := getInt("FUNPOT_REDIS_DB", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisConnectTimeout, err := getDuration("FUNPOT_REDIS_CONNECT_TIMEOUT", 2*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
@@ -368,13 +349,6 @@ func Load() (Config, error) {
 		Admin: AdminConfig{
 			UserIDs: getCSVStrings("FUNPOT_ADMIN_USER_IDS", nil),
 		},
-		Redis: RedisConfig{
-			Enabled:        redisEnabled,
-			Addr:           getString("FUNPOT_REDIS_ADDR", "127.0.0.1:6379"),
-			Password:       getString("FUNPOT_REDIS_PASSWORD", ""),
-			DB:             redisDB,
-			ConnectTimeout: redisConnectTimeout,
-		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
 			Host:            os.Getenv("FUNPOT_DATABASE_HOST"),
@@ -397,6 +371,7 @@ func Load() (Config, error) {
 			Username:        os.Getenv("FUNPOT_REDIS_USERNAME"),
 			Password:        os.Getenv("FUNPOT_REDIS_PASSWORD"),
 			DB:              redisDB,
+			ConnectTimeout:  redisConnectTimeout,
 			PoolSize:        redisPoolSize,
 			MinIdleConns:    redisMinIdleConns,
 			DialTimeout:     redisDialTimeout,
@@ -436,9 +411,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("FUNPOT_REDIS_DB must be >= 0")
 	}
 
+	if cfg.Redis.PoolSize < 1 || cfg.Redis.MinIdleConns < 0 || cfg.Redis.MinIdleConns > cfg.Redis.PoolSize {
+		return Config{}, fmt.Errorf("invalid redis pool bounds: min_idle=%d pool_size=%d", cfg.Redis.MinIdleConns, cfg.Redis.PoolSize)
+	}
+
 	return cfg, nil
 }
-
 func getString(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
