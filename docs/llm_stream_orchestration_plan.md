@@ -161,3 +161,102 @@ Primary usage:
 2. How often should Streamlink chunks be sampled (e.g., every 15s / 30s / 60s)?
 3. Should result determination rely only on LLM, or also optional external match APIs later?
 4. What freshness SLA do we target on streamer page (e.g., update every <=10 seconds)?
+
+## Execution backlog (next two iterations)
+
+This backlog continues implementation according to `docs/implementation_plan.md` (M2.1)
+and is ordered to ship a vertical slice before hardening.
+
+### Iteration A — End-to-end pipeline baseline
+
+Goal: produce and persist Stage A decisions for active streamers from real worker
+cycles.
+
+#### A1. Worker pipeline skeleton
+- [ ] Introduce `internal/media/stream_capture_worker.go` (or equivalent module package)
+  with cycle orchestration:
+  - acquire streamer lock,
+  - fetch fragment via streamlink adapter,
+  - enqueue Gemini stage call,
+  - persist normalized stage decision.
+- [ ] Add streamlink adapter interface to isolate process execution and allow tests.
+- [ ] Add DB model/repository for `stream_analysis_runs` and link to stage decisions.
+
+Definition of done:
+- one worker pass creates `run` + `Stage A` record for a test streamer;
+- duplicate cycle for the same lock window is rejected.
+
+#### A2. Stage A normalization and storage
+- [ ] Implement Stage A parser mapping model output to:
+  `cs_detected | not_cs | uncertain`.
+- [ ] Add confidence threshold and cooldown handling for `not_cs` branch.
+- [ ] Persist `raw_response`, `normalized_label`, `confidence`, `latency_ms`,
+  `tokens_in`, `tokens_out`.
+
+Definition of done:
+- parser is covered by table-driven tests for valid/invalid responses;
+- confidence fallback path stores `uncertain` and does not crash the cycle.
+
+#### A3. Baseline telemetry for pipeline
+- [ ] Add metrics for stage latency and stage success/fail counters.
+- [ ] Add structured logs with `run_id`, `streamer_id`, `stage`, and `attempt`.
+
+Definition of done:
+- metrics are visible in local `/metrics` output and include stage labels;
+- failure logs are correlated by `run_id`.
+
+### Iteration B — Full staged flow + reliability
+
+Goal: complete M2.1 exit criteria with staged flow, WS updates, and resilient
+orchestration.
+
+#### B1. Stage B/C/D workflow
+- [ ] Implement stage gate transitions:
+  - Stage B runs only after `Stage A = cs_detected`.
+  - Stage C runs only after match type is known/accepted.
+  - Stage D runs only after `Stage C = finished`.
+- [ ] Implement normalization enums:
+  - B: `competitive | faceit | premier | casual | unknown`
+  - C: `pregame | in_progress | finished | unknown`
+  - D: `win | loss | draw | unknown`
+
+Definition of done:
+- deterministic stage transition unit tests pass;
+- each stage emits decision records with prompt version linkage.
+
+#### B2. Retry, idempotency, dead-letter
+- [ ] Add per-stage retry policy with exponential backoff.
+- [ ] Add idempotency keys (`streamer_id + stage + window`) with Redis TTL.
+- [ ] Add DLQ payload format and reprocessing admin command.
+
+Definition of done:
+- transient failures are retried and eventually either succeed or move to DLQ;
+- duplicate job delivery does not create duplicate terminal decisions.
+
+#### B3. Realtime and session integration
+- [ ] Publish `LLM_STAGE_UPDATED` from worker path to WS hub.
+- [ ] Add reconnect backfill flow (`GET status` + `GET llm-decisions`).
+- [ ] Integrate Redis refresh session store in auth login/refresh/logout endpoints:
+  - token pair issuance,
+  - rotate on refresh,
+  - revoke-by-device,
+  - revoke-all sessions.
+
+Definition of done:
+- websocket clients receive near-real-time stage updates;
+- refresh token replay is rejected after rotation;
+- revoke-all immediately invalidates prior refresh sessions.
+
+## Delivery checklist mapped to `docs/implementation_plan.md`
+
+### M2.1 completion checklist
+- [ ] Implement stream capture worker pipeline.
+- [ ] Build staged CS game flow (A/B/C/D).
+- [ ] Add retries, idempotency, and dead-letter handling.
+- [ ] Publish live LLM status updates via WebSocket.
+- [ ] Integrate refresh session store into auth flows.
+- [ ] Add observability (latency, success ratio, token usage, drift alerts).
+
+### Next milestone preview (M3)
+- [ ] Start `/internal/worker/events` ingestion only after M2.1 checklist is
+  completed.
