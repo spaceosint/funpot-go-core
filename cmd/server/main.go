@@ -10,10 +10,12 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/funpot/funpot-go-core/internal/admin"
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/games"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
@@ -82,7 +84,9 @@ func main() {
 	}
 
 	userService := users.NewService(userRepo)
+	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamersService := streamers.NewService()
+	gamesService := games.NewService()
 	eventsService := events.NewService(nil)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
@@ -106,8 +110,10 @@ func main() {
 		readyFn,
 		telemetryProvider.MetricsHandler(),
 		authService,
+		adminService,
 		userService,
 		streamersService,
+		gamesService,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
 	)
