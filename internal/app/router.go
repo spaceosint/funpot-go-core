@@ -87,6 +87,10 @@ type llmDecisionRecordRequest struct {
 	Confidence float64 `json:"confidence"`
 }
 
+type adminMeResponse struct {
+	IsAdmin bool `json:"isAdmin"`
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
@@ -211,6 +215,23 @@ func NewHandler(
 			writeJSON(w, http.StatusOK, clientConfig)
 		})))
 
+		if adminService != nil {
+			mux.Handle("/api/admin/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+
+				writeJSON(w, http.StatusOK, adminMeResponse{IsAdmin: adminService.IsAdmin(claims.Subject)})
+			})))
+		}
+
 		if streamersService != nil {
 			mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
@@ -298,12 +319,7 @@ func NewHandler(
 						}
 						writeJSON(w, http.StatusOK, streamersService.ListLLMDecisions(r.Context(), streamerID, limit))
 					case http.MethodPost:
-						claims, ok := auth.ClaimsFromContext(r.Context())
-						if !ok {
-							writeError(w, http.StatusUnauthorized, "missing auth claims")
-							return
-						}
-						if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+						if !requireAdmin(w, r, adminService) {
 							writeError(w, http.StatusForbidden, "admin role is required")
 							return
 						}
@@ -341,12 +357,7 @@ func NewHandler(
 
 		if gamesService != nil {
 			mux.Handle("/api/admin/games", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				claims, ok := auth.ClaimsFromContext(r.Context())
-				if !ok {
-					writeError(w, http.StatusUnauthorized, "missing auth claims")
-					return
-				}
-				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+				if !requireAdmin(w, r, adminService) {
 					writeError(w, http.StatusForbidden, "admin role is required")
 					return
 				}
@@ -390,12 +401,7 @@ func NewHandler(
 			})))
 
 			mux.Handle("/api/admin/games/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				claims, ok := auth.ClaimsFromContext(r.Context())
-				if !ok {
-					writeError(w, http.StatusUnauthorized, "missing auth claims")
-					return
-				}
-				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+				if !requireAdmin(w, r, adminService) {
 					writeError(w, http.StatusForbidden, "admin role is required")
 					return
 				}
@@ -468,7 +474,7 @@ func NewHandler(
 					writeError(w, http.StatusUnauthorized, "missing auth claims")
 					return
 				}
-				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+				if !requireAdmin(w, r, adminService) {
 					writeError(w, http.StatusForbidden, "admin role is required")
 					return
 				}
@@ -532,7 +538,7 @@ func NewHandler(
 					writeError(w, http.StatusUnauthorized, "missing auth claims")
 					return
 				}
-				if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+				if !requireAdmin(w, r, adminService) {
 					writeError(w, http.StatusForbidden, "admin role is required")
 					return
 				}
@@ -585,6 +591,20 @@ func NewHandler(
 	}
 
 	return mux
+}
+
+func requireAdmin(w http.ResponseWriter, r *http.Request, adminService *admin.Service) bool {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing auth claims")
+		return false
+	}
+
+	if adminService == nil || !adminService.IsAdmin(claims.Subject) {
+		return false
+	}
+
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
