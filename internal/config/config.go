@@ -19,9 +19,15 @@ type Config struct {
 	Telemetry   TelemetryConfig
 	Sentry      SentryConfig
 	Auth        AuthConfig
+	Admin       AdminConfig
 	Database    DatabaseConfig
 	Features    FeatureConfig
 	Client      ClientConfig
+}
+
+// AdminConfig controls role-based admin access.
+type AdminConfig struct {
+	UserIDs []string
 }
 
 // ServerConfig holds HTTP server settings.
@@ -247,6 +253,9 @@ func Load() (Config, error) {
 				Secret: getString("FUNPOT_AUTH_JWT_SECRET", "dev-secret"),
 				TTL:    jwtTTL,
 			},
+		},
+		Admin: AdminConfig{
+			UserIDs: getCSVStrings("FUNPOT_ADMIN_USER_IDS", nil),
 		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
