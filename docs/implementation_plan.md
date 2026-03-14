@@ -39,7 +39,7 @@ approximate sequencing, and validation criteria.
   validation integration stub and rate limits.
 - [x] Expose streamer listings (`GET /api/streamers`) with pagination and
   moderation states.
-- [ ] Create `games` module storing rules, statuses, and admin CRUD endpoints.
+- [x] Create `games` module storing rules, statuses, and admin CRUD endpoints.
 - [ ] Introduce admin role enforcement and basic UI scaffolds.
 - Exit Criteria: authenticated users can register streamers, while admins can
   configure games ready for live events.
