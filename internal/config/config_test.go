@@ -27,8 +27,16 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_AUTH_REFRESH_MAX_SESSIONS", "3")
 	t.Setenv("FUNPOT_REDIS_ENABLED", "true")
 	t.Setenv("FUNPOT_REDIS_ADDR", "localhost:6379")
+	t.Setenv("FUNPOT_REDIS_USERNAME", "redis-user")
+	t.Setenv("FUNPOT_REDIS_PASSWORD", "redis-pass")
 	t.Setenv("FUNPOT_REDIS_DB", "1")
 	t.Setenv("FUNPOT_REDIS_CONNECT_TIMEOUT", "3s")
+	t.Setenv("FUNPOT_REDIS_POOL_SIZE", "30")
+	t.Setenv("FUNPOT_REDIS_MIN_IDLE_CONNS", "3")
+	t.Setenv("FUNPOT_REDIS_DIAL_TIMEOUT", "4s")
+	t.Setenv("FUNPOT_REDIS_READ_TIMEOUT", "5s")
+	t.Setenv("FUNPOT_REDIS_WRITE_TIMEOUT", "6s")
+	t.Setenv("FUNPOT_REDIS_HEALTHCHECK_TIMEOUT", "7s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -83,8 +91,32 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Redis.DB != 1 {
 		t.Fatalf("expected redis db 1, got %d", cfg.Redis.DB)
 	}
+	if cfg.Redis.Username != "redis-user" {
+		t.Fatalf("expected redis username redis-user, got %q", cfg.Redis.Username)
+	}
+	if cfg.Redis.Password != "redis-pass" {
+		t.Fatalf("expected redis password redis-pass, got %q", cfg.Redis.Password)
+	}
 	if cfg.Redis.ConnectTimeout != 3*time.Second {
 		t.Fatalf("expected redis connect timeout 3s, got %s", cfg.Redis.ConnectTimeout)
+	}
+	if cfg.Redis.PoolSize != 30 {
+		t.Fatalf("expected redis pool size 30, got %d", cfg.Redis.PoolSize)
+	}
+	if cfg.Redis.MinIdleConns != 3 {
+		t.Fatalf("expected redis min idle conns 3, got %d", cfg.Redis.MinIdleConns)
+	}
+	if cfg.Redis.DialTimeout != 4*time.Second {
+		t.Fatalf("expected redis dial timeout 4s, got %s", cfg.Redis.DialTimeout)
+	}
+	if cfg.Redis.ReadTimeout != 5*time.Second {
+		t.Fatalf("expected redis read timeout 5s, got %s", cfg.Redis.ReadTimeout)
+	}
+	if cfg.Redis.WriteTimeout != 6*time.Second {
+		t.Fatalf("expected redis write timeout 6s, got %s", cfg.Redis.WriteTimeout)
+	}
+	if cfg.Redis.HealthcheckPing != 7*time.Second {
+		t.Fatalf("expected redis healthcheck timeout 7s, got %s", cfg.Redis.HealthcheckPing)
 	}
 }
 
