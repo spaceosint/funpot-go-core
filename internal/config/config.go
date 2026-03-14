@@ -20,6 +20,7 @@ type Config struct {
 	Sentry      SentryConfig
 	Auth        AuthConfig
 	Admin       AdminConfig
+	Redis       RedisConfig
 	Database    DatabaseConfig
 	Features    FeatureConfig
 	Client      ClientConfig
@@ -70,6 +71,15 @@ type RefreshConfig struct {
 	TTL                time.Duration
 	MaxSessionsPerUser int
 	KeyPrefix          string
+}
+
+// RedisConfig controls Redis connectivity for session and realtime features.
+type RedisConfig struct {
+	Enabled        bool
+	Addr           string
+	Password       string
+	DB             int
+	ConnectTimeout time.Duration
 }
 
 // DatabaseConfig controls PostgreSQL connectivity.
@@ -183,6 +193,21 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	redisEnabled, err := getBool("FUNPOT_REDIS_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisDB, err := getInt("FUNPOT_REDIS_DB", 0)
+	if err != nil {
+		return Config{}, err
+	}
+
+	redisConnectTimeout, err := getDuration("FUNPOT_REDIS_CONNECT_TIMEOUT", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
 	databaseEnabled, err := getBool("FUNPOT_DATABASE_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -287,6 +312,13 @@ func Load() (Config, error) {
 		Admin: AdminConfig{
 			UserIDs: getCSVStrings("FUNPOT_ADMIN_USER_IDS", nil),
 		},
+		Redis: RedisConfig{
+			Enabled:        redisEnabled,
+			Addr:           getString("FUNPOT_REDIS_ADDR", "127.0.0.1:6379"),
+			Password:       getString("FUNPOT_REDIS_PASSWORD", ""),
+			DB:             redisDB,
+			ConnectTimeout: redisConnectTimeout,
+		},
 		Database: DatabaseConfig{
 			Enabled:         databaseEnabled,
 			Host:            os.Getenv("FUNPOT_DATABASE_HOST"),
@@ -325,6 +357,14 @@ func Load() (Config, error) {
 
 	if cfg.Database.MinOpenConns < 0 || cfg.Database.MaxOpenConns < 1 || cfg.Database.MinOpenConns > cfg.Database.MaxOpenConns {
 		return Config{}, fmt.Errorf("invalid database pool bounds: min=%d max=%d", cfg.Database.MinOpenConns, cfg.Database.MaxOpenConns)
+	}
+
+	if cfg.Redis.Enabled && strings.TrimSpace(cfg.Redis.Addr) == "" {
+		return Config{}, fmt.Errorf("FUNPOT_REDIS_ADDR must be set when FUNPOT_REDIS_ENABLED=true")
+	}
+
+	if cfg.Redis.DB < 0 {
+		return Config{}, fmt.Errorf("FUNPOT_REDIS_DB must be >= 0")
 	}
 
 	return cfg, nil

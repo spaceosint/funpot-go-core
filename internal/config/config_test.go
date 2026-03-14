@@ -25,6 +25,10 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_AUTH_REFRESH_ENABLED", "true")
 	t.Setenv("FUNPOT_AUTH_REFRESH_TTL", "240h")
 	t.Setenv("FUNPOT_AUTH_REFRESH_MAX_SESSIONS", "3")
+	t.Setenv("FUNPOT_REDIS_ENABLED", "true")
+	t.Setenv("FUNPOT_REDIS_ADDR", "localhost:6379")
+	t.Setenv("FUNPOT_REDIS_DB", "1")
+	t.Setenv("FUNPOT_REDIS_CONNECT_TIMEOUT", "3s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -70,6 +74,18 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Auth.Refresh.MaxSessionsPerUser != 3 {
 		t.Fatalf("expected refresh max sessions 3, got %d", cfg.Auth.Refresh.MaxSessionsPerUser)
 	}
+	if !cfg.Redis.Enabled {
+		t.Fatalf("expected redis enabled")
+	}
+	if cfg.Redis.Addr != "localhost:6379" {
+		t.Fatalf("expected redis addr localhost:6379, got %q", cfg.Redis.Addr)
+	}
+	if cfg.Redis.DB != 1 {
+		t.Fatalf("expected redis db 1, got %d", cfg.Redis.DB)
+	}
+	if cfg.Redis.ConnectTimeout != 3*time.Second {
+		t.Fatalf("expected redis connect timeout 3s, got %s", cfg.Redis.ConnectTimeout)
+	}
 }
 
 func TestLoadDatabaseValidation(t *testing.T) {
@@ -96,6 +112,13 @@ func TestLoadDatabaseValidation(t *testing.T) {
 				"FUNPOT_DATABASE_USER":           "funpot",
 				"FUNPOT_DATABASE_MAX_OPEN_CONNS": "2",
 				"FUNPOT_DATABASE_MIN_OPEN_CONNS": "5",
+			},
+		},
+		{
+			name: "invalid redis db",
+			env: map[string]string{
+				"FUNPOT_REDIS_ENABLED": "true",
+				"FUNPOT_REDIS_DB":      "-1",
 			},
 		},
 		{
