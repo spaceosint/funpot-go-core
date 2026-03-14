@@ -22,6 +22,9 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_CLIENT_MIN_VIEWERS", "150")
 	t.Setenv("FUNPOT_CLIENT_CURRENCIES", "INT,USD")
 	t.Setenv("FUNPOT_CLIENT_LIMIT_VOTE_PER_MIN", "40")
+	t.Setenv("FUNPOT_AUTH_REFRESH_ENABLED", "true")
+	t.Setenv("FUNPOT_AUTH_REFRESH_TTL", "240h")
+	t.Setenv("FUNPOT_AUTH_REFRESH_MAX_SESSIONS", "3")
 
 	cfg, err := Load()
 	if err != nil {
@@ -57,6 +60,15 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	}
 	if cfg.Client.VotePerMin != 40 {
 		t.Fatalf("expected vote per min 40, got %d", cfg.Client.VotePerMin)
+	}
+	if !cfg.Auth.Refresh.Enabled {
+		t.Fatalf("expected refresh auth enabled")
+	}
+	if cfg.Auth.Refresh.TTL != 240*time.Hour {
+		t.Fatalf("expected refresh ttl 240h, got %s", cfg.Auth.Refresh.TTL)
+	}
+	if cfg.Auth.Refresh.MaxSessionsPerUser != 3 {
+		t.Fatalf("expected refresh max sessions 3, got %d", cfg.Auth.Refresh.MaxSessionsPerUser)
 	}
 }
 

@@ -61,6 +61,15 @@ type SentryConfig struct {
 type AuthConfig struct {
 	BotToken string
 	JWT      JWTConfig
+	Refresh  RefreshConfig
+}
+
+// RefreshConfig holds settings for refresh token sessions.
+type RefreshConfig struct {
+	Enabled            bool
+	TTL                time.Duration
+	MaxSessionsPerUser int
+	KeyPrefix          string
 }
 
 // DatabaseConfig controls PostgreSQL connectivity.
@@ -159,6 +168,21 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	refreshEnabled, err := getBool("FUNPOT_AUTH_REFRESH_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	refreshTTL, err := getDuration("FUNPOT_AUTH_REFRESH_TTL", 30*24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+
+	refreshMaxSessions, err := getInt("FUNPOT_AUTH_REFRESH_MAX_SESSIONS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+
 	databaseEnabled, err := getBool("FUNPOT_DATABASE_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -252,6 +276,12 @@ func Load() (Config, error) {
 			JWT: JWTConfig{
 				Secret: getString("FUNPOT_AUTH_JWT_SECRET", "dev-secret"),
 				TTL:    jwtTTL,
+			},
+			Refresh: RefreshConfig{
+				Enabled:            refreshEnabled,
+				TTL:                refreshTTL,
+				MaxSessionsPerUser: refreshMaxSessions,
+				KeyPrefix:          getString("FUNPOT_AUTH_REFRESH_KEY_PREFIX", "funpot:auth"),
 			},
 		},
 		Admin: AdminConfig{
