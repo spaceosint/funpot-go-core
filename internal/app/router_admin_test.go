@@ -4,18 +4,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"testing"
 
 	"go.uber.org/zap"
 
 	"github.com/funpot/funpot-go-core/internal/admin"
+	"github.com/funpot/funpot-go-core/internal/users"
 )
 
-func TestAdminMeReturnsTrueForAdmin(t *testing.T) {
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, nil, nil, nil, ClientConfigResponse{})
+func TestMeReturnsIsAdminTrueForAdmin(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	_, err := userService.SyncTelegramProfile(t.Context(), users.TelegramProfile{ID: 1, Username: "admin"})
+	if err != nil {
+		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, ClientConfigResponse{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
 	res := httptest.NewRecorder()
 
@@ -25,8 +31,7 @@ func TestAdminMeReturnsTrueForAdmin(t *testing.T) {
 	}
 
 	var payload struct {
-		IsAdmin   bool     `json:"isAdmin"`
-		AdminTabs []string `json:"adminTabs"`
+		IsAdmin bool `json:"isAdmin"`
 	}
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
@@ -35,17 +40,18 @@ func TestAdminMeReturnsTrueForAdmin(t *testing.T) {
 	if !payload.IsAdmin {
 		t.Fatalf("expected isAdmin=true, got %v", payload.IsAdmin)
 	}
-
-	expectedTabs := []string{"settings", "games", "prompts"}
-	if !reflect.DeepEqual(payload.AdminTabs, expectedTabs) {
-		t.Fatalf("expected admin tabs %v, got %v", expectedTabs, payload.AdminTabs)
-	}
 }
 
-func TestAdminMeReturnsFalseForNonAdmin(t *testing.T) {
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, nil, nil, nil, ClientConfigResponse{})
+func TestMeReturnsIsAdminFalseForNonAdmin(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	_, err := userService.SyncTelegramProfile(t.Context(), users.TelegramProfile{ID: 1, Username: "user"})
+	if err != nil {
+		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, ClientConfigResponse{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
 	res := httptest.NewRecorder()
 
@@ -55,8 +61,7 @@ func TestAdminMeReturnsFalseForNonAdmin(t *testing.T) {
 	}
 
 	var payload struct {
-		IsAdmin   bool     `json:"isAdmin"`
-		AdminTabs []string `json:"adminTabs"`
+		IsAdmin bool `json:"isAdmin"`
 	}
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
@@ -65,8 +70,17 @@ func TestAdminMeReturnsFalseForNonAdmin(t *testing.T) {
 	if payload.IsAdmin {
 		t.Fatalf("expected isAdmin=false, got %v", payload.IsAdmin)
 	}
+}
 
-	if len(payload.AdminTabs) != 0 {
-		t.Fatalf("expected empty adminTabs for non-admin, got %v", payload.AdminTabs)
+func TestAdminMeEndpointRemovedFallsBackToRoot(t *testing.T) {
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, nil, nil, nil, ClientConfigResponse{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", res.Code)
 	}
 }

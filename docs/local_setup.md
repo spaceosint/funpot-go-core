@@ -134,12 +134,11 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/auth/refresh` – rotates refresh session and issues a new JWT + refresh token pair.
 - `POST /api/auth/logout` – revokes a single refresh session using refresh token.
 - `POST /api/auth/logout-all` – revokes all refresh sessions for authenticated user.
-- `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
+- `GET /api/me` – returns the authenticated user's profile plus `isAdmin` flag when called with the issued JWT.
 - `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
 - `POST /api/streamers` – submits a Twitch streamer username for moderation/validation.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
-- `GET /api/admin/me` – returns admin capability flags (`isAdmin`) plus admin UI tabs available to the authenticated user.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.

@@ -261,20 +261,6 @@ paths:
                 $ref: '#/components/schemas/Game'
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/me:
-    get:
-      summary: Get admin capabilities for current user
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Admin capability flags
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AdminMeResponse'
-        default:
-          $ref: '#/components/responses/Error'
   /api/admin/games/{gameId}:
     put:
       summary: Update game (admin)
@@ -805,6 +791,9 @@ components:
         flags:
           type: object
           additionalProperties: true
+        isAdmin:
+          type: boolean
+          description: Indicates whether the authenticated user has admin privileges.
     ClientConfig:
       type: object
       properties:
@@ -943,17 +932,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    AdminMeResponse:
-      type: object
-      required: [isAdmin, adminTabs]
-      properties:
-        isAdmin:
-          type: boolean
-        adminTabs:
-          type: array
-          items:
-            type: string
-          description: Additional admin UI tabs available to the authenticated user.
     PromptCreateRequest:
       type: object
       required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
