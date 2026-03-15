@@ -91,12 +91,10 @@ type llmDecisionRecordRequest struct {
 	Confidence float64 `json:"confidence"`
 }
 
-type adminMeResponse struct {
-	IsAdmin   bool     `json:"isAdmin"`
-	AdminTabs []string `json:"adminTabs"`
+type meResponse struct {
+	users.Profile
+	IsAdmin bool `json:"isAdmin"`
 }
-
-var defaultAdminTabs = []string{"settings", "games", "prompts"}
 
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
@@ -303,7 +301,8 @@ func NewHandler(
 				writeError(w, http.StatusInternalServerError, "failed to load profile")
 				return
 			}
-			writeJSON(w, http.StatusOK, profile)
+			isAdmin := adminService != nil && adminService.IsAdmin(claims.Subject)
+			writeJSON(w, http.StatusOK, meResponse{Profile: profile, IsAdmin: isAdmin})
 		})))
 
 		mux.Handle("/api/config", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,29 +312,6 @@ func NewHandler(
 			}
 			writeJSON(w, http.StatusOK, clientConfig)
 		})))
-
-		if adminService != nil {
-			mux.Handle("/api/admin/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet {
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
-
-				claims, ok := auth.ClaimsFromContext(r.Context())
-				if !ok {
-					writeError(w, http.StatusUnauthorized, "missing auth claims")
-					return
-				}
-
-				isAdmin := adminService.IsAdmin(claims.Subject)
-				response := adminMeResponse{IsAdmin: isAdmin, AdminTabs: []string{}}
-				if isAdmin {
-					response.AdminTabs = append(response.AdminTabs, defaultAdminTabs...)
-				}
-
-				writeJSON(w, http.StatusOK, response)
-			})))
-		}
 
 		if streamersService != nil {
 			mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
