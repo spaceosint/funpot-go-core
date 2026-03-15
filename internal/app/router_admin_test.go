@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 
 func TestMeReturnsIsAdminTrueForAdmin(t *testing.T) {
 	userService := users.NewService(users.NewInMemoryRepository())
-	_, err := userService.SyncTelegramProfile(t.Context(), users.TelegramProfile{ID: 1, Username: "admin"})
+	_, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "admin"})
 	if err != nil {
 		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
 	}
@@ -44,7 +45,7 @@ func TestMeReturnsIsAdminTrueForAdmin(t *testing.T) {
 
 func TestMeReturnsIsAdminFalseForNonAdmin(t *testing.T) {
 	userService := users.NewService(users.NewInMemoryRepository())
-	_, err := userService.SyncTelegramProfile(t.Context(), users.TelegramProfile{ID: 1, Username: "user"})
+	_, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "user"})
 	if err != nil {
 		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
 	}
