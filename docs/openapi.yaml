@@ -872,6 +872,28 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        promptVersionId:
+          type: string
+        promptText:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+        timeoutMs:
+          type: integer
+        chunkRef:
+          type: string
+        rawResponse:
+          type: string
+        tokensIn:
+          type: integer
+        tokensOut:
+          type: integer
+        latencyMs:
+          type: integer
     LLMDecision:
       type: object
       properties:
@@ -888,6 +910,28 @@ components:
           type: string
         confidence:
           type: number
+        promptVersionId:
+          type: string
+        promptText:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+        timeoutMs:
+          type: integer
+        chunkRef:
+          type: string
+        rawResponse:
+          type: string
+        tokensIn:
+          type: integer
+        tokensOut:
+          type: integer
+        latencyMs:
+          type: integer
         createdAt:
           type: string
           format: date-time

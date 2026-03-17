@@ -85,10 +85,21 @@ type promptCreateRequest struct {
 }
 
 type llmDecisionRecordRequest struct {
-	RunID      string  `json:"runId"`
-	Stage      string  `json:"stage"`
-	Label      string  `json:"label"`
-	Confidence float64 `json:"confidence"`
+	RunID           string  `json:"runId"`
+	Stage           string  `json:"stage"`
+	Label           string  `json:"label"`
+	Confidence      float64 `json:"confidence"`
+	PromptVersionID string  `json:"promptVersionId"`
+	PromptText      string  `json:"promptText"`
+	Model           string  `json:"model"`
+	Temperature     float64 `json:"temperature"`
+	MaxTokens       int     `json:"maxTokens"`
+	TimeoutMS       int     `json:"timeoutMs"`
+	ChunkRef        string  `json:"chunkRef"`
+	RawResponse     string  `json:"rawResponse"`
+	TokensIn        int     `json:"tokensIn"`
+	TokensOut       int     `json:"tokensOut"`
+	LatencyMS       int64   `json:"latencyMs"`
 }
 
 type meResponse struct {
@@ -416,11 +427,22 @@ func NewHandler(
 							return
 						}
 						item, err := streamersService.RecordLLMDecision(r.Context(), streamers.RecordDecisionRequest{
-							RunID:      req.RunID,
-							StreamerID: streamerID,
-							Stage:      req.Stage,
-							Label:      req.Label,
-							Confidence: req.Confidence,
+							RunID:           req.RunID,
+							StreamerID:      streamerID,
+							Stage:           req.Stage,
+							Label:           req.Label,
+							Confidence:      req.Confidence,
+							PromptVersionID: req.PromptVersionID,
+							PromptText:      req.PromptText,
+							Model:           req.Model,
+							Temperature:     req.Temperature,
+							MaxTokens:       req.MaxTokens,
+							TimeoutMS:       req.TimeoutMS,
+							ChunkRef:        req.ChunkRef,
+							RawResponse:     req.RawResponse,
+							TokensIn:        req.TokensIn,
+							TokensOut:       req.TokensOut,
+							LatencyMS:       req.LatencyMS,
 						})
 						if err != nil {
 							writeError(w, http.StatusBadRequest, err.Error())

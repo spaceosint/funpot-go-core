@@ -192,13 +192,24 @@ func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest
 	s.counterMu.Unlock()
 
 	item := LLMDecision{
-		ID:         id,
-		RunID:      runID,
-		StreamerID: streamerID,
-		Stage:      stage,
-		Label:      label,
-		Confidence: req.Confidence,
-		CreatedAt:  s.nowFn().UTC().Format(time.RFC3339Nano),
+		ID:              id,
+		RunID:           runID,
+		StreamerID:      streamerID,
+		Stage:           stage,
+		Label:           label,
+		Confidence:      req.Confidence,
+		PromptVersionID: strings.TrimSpace(req.PromptVersionID),
+		PromptText:      strings.TrimSpace(req.PromptText),
+		Model:           strings.TrimSpace(req.Model),
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		TimeoutMS:       req.TimeoutMS,
+		ChunkRef:        strings.TrimSpace(req.ChunkRef),
+		RawResponse:     strings.TrimSpace(req.RawResponse),
+		TokensIn:        req.TokensIn,
+		TokensOut:       req.TokensOut,
+		LatencyMS:       req.LatencyMS,
+		CreatedAt:       s.nowFn().UTC().Format(time.RFC3339Nano),
 	}
 
 	s.mu.Lock()

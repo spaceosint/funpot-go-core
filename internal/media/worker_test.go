@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
@@ -61,8 +62,8 @@ func TestWorkerProcessStreamerStageASuccess(t *testing.T) {
 
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
-		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.91}},
-		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
+		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.91, RawResponse: "{\"label\":\"cs_detected\"}", TokensIn: 128, TokensOut: 32, Latency: 230 * time.Millisecond}},
+		fakePromptResolver{prompt: prompts.PromptVersion{ID: "prompt-1", Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5, Template: "detect cs", Model: "gemini-2.0-flash", Temperature: 0.2, MaxTokens: 1024, TimeoutMS: 5000}},
 		runs,
 		decisions,
 		locker,
@@ -81,6 +82,12 @@ func TestWorkerProcessStreamerStageASuccess(t *testing.T) {
 	}
 	if decisions.last.StreamerID != "str-1" {
 		t.Fatalf("recorded streamer = %q", decisions.last.StreamerID)
+	}
+	if decisions.last.PromptVersionID != "prompt-1" || decisions.last.Model != "gemini-2.0-flash" {
+		t.Fatalf("expected prompt/runtime metadata to propagate, got %#v", decisions.last)
+	}
+	if decisions.last.ChunkRef != "chunk-1" || decisions.last.RawResponse == "" {
+		t.Fatalf("expected chunk/raw response metadata, got %#v", decisions.last)
 	}
 }
 
