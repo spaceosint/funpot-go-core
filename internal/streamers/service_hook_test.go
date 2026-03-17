@@ -37,3 +37,19 @@ func TestSubmitRollsBackOnHookError(t *testing.T) {
 		t.Fatalf("expected rollback of submission, got %d streamers", got)
 	}
 }
+
+func TestResolveStreamlinkChannel(t *testing.T) {
+	svc := NewService()
+	result, err := svc.Submit(context.Background(), "stream_name", "user-1")
+	if err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	channel, err := svc.ResolveStreamlinkChannel(context.Background(), result.ID)
+	if err != nil {
+		t.Fatalf("ResolveStreamlinkChannel() error = %v", err)
+	}
+	if channel != "stream_name" {
+		t.Fatalf("channel = %q, want stream_name", channel)
+	}
+}

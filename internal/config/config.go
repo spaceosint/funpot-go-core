@@ -22,8 +22,19 @@ type Config struct {
 	Admin       AdminConfig
 	Redis       RedisConfig
 	Database    DatabaseConfig
+	Streamlink  StreamlinkConfig
 	Features    FeatureConfig
 	Client      ClientConfig
+}
+
+// StreamlinkConfig controls live stream chunk capture process integration.
+type StreamlinkConfig struct {
+	Enabled        bool
+	BinaryPath     string
+	Quality        string
+	CaptureTimeout time.Duration
+	OutputDir      string
+	URLTemplate    string
 }
 
 // AdminConfig controls role-based admin access.
@@ -270,6 +281,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	streamlinkEnabled, err := getBool("FUNPOT_STREAMLINK_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+
+	streamlinkCaptureTimeout, err := getDuration("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", 12*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
 	if err != nil {
 		return Config{}, err
@@ -379,6 +400,14 @@ func Load() (Config, error) {
 			WriteTimeout:    redisWriteTimeout,
 			HealthcheckPing: redisHealthcheckPing,
 		},
+		Streamlink: StreamlinkConfig{
+			Enabled:        streamlinkEnabled,
+			BinaryPath:     getString("FUNPOT_STREAMLINK_BINARY", "streamlink"),
+			Quality:        getString("FUNPOT_STREAMLINK_QUALITY", "best"),
+			CaptureTimeout: streamlinkCaptureTimeout,
+			OutputDir:      getString("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/stream_chunks"),
+			URLTemplate:    getString("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s"),
+		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
 		},
@@ -413,6 +442,24 @@ func Load() (Config, error) {
 
 	if cfg.Redis.PoolSize < 1 || cfg.Redis.MinIdleConns < 0 || cfg.Redis.MinIdleConns > cfg.Redis.PoolSize {
 		return Config{}, fmt.Errorf("invalid redis pool bounds: min_idle=%d pool_size=%d", cfg.Redis.MinIdleConns, cfg.Redis.PoolSize)
+	}
+
+	if cfg.Streamlink.Enabled {
+		if strings.TrimSpace(cfg.Streamlink.BinaryPath) == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_BINARY must be set when FUNPOT_STREAMLINK_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.Streamlink.Quality) == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_QUALITY must be set when FUNPOT_STREAMLINK_ENABLED=true")
+		}
+		if cfg.Streamlink.CaptureTimeout <= 0 {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT must be > 0")
+		}
+		if strings.TrimSpace(cfg.Streamlink.OutputDir) == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_OUTPUT_DIR must be set when FUNPOT_STREAMLINK_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.Streamlink.URLTemplate) == "" || !strings.Contains(cfg.Streamlink.URLTemplate, "%s") {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_URL_TEMPLATE must include %%s placeholder")
+		}
 	}
 
 	return cfg, nil

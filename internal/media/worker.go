@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -121,6 +123,7 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
+	defer cleanupChunkRef(chunk.Reference)
 
 	result, err := w.classifier.Classify(ctx, StageARequest{StreamerID: id, Chunk: chunk, Prompt: activePrompt})
 	if err != nil {
@@ -154,4 +157,18 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		TokensOut:       result.TokensOut,
 		LatencyMS:       result.Latency.Milliseconds(),
 	})
+}
+
+func cleanupChunkRef(ref string) {
+	path := strings.TrimSpace(ref)
+	if path == "" {
+		return
+	}
+	if strings.Contains(path, "://") {
+		return
+	}
+	if ext := strings.ToLower(filepath.Ext(path)); ext == "" {
+		return
+	}
+	_ = os.Remove(path)
 }

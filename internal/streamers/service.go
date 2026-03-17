@@ -15,6 +15,7 @@ var (
 	ErrInvalidStatus     = errors.New("status filter is invalid")
 	ErrRateLimited       = errors.New("submission rate limit exceeded")
 	ErrTwitchUnavailable = errors.New("failed to validate twitch username")
+	ErrNotFound          = errors.New("streamer not found")
 )
 
 var twitchUsernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{4,25}$`)
@@ -114,6 +115,27 @@ func (s *Service) List(_ context.Context, query, status string, page int) []Stre
 	result := make([]Streamer, end-start)
 	copy(result, matches[start:end])
 	return result
+}
+
+func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string) (string, error) {
+	id := strings.TrimSpace(streamerID)
+	if id == "" {
+		return "", ErrNotFound
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, item := range s.items {
+		if item.ID == id {
+			if username := strings.TrimSpace(item.Username); username != "" {
+				return username, nil
+			}
+			break
+		}
+	}
+
+	return "", ErrNotFound
 }
 
 func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (Submission, error) {

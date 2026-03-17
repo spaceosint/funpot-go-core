@@ -110,7 +110,7 @@ func main() {
 	eventsService := events.NewService(nil)
 
 	streamWorker := media.NewWorker(
-		media.StreamlinkCaptureAdapter{},
+		buildStreamCapture(cfg, streamersService),
 		media.PromptedStageAClassifier{},
 		promptsService,
 		&media.InMemoryRunStore{},
@@ -188,6 +188,20 @@ func main() {
 	if err := application.Run(ctx); err != nil {
 		logger.Fatal("application exited with error", zap.Error(err))
 	}
+}
+
+func buildStreamCapture(cfg config.Config, streamersService *streamers.Service) media.StreamCapture {
+	if !cfg.Streamlink.Enabled {
+		return media.NewStreamlinkCaptureAdapter(media.StreamlinkCaptureConfig{}, nil, nil)
+	}
+
+	return media.NewStreamlinkCaptureAdapter(media.StreamlinkCaptureConfig{
+		BinaryPath:     cfg.Streamlink.BinaryPath,
+		Quality:        cfg.Streamlink.Quality,
+		CaptureTimeout: cfg.Streamlink.CaptureTimeout,
+		OutputDir:      cfg.Streamlink.OutputDir,
+		URLTemplate:    cfg.Streamlink.URLTemplate,
+	}, streamersService, nil)
 }
 
 func newLogger(level string) (*zap.Logger, error) {
