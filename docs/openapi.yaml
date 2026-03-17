@@ -6,6 +6,85 @@ info:
 servers:
   - url: https://api.funpot.example
 paths:
+  /api/auth/telegram:
+    post:
+      summary: Authenticate via Telegram Mini App initData
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [initData]
+              properties:
+                initData:
+                  type: string
+      responses:
+        '200':
+          description: Authentication succeeded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  refreshToken:
+                    type: string
+                  refreshExpiresAt:
+                    type: string
+                    format: date-time
+                  sessionId:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/refresh:
+    post:
+      summary: Rotate refresh session and issue new tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token pair rotated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/logout:
+    post:
+      summary: Revoke a single refresh session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Session revoked
+        default:
+          $ref: '#/components/responses/Error'
+  /api/auth/logout-all:
+    post:
+      summary: Revoke all refresh sessions for authenticated user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked
+        default:
+          $ref: '#/components/responses/Error'
   /api/me:
     get:
       summary: Get current user profile
@@ -49,6 +128,11 @@ paths:
           schema:
             type: integer
             minimum: 1
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, approved, rejected]
       responses:
         '200':
           description: Streamer list
@@ -61,7 +145,7 @@ paths:
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Submit a streamer for validation
+      summary: Submit a streamer for Twitch validation
       security:
         - bearerAuth: []
       requestBody:
@@ -81,20 +165,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StreamerSubmission'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
-  /api/games:
+  /api/streamers/{streamerId}/llm-decisions:
     get:
-      summary: List games for a streamer
+      summary: List latest LLM stage decisions for streamer
       security:
         - bearerAuth: []
       parameters:
-        - in: query
+        - in: path
           name: streamerId
           required: true
           schema:
             type: string
-            format: uuid
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Decision history ordered by latest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMDecision'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Record LLM stage decision for streamer (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMDecisionRecordRequest'
+      responses:
+        '201':
+          description: Recorded LLM decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMDecision'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/admin/games:
+    get:
+      summary: List games (admin)
+      security:
+        - bearerAuth: []
       responses:
         '200':
           description: Game list
@@ -104,6 +240,121 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create game (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameUpsertRequest'
+      responses:
+        '201':
+          description: Created game
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/games/{gameId}:
+    put:
+      summary: Update game (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameUpsertRequest'
+      responses:
+        '200':
+          description: Updated game
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Game'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete game (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: gameId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Game deleted
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/prompts:
+    get:
+      summary: List prompt versions (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Prompt versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create prompt version (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptCreateRequest'
+      responses:
+        '201':
+          description: Created prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/prompts/{promptId}/activate:
+    post:
+      summary: Activate prompt version (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: promptId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activated prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
   /api/events/live:
@@ -488,6 +739,27 @@ components:
                     type: object
                     additionalProperties: true
   schemas:
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    RefreshResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+        refreshExpiresAt:
+          type: string
+          format: date-time
+        sessionId:
+          type: string
     UserProfile:
       type: object
       properties:
@@ -519,6 +791,9 @@ components:
         flags:
           type: object
           additionalProperties: true
+        isAdmin:
+          type: boolean
+          description: Indicates whether the authenticated user has admin privileges.
     ClientConfig:
       type: object
       properties:
@@ -581,6 +856,58 @@ components:
         reason:
           type: string
           nullable: true
+
+    LLMDecisionRecordRequest:
+      type: object
+      required: [runId, stage, label, confidence]
+      properties:
+        runId:
+          type: string
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        label:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    LLMDecision:
+      type: object
+      properties:
+        id:
+          type: string
+        runId:
+          type: string
+        streamerId:
+          type: string
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        label:
+          type: string
+        confidence:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+    GameUpsertRequest:
+      type: object
+      required: [slug, title, status]
+      properties:
+        slug:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        rules:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [draft, active, archived]
     Game:
       type: object
       properties:
@@ -605,6 +932,64 @@ components:
           type: string
           format: date-time
           nullable: true
+    PromptCreateRequest:
+      type: object
+      required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      properties:
+        stage:
+          type: string
+          enum: [stage_a, stage_b, stage_c, stage_d]
+        template:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        maxTokens:
+          type: integer
+          minimum: 1
+        timeoutMs:
+          type: integer
+          minimum: 1
+        retryCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+        backoffMs:
+          type: integer
+          minimum: 0
+        cooldownMs:
+          type: integer
+          minimum: 0
+        minConfidence:
+          type: number
+          minimum: 0
+          maximum: 1
+    PromptVersion:
+      allOf:
+        - $ref: '#/components/schemas/PromptCreateRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+            version:
+              type: integer
+            isActive:
+              type: boolean
+            createdBy:
+              type: string
+            activatedBy:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+            activatedAt:
+              type: string
+              format: date-time
+              nullable: true
     LiveEvent:
       type: object
       properties:
@@ -867,4 +1252,3 @@ components:
         checkedAt:
           type: string
           format: date-time
-

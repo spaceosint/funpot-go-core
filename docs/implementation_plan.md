@@ -35,14 +35,39 @@ approximate sequencing, and validation criteria.
   feature flags.
 
 ### M2 – Streamer Catalog & Games Skeleton
-- [ ] Implement streamer onboarding (`POST /api/streamers`) with Twitch
+- [x] Implement streamer onboarding (`POST /api/streamers`) with Twitch
   validation integration stub and rate limits.
-- [ ] Expose streamer listings (`GET /api/streamers`) with pagination and
+- [x] Expose streamer listings (`GET /api/streamers`) with pagination and
   moderation states.
-- [ ] Create `games` module storing rules, statuses, and admin CRUD endpoints.
-- [ ] Introduce admin role enforcement and basic UI scaffolds.
-- Exit Criteria: admins can register streamers and configure games ready for
-  live events.
+- [x] Create `games` module storing rules, statuses, and admin CRUD endpoints.
+- [x] Introduce admin role enforcement and basic UI scaffolds.
+- Exit Criteria: authenticated users can register streamers, while admins can
+  configure games ready for live events.
+
+### M2.1 – LLM Stream Orchestration (Gemini) for Streamers
+- [x] Deliver admin panel backend contracts for managing LLM request templates,
+  stage transitions, and safety limits (temperature, max tokens, timeout,
+  fallback strategy).
+- [ ] Implement stream capture worker pipeline:
+  `streamlink -> media chunking -> Gemini request -> normalized stage result`.
+- [ ] Build staged game flow for Counter-Strike:
+  Stage A detects stream context (is streamer playing CS or not),
+  Stage B classifies match type (competitive / faceit / other),
+  Stage C tracks live match state (pre-game / in-progress / finished),
+  Stage D determines result (win / loss / unknown).
+- [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
+  handling for failed LLM jobs.
+- [ ] Publish live LLM status updates to clients via WebSocket channel.
+- [x] Provide REST history endpoint for latest LLM stage decisions.
+- [x] Introduce Redis-backed refresh session store for admin/user session
+  revocation, rotation, and concurrent session controls.
+- [x] Integrate refresh session store into auth refresh/login/logout flows
+  (token pair issuance, rotation endpoint, and revoke-all/user-device controls).
+- [ ] Add observability: per-stage latency, success ratio, token usage, and
+  drift alerts for prompt regressions.
+- Exit Criteria: admin can tune prompts per stage, worker pipeline produces
+  stage results for active streamers, and users observe near-real-time status
+  updates on streamer pages.
 
 ### M3 – Events Lifecycle & Realtime Delivery
 - [ ] Implement `/internal/worker/events` ingestion with validation, dedupe, and

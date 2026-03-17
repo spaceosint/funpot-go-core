@@ -30,6 +30,16 @@ FUNPOT_SENTRY_DEBUG=false
 FUNPOT_AUTH_TELEGRAM_BOT_TOKEN=<telegram_bot_token>
 FUNPOT_AUTH_JWT_SECRET=dev-secret
 FUNPOT_AUTH_JWT_TTL=15m
+FUNPOT_AUTH_REFRESH_ENABLED=false
+FUNPOT_AUTH_REFRESH_TTL=720h
+FUNPOT_AUTH_REFRESH_MAX_SESSIONS=5
+FUNPOT_AUTH_REFRESH_KEY_PREFIX=funpot:auth
+FUNPOT_REDIS_ENABLED=false
+FUNPOT_REDIS_ADDR=127.0.0.1:6379
+FUNPOT_REDIS_PASSWORD=
+FUNPOT_REDIS_DB=0
+FUNPOT_REDIS_CONNECT_TIMEOUT=2s
+FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
 FUNPOT_DATABASE_PORT=5432
@@ -42,11 +52,18 @@ FUNPOT_DATABASE_MIN_OPEN_CONNS=1
 FUNPOT_DATABASE_CONNECT_TIMEOUT=5s
 FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT=1s
 FUNPOT_FEATURE_FLAGS=wallet=false,votes=false
+FUNPOT_CLIENT_STARS_RATE=1
+FUNPOT_CLIENT_MIN_VIEWERS=100
+FUNPOT_CLIENT_CURRENCIES=INT
+FUNPOT_CLIENT_LIMIT_VOTE_PER_MIN=30
 FUNPOT_DATABASE_MAX_OPEN_CONNS=10
 FUNPOT_DATABASE_MAX_IDLE_CONNS=5
 FUNPOT_DATABASE_CONN_MAX_IDLE_TIME=5m
 FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 ```
+
+> `FUNPOT_AUTH_REFRESH_ENABLED=true` requires `FUNPOT_REDIS_ENABLED=true`
+> because refresh sessions are stored in Redis.
 
 Update this table whenever you introduce a new configuration surface.
 
@@ -72,6 +89,12 @@ go run github.com/golang-migrate/migrate/v4/cmd/migrate@latest \
 ```
 
 ## Running the Server
+If you plan to use refresh sessions, run Redis locally (example with Docker):
+
+```bash
+docker run --name funpot-redis -p 6379:6379 -d redis:7
+```
+
 Run PostgreSQL locally (example with Docker):
 
 ```bash
@@ -107,9 +130,19 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
 - `GET /readyz` – readiness probe (`ready` by default; DB connectivity check when PostgreSQL mode is enabled).
 - `GET /metrics` – Prometheus metrics when enabled, `204 No Content` otherwise.
-- `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns a short-lived JWT.
-- `GET /api/me` – returns the authenticated user's profile when called with the issued JWT.
-- `GET /api/config` – exposes seeded feature flags for the authenticated user.
+- `POST /api/auth/telegram` – verifies Telegram Mini App `initData` and returns JWT + refresh pair when refresh sessions are enabled.
+- `POST /api/auth/refresh` – rotates refresh session and issues a new JWT + refresh token pair.
+- `POST /api/auth/logout` – revokes a single refresh session using refresh token.
+- `POST /api/auth/logout-all` – revokes all refresh sessions for authenticated user.
+- `GET /api/me` – returns the authenticated user's profile plus `isAdmin` flag when called with the issued JWT.
+- `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
+- `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
+- `POST /api/streamers` – submits a Twitch streamer username for moderation/validation.
+- `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
+- `GET /api/admin/games` – admin-only endpoint listing all configured games.
+- `POST /api/admin/games` – admin-only endpoint creating a game definition.
+- `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
+- `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
@@ -119,7 +152,14 @@ full stack.
 Logs are emitted in JSON format using `zap`. Telemetry spans are exported to
 stdout through the OpenTelemetry SDK, and Sentry is initialized when a DSN is
 provided. When `FUNPOT_DATABASE_ENABLED=true`, startup validates PostgreSQL
-connectivity and `/readyz` depends on successful DB ping checks.
+connectivity and `/readyz` depends on successful DB ping checks. When
+`FUNPOT_REDIS_ENABLED=true`, startup validates Redis connectivity and includes
+Redis ping in `/readyz` checks.
+
+When `FUNPOT_AUTH_REFRESH_ENABLED=true`, the service configures refresh-session
+storage automatically. Set `FUNPOT_REDIS_ENABLED=true` to use Redis-backed
+session revocation/rotation, or keep it `false` to use in-memory sessions for
+local smoke tests.
 
 ## Observability Notes
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.

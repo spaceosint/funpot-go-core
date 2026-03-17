@@ -7,13 +7,20 @@ import (
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/funpot/funpot-go-core/internal/admin"
 	"github.com/funpot/funpot-go-core/internal/app"
 	"github.com/funpot/funpot-go-core/internal/auth"
 	"github.com/funpot/funpot-go-core/internal/config"
+	"github.com/funpot/funpot-go-core/internal/events"
+	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/prompts"
+	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
+	"github.com/funpot/funpot-go-core/pkg/cache"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
 )
@@ -52,8 +59,9 @@ func main() {
 	defer telemetry.FlushSentry(2 * time.Second)
 
 	var (
-		db       *sql.DB
-		userRepo users.Repository
+		db          *sql.DB
+		redisClient *redis.Client
+		userRepo    users.Repository
 	)
 
 	if cfg.Database.DSN() != "" {
@@ -79,25 +87,83 @@ func main() {
 		userRepo = users.NewInMemoryRepository()
 	}
 
+	if cfg.Redis.Enabled {
+		redisCtx, cancel := context.WithTimeout(context.Background(), cfg.Redis.HealthcheckPing)
+		redisClient, err = cache.OpenRedis(redisCtx, cfg.Redis)
+		cancel()
+		if err != nil {
+			logger.Fatal("failed to connect to redis", zap.Error(err))
+		}
+		defer func() {
+			if err := redisClient.Close(); err != nil {
+				logger.Error("failed to close redis", zap.Error(err))
+			}
+		}()
+	}
+
 	userService := users.NewService(userRepo)
+	adminService := admin.NewService(cfg.Admin.UserIDs)
+	streamersService := streamers.NewService()
+	gamesService := games.NewService()
+	promptsService := prompts.NewService()
+	eventsService := events.NewService(nil)
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
 	if err != nil {
 		logger.Fatal("failed to create auth service", zap.Error(err))
 	}
-
-	readyFn := func() bool {
-		if db == nil {
-			return true
+	if cfg.Auth.Refresh.Enabled {
+		refreshStore, err := auth.NewRedisRefreshSessionStore(redisClient, auth.RefreshStoreConfig{
+			KeyPrefix:          cfg.Auth.Refresh.KeyPrefix,
+			MaxSessionsPerUser: cfg.Auth.Refresh.MaxSessionsPerUser,
+		})
+		if err != nil {
+			logger.Fatal("failed to configure refresh session store", zap.Error(err))
 		}
-
-		pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		return db.PingContext(pingCtx) == nil
+		authService.WithRefreshSessionStore(refreshStore)
 	}
 
-	handler := app.NewHandler(logger, readyFn, telemetryProvider.MetricsHandler(), authService, userService, cfg.Features.Flags)
+	cleanupRefreshStore, err := setupRefreshSessionStore(ctx, logger, cfg, authService)
+	if err != nil {
+		logger.Fatal("failed to configure refresh sessions", zap.Error(err))
+	}
+	defer cleanupRefreshStore()
+
+	readyFn := func() bool {
+		if db != nil {
+			pingCtx, cancel := context.WithTimeout(context.Background(), cfg.Database.HealthcheckPing)
+			err := db.PingContext(pingCtx)
+			cancel()
+			if err != nil {
+				return false
+			}
+		}
+
+		if redisClient != nil {
+			pingCtx, cancel := context.WithTimeout(context.Background(), cfg.Redis.HealthcheckPing)
+			err := redisClient.Ping(pingCtx).Err()
+			cancel()
+			if err != nil {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	handler := app.NewHandler(
+		logger,
+		readyFn,
+		telemetryProvider.MetricsHandler(),
+		authService,
+		adminService,
+		userService,
+		streamersService,
+		gamesService,
+		promptsService,
+		eventsService,
+		app.ConfigResponseFromConfig(cfg),
+	)
 
 	application, err := app.New(cfg, logger, handler)
 	if err != nil {
@@ -119,4 +185,50 @@ func newLogger(level string) (*zap.Logger, error) {
 	cfg.EncoderConfig.TimeKey = "timestamp"
 	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	return cfg.Build()
+}
+
+func setupRefreshSessionStore(ctx context.Context, logger *zap.Logger, cfg config.Config, authService *auth.Service) (func(), error) {
+	if !cfg.Auth.Refresh.Enabled {
+		return func() {}, nil
+	}
+
+	if !cfg.Redis.Enabled {
+		logger.Warn("redis is disabled; using in-memory refresh session store")
+		authService.WithRefreshSessionStore(auth.NewInMemoryRefreshSessionStore(cfg.Auth.Refresh.MaxSessionsPerUser))
+		return func() {}, nil
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:         cfg.Redis.Addr,
+		Password:     cfg.Redis.Password,
+		DB:           cfg.Redis.DB,
+		DialTimeout:  cfg.Redis.ConnectTimeout,
+		ReadTimeout:  cfg.Redis.ConnectTimeout,
+		WriteTimeout: cfg.Redis.ConnectTimeout,
+	})
+
+	pingCtx, cancel := context.WithTimeout(ctx, cfg.Redis.ConnectTimeout)
+	defer cancel()
+	if err := redisClient.Ping(pingCtx).Err(); err != nil {
+		_ = redisClient.Close()
+		return nil, fmt.Errorf("ping redis: %w", err)
+	}
+
+	refreshStore, err := auth.NewRedisRefreshSessionStore(redisClient, auth.RefreshStoreConfig{
+		KeyPrefix:          cfg.Auth.Refresh.KeyPrefix,
+		MaxSessionsPerUser: cfg.Auth.Refresh.MaxSessionsPerUser,
+	})
+	if err != nil {
+		_ = redisClient.Close()
+		return nil, err
+	}
+
+	authService.WithRefreshSessionStore(refreshStore)
+	logger.Info("redis refresh session store enabled", zap.String("addr", cfg.Redis.Addr))
+
+	return func() {
+		if err := redisClient.Close(); err != nil {
+			logger.Warn("failed to close redis client", zap.Error(err))
+		}
+	}, nil
 }
