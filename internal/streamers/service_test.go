@@ -90,7 +90,24 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	now = now.Add(time.Second)
-	second, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_b", Label: "competitive", Confidence: 0.8})
+	second, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{
+		RunID:           "run-1",
+		StreamerID:      "str-1",
+		Stage:           "stage_b",
+		Label:           "competitive",
+		Confidence:      0.8,
+		PromptVersionID: "prompt-2",
+		PromptText:      "classify match type",
+		Model:           "gemini-2.0-flash",
+		Temperature:     0.1,
+		MaxTokens:       500,
+		TimeoutMS:       2500,
+		ChunkRef:        "streamlink://str-1/123",
+		RawResponse:     "{\"label\":\"competitive\"}",
+		TokensIn:        144,
+		TokensOut:       27,
+		LatencyMS:       180,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,6 +118,9 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	}
 	if items[0].ID != second.ID {
 		t.Fatalf("expected latest decision first, got %s", items[0].ID)
+	}
+	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 {
+		t.Fatalf("expected metadata to be persisted, got %#v", items[0])
 	}
 }
 

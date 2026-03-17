@@ -137,10 +137,21 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	}
 
 	return w.decisions.RecordLLMDecision(ctx, streamers.RecordDecisionRequest{
-		RunID:      runID,
-		StreamerID: id,
-		Stage:      prompts.StageA,
-		Label:      string(label),
-		Confidence: result.Confidence,
+		RunID:           runID,
+		StreamerID:      id,
+		Stage:           prompts.StageA,
+		Label:           string(label),
+		Confidence:      result.Confidence,
+		PromptVersionID: activePrompt.ID,
+		PromptText:      activePrompt.Template,
+		Model:           activePrompt.Model,
+		Temperature:     activePrompt.Temperature,
+		MaxTokens:       activePrompt.MaxTokens,
+		TimeoutMS:       activePrompt.TimeoutMS,
+		ChunkRef:        chunk.Reference,
+		RawResponse:     result.RawResponse,
+		TokensIn:        result.TokensIn,
+		TokensOut:       result.TokensOut,
+		LatencyMS:       result.Latency.Milliseconds(),
 	})
 }

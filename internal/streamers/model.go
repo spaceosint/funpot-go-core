@@ -18,19 +18,41 @@ type Submission struct {
 }
 
 type LLMDecision struct {
-	ID         string  `json:"id"`
-	RunID      string  `json:"runId"`
-	StreamerID string  `json:"streamerId"`
-	Stage      string  `json:"stage"`
-	Label      string  `json:"label"`
-	Confidence float64 `json:"confidence"`
-	CreatedAt  string  `json:"createdAt"`
+	ID              string  `json:"id"`
+	RunID           string  `json:"runId"`
+	StreamerID      string  `json:"streamerId"`
+	Stage           string  `json:"stage"`
+	Label           string  `json:"label"`
+	Confidence      float64 `json:"confidence"`
+	PromptVersionID string  `json:"promptVersionId,omitempty"`
+	PromptText      string  `json:"promptText,omitempty"`
+	Model           string  `json:"model,omitempty"`
+	Temperature     float64 `json:"temperature,omitempty"`
+	MaxTokens       int     `json:"maxTokens,omitempty"`
+	TimeoutMS       int     `json:"timeoutMs,omitempty"`
+	ChunkRef        string  `json:"chunkRef,omitempty"`
+	RawResponse     string  `json:"rawResponse,omitempty"`
+	TokensIn        int     `json:"tokensIn,omitempty"`
+	TokensOut       int     `json:"tokensOut,omitempty"`
+	LatencyMS       int64   `json:"latencyMs,omitempty"`
+	CreatedAt       string  `json:"createdAt"`
 }
 
 type RecordDecisionRequest struct {
-	RunID      string
-	StreamerID string
-	Stage      string
-	Label      string
-	Confidence float64
+	RunID           string
+	StreamerID      string
+	Stage           string
+	Label           string
+	Confidence      float64
+	PromptVersionID string
+	PromptText      string
+	Model           string
+	Temperature     float64
+	MaxTokens       int
+	TimeoutMS       int
+	ChunkRef        string
+	RawResponse     string
+	TokensIn        int
+	TokensOut       int
+	LatencyMS       int64
 }

@@ -30,10 +30,21 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 
 	adminToken := buildToken(t, "admin-1")
 	body, _ := json.Marshal(map[string]any{
-		"runId":      "run-1",
-		"stage":      "stage_a",
-		"label":      "cs_detected",
-		"confidence": 0.93,
+		"runId":           "run-1",
+		"stage":           "stage_a",
+		"label":           "cs_detected",
+		"confidence":      0.93,
+		"promptVersionId": "prompt-1",
+		"promptText":      "detect stage",
+		"model":           "gemini-2.0-flash",
+		"temperature":     0.2,
+		"maxTokens":       512,
+		"timeoutMs":       3500,
+		"chunkRef":        "streamlink://str-1/100",
+		"rawResponse":     "{}",
+		"tokensIn":        123,
+		"tokensOut":       19,
+		"latencyMs":       120,
 	})
 	createReq := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(body))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -58,6 +69,9 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("expected one item, got %d", len(items))
+	}
+	if items[0]["promptVersionId"] != "prompt-1" {
+		t.Fatalf("expected metadata to be returned, got %#v", items[0])
 	}
 }
 
