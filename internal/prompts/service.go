@@ -37,6 +37,20 @@ func (s *Service) List(_ context.Context) []PromptVersion {
 	return items
 }
 
+func (s *Service) GetActiveByStage(_ context.Context, stage string) (PromptVersion, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stage = strings.TrimSpace(stage)
+	versions := s.versions[stage]
+	for _, item := range versions {
+		if item.IsActive {
+			return item, nil
+		}
+	}
+	return PromptVersion{}, ErrNotFound
+}
+
 func (s *Service) Create(_ context.Context, req CreateRequest) (PromptVersion, error) {
 	if err := ValidateCreateRequest(req); err != nil {
 		return PromptVersion{}, err

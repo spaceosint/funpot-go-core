@@ -47,6 +47,8 @@ type Service struct {
 	nowFn          func() time.Time
 	counterMu      sync.Mutex
 	counter        int64
+	onSubmittedMu  sync.RWMutex
+	onSubmitted    func(context.Context, string) error
 }
 
 func NewService() *Service {
@@ -66,6 +68,18 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (s *Service) SetSubmissionHook(hook func(context.Context, string) error) {
+	s.onSubmittedMu.Lock()
+	s.onSubmitted = hook
+	s.onSubmittedMu.Unlock()
+}
+
+func (s *Service) submissionHook() func(context.Context, string) error {
+	s.onSubmittedMu.RLock()
+	defer s.onSubmittedMu.RUnlock()
+	return s.onSubmitted
 }
 
 func (s *Service) List(_ context.Context, query, status string, page int) []Streamer {
@@ -137,6 +151,17 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 	s.items = append(s.items, streamer)
 	s.mu.Unlock()
 
+	if hook := s.submissionHook(); hook != nil {
+		if err := hook(ctx, id); err != nil {
+			s.mu.Lock()
+			if n := len(s.items); n > 0 && s.items[n-1].ID == id {
+				s.items = s.items[:n-1]
+			}
+			s.mu.Unlock()
+			return Submission{}, err
+		}
+	}
+
 	return Submission{ID: id, Status: "pending", Reason: nil}, nil
 }
 
@@ -182,7 +207,6 @@ func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest
 
 	return item, nil
 }
-
 func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit int) []LLMDecision {
 	key := strings.TrimSpace(streamerID)
 	if key == "" {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
 
@@ -17,6 +18,12 @@ var (
 
 type ChunkRef struct {
 	Reference string
+}
+
+type StageARequest struct {
+	StreamerID string
+	Chunk      ChunkRef
+	Prompt     prompts.PromptVersion
 }
 
 type StageAClassification struct {
@@ -33,7 +40,11 @@ type StreamCapture interface {
 }
 
 type StageAClassifier interface {
-	Classify(ctx context.Context, input ChunkRef) (StageAClassification, error)
+	Classify(ctx context.Context, input StageARequest) (StageAClassification, error)
+}
+
+type PromptResolver interface {
+	GetActiveByStage(ctx context.Context, stage string) (prompts.PromptVersion, error)
 }
 
 type RunStore interface {
@@ -52,6 +63,7 @@ type Locker interface {
 type Worker struct {
 	capture       StreamCapture
 	classifier    StageAClassifier
+	prompts       PromptResolver
 	runs          RunStore
 	decisions     DecisionStore
 	locker        Locker
@@ -64,7 +76,7 @@ type WorkerConfig struct {
 	MinConfidence float64
 }
 
-func NewWorker(capture StreamCapture, classifier StageAClassifier, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
+func NewWorker(capture StreamCapture, classifier StageAClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
 	if cfg.LockTTL <= 0 {
 		cfg.LockTTL = 30 * time.Second
 	}
@@ -74,6 +86,7 @@ func NewWorker(capture StreamCapture, classifier StageAClassifier, runs RunStore
 	return &Worker{
 		capture:       capture,
 		classifier:    classifier,
+		prompts:       promptResolver,
 		runs:          runs,
 		decisions:     decisions,
 		locker:        locker,
@@ -99,25 +112,34 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		return streamers.LLMDecision{}, err
 	}
 
+	activePrompt, err := w.prompts.GetActiveByStage(ctx, prompts.StageA)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+
 	chunk, err := w.capture.Capture(ctx, id)
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
 
-	result, err := w.classifier.Classify(ctx, chunk)
+	result, err := w.classifier.Classify(ctx, StageARequest{StreamerID: id, Chunk: chunk, Prompt: activePrompt})
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
 
 	label := NormalizeStageALabel(result.Label)
-	if result.Confidence < w.minConfidence {
+	minConfidence := w.minConfidence
+	if activePrompt.MinConfidence > 0 {
+		minConfidence = activePrompt.MinConfidence
+	}
+	if result.Confidence < minConfidence {
 		label = StageALabelUncertain
 	}
 
 	return w.decisions.RecordLLMDecision(ctx, streamers.RecordDecisionRequest{
 		RunID:      runID,
 		StreamerID: id,
-		Stage:      "stage_a",
+		Stage:      prompts.StageA,
 		Label:      string(label),
 		Confidence: result.Confidence,
 	})
