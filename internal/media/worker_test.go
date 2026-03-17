@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
 
@@ -25,11 +26,23 @@ type fakeClassifier struct {
 	err    error
 }
 
-func (f fakeClassifier) Classify(_ context.Context, _ ChunkRef) (StageAClassification, error) {
+func (f fakeClassifier) Classify(_ context.Context, _ StageARequest) (StageAClassification, error) {
 	if f.err != nil {
 		return StageAClassification{}, f.err
 	}
 	return f.result, nil
+}
+
+type fakePromptResolver struct {
+	prompt prompts.PromptVersion
+	err    error
+}
+
+func (f fakePromptResolver) GetActiveByStage(_ context.Context, _ string) (prompts.PromptVersion, error) {
+	if f.err != nil {
+		return prompts.PromptVersion{}, f.err
+	}
+	return f.prompt, nil
 }
 
 type fakeDecisionStore struct {
@@ -49,6 +62,7 @@ func TestWorkerProcessStreamerStageASuccess(t *testing.T) {
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.91}},
+		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
 		runs,
 		decisions,
 		locker,
@@ -62,7 +76,7 @@ func TestWorkerProcessStreamerStageASuccess(t *testing.T) {
 	if got.Label != string(StageALabelCSDetected) {
 		t.Fatalf("label = %q, want %q", got.Label, StageALabelCSDetected)
 	}
-	if got.Stage != "stage_a" {
+	if got.Stage != prompts.StageA {
 		t.Fatalf("stage = %q, want stage_a", got.Stage)
 	}
 	if decisions.last.StreamerID != "str-1" {
@@ -74,6 +88,7 @@ func TestWorkerProcessStreamerLowConfidenceFallsBackToUncertain(t *testing.T) {
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.21}},
+		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
 		&InMemoryRunStore{},
 		&fakeDecisionStore{},
 		NewInMemoryLocker(),
@@ -98,6 +113,7 @@ func TestWorkerProcessStreamerBusy(t *testing.T) {
 	worker := NewWorker(
 		fakeCapture{},
 		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.9}},
+		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
 		&InMemoryRunStore{},
 		&fakeDecisionStore{},
 		locker,

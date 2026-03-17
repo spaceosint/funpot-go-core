@@ -70,3 +70,36 @@ func TestValidateCreateRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestGetActiveByStage(t *testing.T) {
+	svc := NewService()
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Stage:         StageA,
+		Template:      "detect cs",
+		Model:         "gemini-2.0-flash",
+		Temperature:   0.2,
+		MaxTokens:     128,
+		TimeoutMS:     2000,
+		RetryCount:    1,
+		BackoffMS:     100,
+		CooldownMS:    1000,
+		MinConfidence: 0.6,
+		ActorID:       "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := svc.GetActiveByStage(context.Background(), StageA); err != ErrNotFound {
+		t.Fatalf("GetActiveByStage() err = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := svc.Activate(context.Background(), created.ID, "admin-1"); err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	active, err := svc.GetActiveByStage(context.Background(), StageA)
+	if err != nil {
+		t.Fatalf("GetActiveByStage() error = %v", err)
+	}
+	if active.ID != created.ID {
+		t.Fatalf("active ID = %s, want %s", active.ID, created.ID)
+	}
+}

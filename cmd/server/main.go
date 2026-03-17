@@ -17,6 +17,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/media"
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
@@ -107,6 +108,20 @@ func main() {
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
 	eventsService := events.NewService(nil)
+
+	streamWorker := media.NewWorker(
+		media.StreamlinkCaptureAdapter{},
+		media.PromptedStageAClassifier{},
+		promptsService,
+		&media.InMemoryRunStore{},
+		streamersService,
+		media.NewInMemoryLocker(),
+		media.WorkerConfig{LockTTL: 15 * time.Second, MinConfidence: 0.5},
+	)
+	streamScheduler := media.NewScheduler(streamWorker, 10*time.Second)
+	streamersService.SetSubmissionHook(func(_ context.Context, streamerID string) error {
+		return streamScheduler.Start(streamerID)
+	})
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
 	if err != nil {

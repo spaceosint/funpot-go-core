@@ -24,6 +24,16 @@ This repository contains the backend modular monolith for the FunPot Telegram Mi
 - Reference user-facing changes in the PR description.
 - Attach migrations and documentation updates alongside code changes.
 
+
+## Priority Task for Agents (current)
+- Top priority: implement Streamlink-driven analysis after streamer onboarding.
+- Required target behavior:
+  1. After streamer is added, connect/start worker job automatically.
+  2. Download/capture stream chunks every 10 seconds.
+  3. Send each chunk to LLM with the active admin-created prompt.
+  4. Persist decisions and publish live status updates.
+- Keep your final checklist explicitly aligned with `docs/implementation_plan.md` M2.1 and the priority checklist.
+
 ## Status Reporting
 - Every deliverable or follow-up task must include an explicit checklist in the final
   response that marks what has been completed (`[x]`) and what remains (`[ ]`).

@@ -12,9 +12,16 @@ Design and implement an MVP where:
 - Security model for admin access (Telegram-based identity).
 - Redis usage model for orchestration and realtime delivery.
 
+## Priority implementation target
+- Treat the following as the top-priority slice for immediate delivery:
+  - streamer added -> analysis job starts automatically;
+  - Streamlink captures/reads fragment each 10 seconds;
+  - each fragment is sent to Gemini with active admin-managed prompt;
+  - decisions are persisted and published to websocket consumers.
+
 ## Product flow (high level)
 1. User (regular user or admin) adds streamer via `POST /api/streamers`.
-2. Worker scheduler picks active streamers and starts analysis cycle.
+2. Worker scheduler picks active streamers and starts analysis cycle (or an immediate bootstrap job right after streamer creation).
 3. Pipeline runs stage-by-stage (gating by previous stage output).
 4. Stage outputs are persisted and broadcast to clients.
 5. UI shows timeline + current stage state for each streamer.
@@ -158,7 +165,7 @@ Primary usage:
 
 ## Open questions before coding
 1. Is Faceit detection mandatory in MVP or can it be `unknown` fallback in first release?
-2. How often should Streamlink chunks be sampled (e.g., every 15s / 30s / 60s)?
+2. Fixed for current priority scope: Streamlink chunks must be sampled every 10 seconds (revisit only after baseline stability).
 3. Should result determination rely only on LLM, or also optional external match APIs later?
 4. What freshness SLA do we target on streamer page (e.g., update every <=10 seconds)?
 
@@ -176,8 +183,8 @@ cycles.
 - [ ] Introduce `internal/media/stream_capture_worker.go` (or equivalent module package)
   with cycle orchestration:
   - acquire streamer lock,
-  - fetch fragment via streamlink adapter,
-  - enqueue Gemini stage call,
+  - fetch fragment via streamlink adapter every 10 seconds,
+  - resolve active admin prompt for current stage and call Gemini,
   - persist normalized stage decision.
 - [ ] Add streamlink adapter interface to isolate process execution and allow tests.
 - [ ] Add DB model/repository for `stream_analysis_runs` and link to stage decisions.

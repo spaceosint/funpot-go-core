@@ -12,6 +12,26 @@ approximate sequencing, and validation criteria.
 - **Operational readiness first**: tracing, metrics, and idempotency are enabled
   before public exposure of new routes.
 
+## Priority Directive (current focus for agents)
+The highest-priority delivery for the next iteration is enabling continuous
+stream analysis immediately after a streamer is added:
+
+- Trigger background orchestration when a streamer is created/activated.
+- Capture stream fragments every **10 seconds** via Streamlink.
+- For each fragment, call LLM with the **active admin-managed prompt**
+  (stage-specific, versioned template).
+- Persist run/stage outputs and broadcast state updates to clients.
+
+### Priority checklist (must be tracked in status updates)
+- [ ] Auto-start Streamlink analysis job after `POST /api/streamers` success.
+- [ ] Fixed 10-second capture cadence with lock/idempotency protections.
+- [ ] Prompt resolution from admin configuration (`active` prompt version per stage).
+- [ ] Worker payload includes prompt text + runtime params (model, temperature, token limits).
+- [ ] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence.
+- [ ] Publish realtime `LLM_STAGE_UPDATED` events and provide REST backfill/history.
+- [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
+- [ ] Add observability for chunk lag, stage latency, and per-streamer failure rate.
+
 ## Milestones
 
 ### M0 – Foundation & Tooling
