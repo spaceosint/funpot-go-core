@@ -37,6 +37,12 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_REDIS_READ_TIMEOUT", "5s")
 	t.Setenv("FUNPOT_REDIS_WRITE_TIMEOUT", "6s")
 	t.Setenv("FUNPOT_REDIS_HEALTHCHECK_TIMEOUT", "7s")
+	t.Setenv("FUNPOT_STREAMLINK_ENABLED", "true")
+	t.Setenv("FUNPOT_STREAMLINK_BINARY", "/usr/local/bin/streamlink")
+	t.Setenv("FUNPOT_STREAMLINK_QUALITY", "best")
+	t.Setenv("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", "14s")
+	t.Setenv("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/chunks")
+	t.Setenv("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -118,6 +124,15 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Redis.HealthcheckPing != 7*time.Second {
 		t.Fatalf("expected redis healthcheck timeout 7s, got %s", cfg.Redis.HealthcheckPing)
 	}
+	if !cfg.Streamlink.Enabled {
+		t.Fatalf("expected streamlink enabled")
+	}
+	if cfg.Streamlink.BinaryPath != "/usr/local/bin/streamlink" {
+		t.Fatalf("expected streamlink binary to be set")
+	}
+	if cfg.Streamlink.CaptureTimeout != 14*time.Second {
+		t.Fatalf("expected streamlink capture timeout 14s, got %s", cfg.Streamlink.CaptureTimeout)
+	}
 }
 
 func TestLoadDatabaseValidation(t *testing.T) {
@@ -169,6 +184,13 @@ func TestLoadDatabaseValidation(t *testing.T) {
 				"FUNPOT_REDIS_ENABLED":        "true",
 				"FUNPOT_REDIS_POOL_SIZE":      "2",
 				"FUNPOT_REDIS_MIN_IDLE_CONNS": "5",
+			},
+		},
+		{
+			name: "invalid streamlink template",
+			env: map[string]string{
+				"FUNPOT_STREAMLINK_ENABLED":      "true",
+				"FUNPOT_STREAMLINK_URL_TEMPLATE": "https://twitch.tv/channel",
 			},
 		},
 	}

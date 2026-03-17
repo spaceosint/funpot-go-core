@@ -39,6 +39,12 @@ FUNPOT_REDIS_ADDR=127.0.0.1:6379
 FUNPOT_REDIS_PASSWORD=
 FUNPOT_REDIS_DB=0
 FUNPOT_REDIS_CONNECT_TIMEOUT=2s
+FUNPOT_STREAMLINK_ENABLED=false
+FUNPOT_STREAMLINK_BINARY=streamlink
+FUNPOT_STREAMLINK_QUALITY=best
+FUNPOT_STREAMLINK_CAPTURE_TIMEOUT=12s
+FUNPOT_STREAMLINK_OUTPUT_DIR=tmp/stream_chunks
+FUNPOT_STREAMLINK_URL_TEMPLATE=https://twitch.tv/%s
 FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
@@ -64,6 +70,9 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 
 > `FUNPOT_AUTH_REFRESH_ENABLED=true` requires `FUNPOT_REDIS_ENABLED=true`
 > because refresh sessions are stored in Redis.
+
+> `FUNPOT_STREAMLINK_ENABLED=true` requires the `streamlink` binary to be
+> available in PATH (or pointed to by `FUNPOT_STREAMLINK_BINARY`).
 
 Update this table whenever you introduce a new configuration surface.
 

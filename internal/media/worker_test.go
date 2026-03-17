@@ -3,6 +3,8 @@ package media
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -130,5 +132,55 @@ func TestWorkerProcessStreamerBusy(t *testing.T) {
 	_, err := worker.ProcessStreamer(context.Background(), "str-1")
 	if !errors.Is(err, ErrStreamerBusy) {
 		t.Fatalf("error = %v, want %v", err, ErrStreamerBusy)
+	}
+}
+
+func TestWorkerProcessStreamerCleansUpChunkFileOnSuccess(t *testing.T) {
+	chunkPath := filepath.Join(t.TempDir(), "chunk.ts")
+	if err := os.WriteFile(chunkPath, []byte("chunk"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: chunkPath}},
+		fakeClassifier{result: StageAClassification{Label: "cs_detected", Confidence: 0.9}},
+		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+
+	if _, err := os.Stat(chunkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected chunk file to be deleted, stat err = %v", err)
+	}
+}
+
+func TestWorkerProcessStreamerCleansUpChunkFileOnClassifierError(t *testing.T) {
+	chunkPath := filepath.Join(t.TempDir(), "chunk.ts")
+	if err := os.WriteFile(chunkPath, []byte("chunk"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: chunkPath}},
+		fakeClassifier{err: errors.New("llm failed")},
+		fakePromptResolver{prompt: prompts.PromptVersion{Stage: prompts.StageA, IsActive: true, MinConfidence: 0.5}},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
+		t.Fatal("expected classifier error")
+	}
+
+	if _, err := os.Stat(chunkPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected chunk file to be deleted, stat err = %v", err)
 	}
 }
