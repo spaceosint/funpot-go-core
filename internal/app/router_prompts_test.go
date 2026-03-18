@@ -30,7 +30,8 @@ func TestAdminPromptsCreateListAndActivate(t *testing.T) {
 	token := buildToken(t, "admin-1")
 
 	body, _ := json.Marshal(map[string]any{
-		"stage":         "stage_a",
+		"stage":         "detector",
+		"position":      1,
 		"template":      "detect cs2 on stream",
 		"model":         "gemini-2.0-flash",
 		"temperature":   0.2,

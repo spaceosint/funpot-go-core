@@ -31,7 +31,7 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 	adminToken := buildToken(t, "admin-1")
 	body, _ := json.Marshal(map[string]any{
 		"runId":           "run-1",
-		"stage":           "stage_a",
+		"stage":           "detector",
 		"label":           "cs_detected",
 		"confidence":      0.93,
 		"promptVersionId": "prompt-1",
@@ -92,7 +92,7 @@ func TestStreamerLLMDecisionCreateForbiddenForNonAdmin(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]any{
 		"runId":      "run-1",
-		"stage":      "stage_a",
+		"stage":      "detector",
 		"label":      "cs_detected",
 		"confidence": 0.93,
 	})

@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	ErrInvalidStage         = errors.New("stage must be one of: stage_a, stage_b, stage_c, stage_d")
+	ErrInvalidStage         = errors.New("stage must not be empty")
 	ErrInvalidTemplate      = errors.New("template must not be empty")
 	ErrInvalidModel         = errors.New("model must not be empty")
 	ErrInvalidTemperature   = errors.New("temperature must be between 0 and 2")
@@ -20,22 +20,9 @@ var (
 	ErrNotFound             = errors.New("prompt version not found")
 )
 
-const (
-	StageA = "stage_a"
-	StageB = "stage_b"
-	StageC = "stage_c"
-	StageD = "stage_d"
-)
-
-var supportedStages = map[string]struct{}{
-	StageA: {},
-	StageB: {},
-	StageC: {},
-	StageD: {},
-}
-
 type CreateRequest struct {
 	Stage         string
+	Position      int
 	Template      string
 	Model         string
 	Temperature   float64
@@ -51,6 +38,7 @@ type CreateRequest struct {
 type PromptVersion struct {
 	ID            string    `json:"id"`
 	Stage         string    `json:"stage"`
+	Position      int       `json:"position"`
 	Version       int       `json:"version"`
 	Template      string    `json:"template"`
 	Model         string    `json:"model"`
@@ -70,7 +58,7 @@ type PromptVersion struct {
 
 func ValidateCreateRequest(req CreateRequest) error {
 	req.Stage = strings.TrimSpace(req.Stage)
-	if _, ok := supportedStages[req.Stage]; !ok {
+	if req.Stage == "" {
 		return ErrInvalidStage
 	}
 	if strings.TrimSpace(req.Template) == "" {

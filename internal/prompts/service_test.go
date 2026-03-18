@@ -8,7 +8,8 @@ import (
 func TestCreateAndActivate(t *testing.T) {
 	svc := NewService()
 	created, err := svc.Create(context.Background(), CreateRequest{
-		Stage:         StageA,
+		Stage:         "detector",
+		Position:      1,
 		Template:      "detect cs",
 		Model:         "gemini-2.0-flash",
 		Temperature:   0.2,
@@ -25,6 +26,9 @@ func TestCreateAndActivate(t *testing.T) {
 	}
 	if created.Version != 1 {
 		t.Fatalf("expected version 1, got %d", created.Version)
+	}
+	if created.Position != 1 {
+		t.Fatalf("expected position 1, got %d", created.Position)
 	}
 
 	active, err := svc.Activate(context.Background(), created.ID, "admin-1")
@@ -44,17 +48,17 @@ func TestValidateCreateRequest(t *testing.T) {
 	}{
 		{
 			name: "invalid stage",
-			req:  CreateRequest{Stage: "unknown", Template: "a", Model: "m", Temperature: 0, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.1},
+			req:  CreateRequest{Stage: "   ", Template: "a", Model: "m", Temperature: 0, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.1},
 			err:  ErrInvalidStage,
 		},
 		{
 			name: "invalid confidence",
-			req:  CreateRequest{Stage: StageA, Template: "a", Model: "m", Temperature: 0, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 1.5},
+			req:  CreateRequest{Stage: "detector", Template: "a", Model: "m", Temperature: 0, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 1.5},
 			err:  ErrInvalidMinConfidence,
 		},
 		{
-			name: "ok",
-			req:  CreateRequest{Stage: StageB, Template: "a", Model: "m", Temperature: 0.2, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4},
+			name: "ok with custom stage",
+			req:  CreateRequest{Stage: "ranked_mode", Template: "a", Model: "m", Temperature: 0.2, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4},
 		},
 	}
 
@@ -71,35 +75,22 @@ func TestValidateCreateRequest(t *testing.T) {
 	}
 }
 
-func TestGetActiveByStage(t *testing.T) {
+func TestListActiveOrdersByPosition(t *testing.T) {
 	svc := NewService()
-	created, err := svc.Create(context.Background(), CreateRequest{
-		Stage:         StageA,
-		Template:      "detect cs",
-		Model:         "gemini-2.0-flash",
-		Temperature:   0.2,
-		MaxTokens:     128,
-		TimeoutMS:     2000,
-		RetryCount:    1,
-		BackoffMS:     100,
-		CooldownMS:    1000,
-		MinConfidence: 0.6,
-		ActorID:       "admin-1",
-	})
-	if err != nil {
-		t.Fatalf("Create() error = %v", err)
+	third, _ := svc.Create(context.Background(), CreateRequest{Stage: "result", Position: 3, Template: "c", Model: "m", Temperature: 0.1, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4})
+	first, _ := svc.Create(context.Background(), CreateRequest{Stage: "detector", Position: 1, Template: "a", Model: "m", Temperature: 0.1, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4})
+	second, _ := svc.Create(context.Background(), CreateRequest{Stage: "queue", Position: 2, Template: "b", Model: "m", Temperature: 0.1, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4})
+	for _, id := range []string{third.ID, first.ID, second.ID} {
+		if _, err := svc.Activate(context.Background(), id, "admin-1"); err != nil {
+			t.Fatalf("Activate() error = %v", err)
+		}
 	}
-	if _, err := svc.GetActiveByStage(context.Background(), StageA); err != ErrNotFound {
-		t.Fatalf("GetActiveByStage() err = %v, want %v", err, ErrNotFound)
+
+	items := svc.ListActive(context.Background())
+	if len(items) != 3 {
+		t.Fatalf("len(ListActive()) = %d, want 3", len(items))
 	}
-	if _, err := svc.Activate(context.Background(), created.ID, "admin-1"); err != nil {
-		t.Fatalf("Activate() error = %v", err)
-	}
-	active, err := svc.GetActiveByStage(context.Background(), StageA)
-	if err != nil {
-		t.Fatalf("GetActiveByStage() error = %v", err)
-	}
-	if active.ID != created.ID {
-		t.Fatalf("active ID = %s, want %s", active.ID, created.ID)
+	if items[0].Stage != "detector" || items[1].Stage != "queue" || items[2].Stage != "result" {
+		t.Fatalf("unexpected order: %#v", items)
 	}
 }

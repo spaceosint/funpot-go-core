@@ -28,13 +28,37 @@ func (s *Service) List(_ context.Context) []PromptVersion {
 	for _, byStage := range s.versions {
 		items = append(items, byStage...)
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Stage == items[j].Stage {
-			return items[i].Version > items[j].Version
-		}
-		return items[i].Stage < items[j].Stage
-	})
+	sortPromptVersions(items)
 	return items
+}
+
+func (s *Service) ListActive(_ context.Context) []PromptVersion {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := make([]PromptVersion, 0)
+	for _, byStage := range s.versions {
+		for _, item := range byStage {
+			if item.IsActive {
+				items = append(items, item)
+				break
+			}
+		}
+	}
+	sortPromptVersions(items)
+	return items
+}
+
+func sortPromptVersions(items []PromptVersion) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Position == items[j].Position {
+			if items[i].Stage == items[j].Stage {
+				return items[i].Version > items[j].Version
+			}
+			return items[i].Stage < items[j].Stage
+		}
+		return items[i].Position < items[j].Position
+	})
 }
 
 func (s *Service) GetActiveByStage(_ context.Context, stage string) (PromptVersion, error) {
@@ -63,9 +87,14 @@ func (s *Service) Create(_ context.Context, req CreateRequest) (PromptVersion, e
 	nextVersion := len(s.versions[stage]) + 1
 	s.counter++
 	now := time.Now().UTC()
+	position := req.Position
+	if position <= 0 {
+		position = s.nextPositionLocked()
+	}
 	item := PromptVersion{
 		ID:            fmt.Sprintf("prompt-%d", s.counter),
 		Stage:         stage,
+		Position:      position,
 		Version:       nextVersion,
 		Template:      strings.TrimSpace(req.Template),
 		Model:         strings.TrimSpace(req.Model),
@@ -81,6 +110,18 @@ func (s *Service) Create(_ context.Context, req CreateRequest) (PromptVersion, e
 	}
 	s.versions[stage] = append(s.versions[stage], item)
 	return item, nil
+}
+
+func (s *Service) nextPositionLocked() int {
+	maxPosition := 0
+	for _, byStage := range s.versions {
+		for _, item := range byStage {
+			if item.Position > maxPosition {
+				maxPosition = item.Position
+			}
+		}
+	}
+	return maxPosition + 1
 }
 
 func (s *Service) Activate(_ context.Context, id, actorID string) (PromptVersion, error) {
