@@ -108,6 +108,11 @@ func (s *Service) Create(_ context.Context, req CreateRequest) (PromptVersion, e
 		CreatedBy:     strings.TrimSpace(req.ActorID),
 		CreatedAt:     now,
 	}
+	if len(s.versions[stage]) == 0 {
+		item.IsActive = true
+		item.ActivatedAt = now
+		item.ActivatedBy = strings.TrimSpace(req.ActorID)
+	}
 	s.versions[stage] = append(s.versions[stage], item)
 	return item, nil
 }
