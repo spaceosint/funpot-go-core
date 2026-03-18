@@ -76,6 +76,7 @@ type Locker interface {
 
 type Worker struct {
 	logger              *zap.Logger
+	metrics             *workerMetrics
 	capture             StreamCapture
 	classifier          StageClassifier
 	prompts             PromptResolver
@@ -112,6 +113,7 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 	}
 	return &Worker{
 		logger:              zap.NewNop(),
+		metrics:             newWorkerMetrics(),
 		capture:             capture,
 		classifier:          classifier,
 		prompts:             promptResolver,
@@ -146,12 +148,14 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	id := strings.TrimSpace(streamerID)
 	if id == "" {
 		logger.Warn("worker rejected empty streamer id")
+		w.metrics.recordCycle(ctx, id, "invalid")
 		return streamers.LLMDecision{}, ErrStreamerIDRequired
 	}
 	logger.Info("streamer processing cycle started", zap.String("streamerID", id))
 	lockKey := fmt.Sprintf("stream-capture:%s", id)
 	if !w.locker.TryLock(lockKey, w.lockTTL) {
 		logger.Info("streamer processing skipped because worker is busy", zap.String("streamerID", id), zap.String("lockKey", lockKey))
+		w.metrics.recordCycle(ctx, id, "busy")
 		return streamers.LLMDecision{}, ErrStreamerBusy
 	}
 	logger.Info("streamer processing lock acquired", zap.String("streamerID", id), zap.String("lockKey", lockKey), zap.Duration("lockTTL", w.lockTTL))
@@ -163,6 +167,8 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	runID, err := w.runs.CreateRun(ctx, id)
 	if err != nil {
 		logger.Error("failed to create analysis run", zap.String("streamerID", id), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "create_run")
+		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
 	}
 	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
@@ -170,9 +176,12 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	if err != nil {
 		if errors.Is(err, ErrStreamlinkAdBreak) {
 			logger.Info("stream chunk capture skipped because stream is on ad break", zap.String("streamerID", id), zap.Error(err))
+			w.metrics.recordCycle(ctx, id, "ad_break")
 			return streamers.LLMDecision{}, nil
 		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "capture")
+		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
 	}
 	logger.Info("stream chunk captured", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference))
@@ -180,8 +189,11 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 
 	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk)
 	if err != nil {
+		w.metrics.recordFailure(ctx, id, "execution_plan")
+		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
 	}
+	w.metrics.recordCycle(ctx, id, "completed")
 	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
 	return lastDecision, nil
 }
@@ -268,6 +280,7 @@ func (w *Worker) processScenarioStep(ctx context.Context, runID, streamerID stri
 		Prompt:     activePrompt,
 	}, activePrompt)
 	if err != nil {
+		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, prompts.ScenarioTransition{}, false, err
 	}
 	label := strings.TrimSpace(result.Label)
@@ -326,6 +339,7 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
 	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt}, activePrompt)
 	if err != nil {
+		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, err
 	}
 	return w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, transition)
@@ -336,6 +350,8 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
 		label = "uncertain"
 	}
+	w.metrics.recordStageResult(ctx, activePrompt.Stage, label, result.Latency, result.TokensIn, result.TokensOut)
+	w.metrics.recordChunkLag(ctx, activePrompt.Stage, chunk.CapturedAt, time.Now().UTC())
 	transitionOutcome := strings.TrimSpace(result.NormalizedOutcome)
 	if transitionOutcome == "" {
 		transitionOutcome = label
@@ -366,7 +382,12 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		recordReq.TransitionToStep = transition.ToStepCode
 		recordReq.TransitionTerminal = transition.Terminal
 	}
-	return w.decisions.RecordLLMDecision(ctx, recordReq)
+	decision, err := w.decisions.RecordLLMDecision(ctx, recordReq)
+	if err != nil {
+		w.metrics.recordFailure(ctx, streamerID, "record_decision")
+		return streamers.LLMDecision{}, err
+	}
+	return decision, nil
 }
 
 func (w *Worker) classifyWithRetry(ctx context.Context, input StageRequest, activePrompt prompts.PromptVersion) (StageClassification, error) {
