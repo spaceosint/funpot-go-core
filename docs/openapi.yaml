@@ -154,9 +154,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [twitchUsername]
+              required: [twitchNickname]
               properties:
-                twitchUsername:
+                twitchNickname:
                   type: string
       responses:
         '200':
@@ -677,12 +677,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [streamerId, twitchUsername]
+              required: [streamerId, twitchNickname]
               properties:
                 streamerId:
                   type: string
                   format: uuid
-                twitchUsername:
+                twitchNickname:
                   type: string
       responses:
         '200':
@@ -850,7 +850,7 @@ components:
         platform:
           type: string
           enum: [twitch]
-        username:
+        twitchNickname:
           type: string
         displayName:
           type: string

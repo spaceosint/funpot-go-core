@@ -60,6 +60,7 @@ type configLimits struct {
 }
 
 type streamerSubmitRequest struct {
+	TwitchNickname string `json:"twitchNickname"`
 	TwitchUsername string `json:"twitchUsername"`
 }
 
@@ -358,7 +359,12 @@ func NewHandler(
 						writeError(w, http.StatusUnauthorized, "missing auth claims")
 						return
 					}
-					submission, err := streamersService.Submit(r.Context(), req.TwitchUsername, claims.Subject)
+					nickname := strings.TrimSpace(req.TwitchNickname)
+					if nickname == "" {
+						nickname = strings.TrimSpace(req.TwitchUsername)
+					}
+
+					submission, err := streamersService.Submit(r.Context(), nickname, claims.Subject)
 					if err != nil {
 						if errors.Is(err, streamers.ErrInvalidUsername) || errors.Is(err, streamers.ErrTwitchUnavailable) {
 							writeError(w, http.StatusBadRequest, err.Error())

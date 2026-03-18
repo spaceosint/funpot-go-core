@@ -1,14 +1,14 @@
 package streamers
 
 type Streamer struct {
-	ID          string `json:"id"`
-	Platform    string `json:"platform"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	Online      bool   `json:"online"`
-	Viewers     int    `json:"viewers"`
-	AddedBy     string `json:"addedBy"`
-	Status      string `json:"status"`
+	ID             string `json:"id"`
+	Platform       string `json:"platform"`
+	TwitchNickname string `json:"twitchNickname"`
+	DisplayName    string `json:"displayName"`
+	Online         bool   `json:"online"`
+	Viewers        int    `json:"viewers"`
+	AddedBy        string `json:"addedBy"`
+	Status         string `json:"status"`
 }
 
 type Submission struct {

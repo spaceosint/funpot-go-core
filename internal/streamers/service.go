@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	ErrInvalidUsername   = errors.New("twitchUsername is required")
+	ErrInvalidUsername   = errors.New("twitchNickname is required")
 	ErrInvalidStatus     = errors.New("status filter is invalid")
 	ErrRateLimited       = errors.New("submission rate limit exceeded")
 	ErrTwitchUnavailable = errors.New("failed to validate twitch username")
@@ -109,7 +109,7 @@ func (s *Service) List(_ context.Context, query, status string, page int) []Stre
 	statusFilter := strings.ToLower(strings.TrimSpace(status))
 	matches := make([]Streamer, 0, len(s.items))
 	for _, item := range s.items {
-		if needle != "" && !strings.Contains(strings.ToLower(item.Username), needle) && !strings.Contains(strings.ToLower(item.DisplayName), needle) {
+		if needle != "" && !strings.Contains(strings.ToLower(item.TwitchNickname), needle) && !strings.Contains(strings.ToLower(item.DisplayName), needle) {
 			continue
 		}
 		if statusFilter != "" && strings.ToLower(item.Status) != statusFilter {
@@ -143,8 +143,8 @@ func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string)
 
 	for _, item := range s.items {
 		if item.ID == id {
-			if username := strings.TrimSpace(item.Username); username != "" {
-				return username, nil
+			if nickname := strings.TrimSpace(item.TwitchNickname); nickname != "" {
+				return nickname, nil
 			}
 			break
 		}
@@ -153,17 +153,17 @@ func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string)
 	return "", ErrNotFound
 }
 
-func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (Submission, error) {
-	username := strings.TrimSpace(twitchUsername)
+func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (Submission, error) {
+	nickname := strings.TrimSpace(twitchNickname)
 	logger := s.logger
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 	logger.Info("streamer submission received",
-		zap.String("twitchUsername", username),
+		zap.String("twitchNickname", nickname),
 		zap.String("addedBy", strings.TrimSpace(addedBy)),
 	)
-	if username == "" {
+	if nickname == "" {
 		logger.Warn("streamer submission rejected: missing username", zap.String("addedBy", strings.TrimSpace(addedBy)))
 		return Submission{}, ErrInvalidUsername
 	}
@@ -172,28 +172,28 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 	}
 
 	if !s.allowSubmission(addedBy) {
-		logger.Warn("streamer submission rate limited", zap.String("twitchUsername", username), zap.String("addedBy", strings.TrimSpace(addedBy)))
+		logger.Warn("streamer submission rate limited", zap.String("twitchNickname", nickname), zap.String("addedBy", strings.TrimSpace(addedBy)))
 		return Submission{}, ErrRateLimited
 	}
 
-	displayName, err := s.validator.ValidateUsername(ctx, username)
+	displayName, err := s.validator.ValidateUsername(ctx, nickname)
 	if err != nil {
-		logger.Warn("streamer submission validation failed", zap.String("twitchUsername", username), zap.Error(err))
+		logger.Warn("streamer submission validation failed", zap.String("twitchNickname", nickname), zap.Error(err))
 		return Submission{}, fmt.Errorf("%w: %v", ErrTwitchUnavailable, err)
 	}
-	logger.Info("streamer submission validated", zap.String("twitchUsername", username), zap.String("displayName", displayName))
+	logger.Info("streamer submission validated", zap.String("twitchNickname", nickname), zap.String("displayName", displayName))
 
 	now := s.nowFn().UnixNano()
 	id := fmt.Sprintf("str_%d", now)
 	streamer := Streamer{
-		ID:          id,
-		Platform:    "twitch",
-		Username:    strings.ToLower(username),
-		DisplayName: displayName,
-		Online:      false,
-		Viewers:     0,
-		AddedBy:     addedBy,
-		Status:      "pending",
+		ID:             id,
+		Platform:       "twitch",
+		TwitchNickname: strings.ToLower(nickname),
+		DisplayName:    displayName,
+		Online:         false,
+		Viewers:        0,
+		AddedBy:        addedBy,
+		Status:         "pending",
 	}
 
 	s.mu.Lock()

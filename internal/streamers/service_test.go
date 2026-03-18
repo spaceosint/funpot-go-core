@@ -52,8 +52,8 @@ func TestServiceSubmitValidationAndListing(t *testing.T) {
 			if len(items) != 1 {
 				t.Fatalf("expected one result, got %d", len(items))
 			}
-			if items[0].Username != "best_streamer" {
-				t.Fatalf("unexpected username: %s", items[0].Username)
+			if items[0].TwitchNickname != "best_streamer" {
+				t.Fatalf("unexpected twitch nickname: %s", items[0].TwitchNickname)
 			}
 		})
 	}
