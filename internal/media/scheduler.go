@@ -30,8 +30,10 @@ type Scheduler struct {
 	processor StreamProcessor
 	interval  time.Duration
 
-	mu   sync.Mutex
-	jobs map[string]context.CancelFunc
+	mu      sync.Mutex
+	jobs    map[string]context.CancelFunc
+	onStart func(string)
+	onStop  func(string)
 }
 
 func NewScheduler(worker *Worker, interval time.Duration) *Scheduler {
@@ -59,6 +61,16 @@ func (s *Scheduler) SetLogger(logger *zap.Logger) {
 	s.logger = logger
 }
 
+func (s *Scheduler) SetLifecycleHooks(onStart, onStop func(string)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onStart = onStart
+	s.onStop = onStop
+}
+
 func (s *Scheduler) Start(streamerID string) error {
 	logger := s.logger
 	if logger == nil {
@@ -78,9 +90,13 @@ func (s *Scheduler) Start(streamerID string) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.jobs[id] = cancel
+	onStart := s.onStart
 	s.mu.Unlock()
 
 	logger.Info("scheduler started for streamer", zap.String("streamerID", id), zap.Duration("interval", s.interval))
+	if onStart != nil {
+		onStart(id)
+	}
 	go s.run(ctx, id)
 	return nil
 }
@@ -91,7 +107,10 @@ func (s *Scheduler) run(ctx context.Context, streamerID string) {
 		logger = zap.NewNop()
 	}
 	defer func() {
-		s.remove(streamerID)
+		onStop := s.remove(streamerID)
+		if onStop != nil {
+			onStop(streamerID)
+		}
 		logger.Info("scheduler stopped for streamer", zap.String("streamerID", streamerID))
 	}()
 
@@ -141,8 +160,10 @@ func (s *Scheduler) Stop(streamerID string) {
 	}
 }
 
-func (s *Scheduler) remove(streamerID string) {
+func (s *Scheduler) remove(streamerID string) func(string) {
 	s.mu.Lock()
+	onStop := s.onStop
 	delete(s.jobs, streamerID)
 	s.mu.Unlock()
+	return onStop
 }

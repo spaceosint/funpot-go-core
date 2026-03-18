@@ -127,6 +127,7 @@ func main() {
 	streamWorker.SetLogger(logger.Named("stream_worker"))
 	streamScheduler := media.NewScheduler(streamWorker, 10*time.Second)
 	streamScheduler.SetLogger(logger.Named("stream_scheduler"))
+	streamScheduler.SetLifecycleHooks(streamersService.MarkAnalysisActive, streamersService.MarkAnalysisInactive)
 	streamersService.SetSubmissionHook(func(_ context.Context, streamerID string) error {
 		return streamScheduler.Start(streamerID)
 	})

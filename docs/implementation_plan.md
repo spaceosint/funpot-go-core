@@ -30,7 +30,7 @@ stream analysis immediately after a streamer is added:
 - Persist run/stage outputs and broadcast state updates to clients.
 
 ### Priority checklist (must be tracked in status updates)
-- [ ] Auto-start Streamlink analysis job after `POST /api/streamers` success.
+- [x] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [ ] Fixed 10-second capture cadence with lock/idempotency protections.
 - [ ] Persist the active global game-detection prompt in the database with audit/version history.
 - [ ] Persist active per-game scenarios in the database, including linked steps and expected transitions.

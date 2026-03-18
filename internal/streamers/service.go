@@ -40,11 +40,17 @@ type submissionLimit struct {
 	windowEnds time.Time
 }
 
+type analysisState struct {
+	active    bool
+	updatedAt string
+}
+
 type Service struct {
 	logger         *zap.Logger
 	mu             sync.RWMutex
 	items          []Streamer
 	decisions      map[string][]LLMDecision
+	analysis       map[string]analysisState
 	validator      TwitchValidator
 	rateLimitMu    sync.Mutex
 	rateLimitByKey map[string]submissionLimit
@@ -67,6 +73,7 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 		logger:         zap.NewNop(),
 		items:          []Streamer{},
 		decisions:      make(map[string][]LLMDecision),
+		analysis:       make(map[string]analysisState),
 		validator:      validator,
 		rateLimitByKey: make(map[string]submissionLimit),
 		nowFn: func() time.Time {
@@ -210,9 +217,11 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 			if n := len(s.items); n > 0 && s.items[n-1].ID == id {
 				s.items = s.items[:n-1]
 			}
+			delete(s.analysis, id)
 			s.mu.Unlock()
 			return Submission{}, err
 		}
+		s.markAnalysisStateLocked(id, true)
 		logger.Info("streamer submission hook completed", zap.String("streamerID", id))
 	}
 
@@ -269,6 +278,7 @@ func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest
 
 	s.mu.Lock()
 	s.decisions[streamerID] = append(s.decisions[streamerID], item)
+	s.markAnalysisStateLocked(streamerID, true)
 	s.mu.Unlock()
 
 	return item, nil
@@ -313,6 +323,10 @@ func (s *Service) GetLLMStatus(_ context.Context, streamerID string) LLMStatus {
 	defer s.mu.RUnlock()
 
 	items := s.decisions[key]
+	if state, ok := s.analysis[key]; ok && state.active {
+		status.State = "active"
+		status.UpdatedAt = state.updatedAt
+	}
 	if len(items) == 0 {
 		return status
 	}
@@ -343,6 +357,33 @@ func (s *Service) GetLLMStatus(_ context.Context, streamerID string) LLMStatus {
 	}
 	status.LatestByStage = ordered
 	return status
+}
+
+func (s *Service) MarkAnalysisActive(streamerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.markAnalysisStateLocked(streamerID, true)
+}
+
+func (s *Service) MarkAnalysisInactive(streamerID string) {
+	id := strings.TrimSpace(streamerID)
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.analysis[id] = analysisState{active: false, updatedAt: s.nowFn().UTC().Format(time.RFC3339Nano)}
+}
+
+func (s *Service) markAnalysisStateLocked(streamerID string, active bool) {
+	id := strings.TrimSpace(streamerID)
+	if id == "" {
+		return
+	}
+	s.analysis[id] = analysisState{
+		active:    active,
+		updatedAt: s.nowFn().UTC().Format(time.RFC3339Nano),
+	}
 }
 
 func inferDetectedGameKey(items []LLMDecision) string {

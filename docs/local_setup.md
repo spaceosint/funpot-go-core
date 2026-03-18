@@ -153,7 +153,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/me` – returns the authenticated user's profile plus `isAdmin` flag when called with the issued JWT.
 - `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
-- `POST /api/streamers` – submits a Twitch streamer nickname for moderation/validation and Streamlink usage.
+- `POST /api/streamers` – submits a Twitch streamer nickname for moderation/validation, then immediately starts the per-streamer Streamlink analysis scheduler when background orchestration is configured.
 - `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM detector/scenario status for a streamer.
 - `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent detector/scenario decision history for a streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
