@@ -106,6 +106,9 @@ func main() {
 	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamersService := streamers.NewService()
 	streamersService.SetLogger(logger.Named("streamers"))
+	if db != nil {
+		streamersService.SetDecisionRepository(streamers.NewPostgresDecisionRepository(db))
+	}
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
 	scenariosService := prompts.NewScenarioService()

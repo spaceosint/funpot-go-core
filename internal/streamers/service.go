@@ -49,7 +49,7 @@ type Service struct {
 	logger         *zap.Logger
 	mu             sync.RWMutex
 	items          []Streamer
-	decisions      map[string][]LLMDecision
+	decisionRepo   DecisionRepository
 	analysis       map[string]analysisState
 	validator      TwitchValidator
 	rateLimitMu    sync.Mutex
@@ -72,7 +72,7 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 	return &Service{
 		logger:         zap.NewNop(),
 		items:          []Streamer{},
-		decisions:      make(map[string][]LLMDecision),
+		decisionRepo:   NewInMemoryDecisionRepository(),
 		analysis:       make(map[string]analysisState),
 		validator:      validator,
 		rateLimitByKey: make(map[string]submissionLimit),
@@ -91,6 +91,15 @@ func (s *Service) SetLogger(logger *zap.Logger) {
 		return
 	}
 	s.logger = logger
+}
+
+func (s *Service) SetDecisionRepository(repo DecisionRepository) {
+	if s == nil || repo == nil {
+		return
+	}
+	s.mu.Lock()
+	s.decisionRepo = repo
+	s.mu.Unlock()
 }
 
 func (s *Service) SetSubmissionHook(hook func(context.Context, string) error) {
@@ -221,7 +230,9 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 			s.mu.Unlock()
 			return Submission{}, err
 		}
+		s.mu.Lock()
 		s.markAnalysisStateLocked(id, true)
+		s.mu.Unlock()
 		logger.Info("streamer submission hook completed", zap.String("streamerID", id))
 	}
 
@@ -229,7 +240,7 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 	return Submission{ID: id, Status: "pending", Reason: nil}, nil
 }
 
-func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest) (LLMDecision, error) {
+func (s *Service) RecordLLMDecision(ctx context.Context, req RecordDecisionRequest) (LLMDecision, error) {
 	streamerID := strings.TrimSpace(req.StreamerID)
 	if streamerID == "" {
 		return LLMDecision{}, errors.New("streamerId is required")
@@ -282,8 +293,18 @@ func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest
 		CreatedAt:          s.nowFn().UTC().Format(time.RFC3339Nano),
 	}
 
+	s.mu.RLock()
+	repo := s.decisionRepo
+	s.mu.RUnlock()
+	if repo == nil {
+		repo = NewInMemoryDecisionRepository()
+		s.SetDecisionRepository(repo)
+	}
+	if err := repo.RecordLLMDecision(ctx, item); err != nil {
+		return LLMDecision{}, err
+	}
+
 	s.mu.Lock()
-	s.decisions[streamerID] = append(s.decisions[streamerID], item)
 	s.markAnalysisStateLocked(streamerID, true)
 	s.mu.Unlock()
 
@@ -297,7 +318,7 @@ func formatOptionalTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
 }
 
-func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit int) []LLMDecision {
+func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit int) []LLMDecision {
 	key := strings.TrimSpace(streamerID)
 	if key == "" {
 		return []LLMDecision{}
@@ -307,25 +328,23 @@ func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit i
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	items := s.decisions[key]
-	if len(items) == 0 {
+	repo := s.decisionRepo
+	s.mu.RUnlock()
+	if repo == nil {
 		return []LLMDecision{}
 	}
-	if limit > len(items) {
-		limit = len(items)
-	}
 
-	start := len(items) - limit
-	out := make([]LLMDecision, 0, limit)
-	for i := len(items) - 1; i >= start; i-- {
-		out = append(out, items[i])
+	items, err := repo.ListLLMDecisions(ctx, key, limit)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to list llm decisions", zap.String("streamerID", key), zap.Error(err))
+		}
+		return []LLMDecision{}
 	}
-	return out
+	return items
 }
 
-func (s *Service) GetLLMStatus(_ context.Context, streamerID string) LLMStatus {
+func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus {
 	key := strings.TrimSpace(streamerID)
 	status := LLMStatus{StreamerID: key, State: "idle", LatestByStage: []LLMDecision{}}
 	if key == "" {
@@ -333,10 +352,22 @@ func (s *Service) GetLLMStatus(_ context.Context, streamerID string) LLMStatus {
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	repo := s.decisionRepo
+	state, ok := s.analysis[key]
+	s.mu.RUnlock()
 
-	items := s.decisions[key]
-	if state, ok := s.analysis[key]; ok && state.active {
+	items := []LLMDecision{}
+	if repo != nil {
+		loaded, err := repo.ListAllLLMDecisions(ctx, key)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("failed to load llm status history", zap.String("streamerID", key), zap.Error(err))
+			}
+		} else {
+			items = loaded
+		}
+	}
+	if ok && state.active {
 		status.State = "active"
 		status.UpdatedAt = state.updatedAt
 	}

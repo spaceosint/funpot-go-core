@@ -37,7 +37,7 @@ stream analysis immediately after a streamer is added:
 - [x] Resolve the active global game-detection prompt from admin configuration.
 - [x] Resolve the active per-game scenario and the active prompt for its current step.
 - [x] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
-- [ ] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence, and transition outcome.
+- [x] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence, and transition outcome.
 - [ ] Publish realtime `LLM_STAGE_UPDATED` events and provide REST backfill/history.
 - [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
 - [ ] Add observability for chunk lag, stage latency, and per-streamer failure rate.
