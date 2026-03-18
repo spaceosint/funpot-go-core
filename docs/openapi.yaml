@@ -173,6 +173,26 @@ paths:
                 $ref: '#/components/schemas/Error'
         default:
           $ref: '#/components/responses/Error'
+  /api/streamers/{streamerId}/status:
+    get:
+      summary: Get aggregated LLM status for streamer
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Aggregated detector/scenario status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMStatus'
+        default:
+          $ref: '#/components/responses/Error'
   /api/streamers/{streamerId}/llm-decisions:
     get:
       summary: List latest LLM stage decisions for streamer
@@ -856,6 +876,34 @@ components:
         reason:
           type: string
           nullable: true
+
+    LLMStatus:
+      type: object
+      required: [streamerId, state, latestByStage]
+      properties:
+        streamerId:
+          type: string
+        state:
+          type: string
+          enum: [idle, active]
+        currentRunId:
+          type: string
+        currentStage:
+          type: string
+        currentLabel:
+          type: string
+        currentConfidence:
+          type: number
+          format: double
+        detectedGameKey:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        latestByStage:
+          type: array
+          items:
+            $ref: '#/components/schemas/LLMDecision'
 
     LLMDecisionRecordRequest:
       type: object

@@ -38,6 +38,18 @@ type LLMDecision struct {
 	CreatedAt       string  `json:"createdAt"`
 }
 
+type LLMStatus struct {
+	StreamerID        string        `json:"streamerId"`
+	State             string        `json:"state"`
+	CurrentRunID      string        `json:"currentRunId,omitempty"`
+	CurrentStage      string        `json:"currentStage,omitempty"`
+	CurrentLabel      string        `json:"currentLabel,omitempty"`
+	CurrentConfidence float64       `json:"currentConfidence,omitempty"`
+	DetectedGameKey   string        `json:"detectedGameKey,omitempty"`
+	UpdatedAt         string        `json:"updatedAt,omitempty"`
+	LatestByStage     []LLMDecision `json:"latestByStage"`
+}
+
 type RecordDecisionRequest struct {
 	RunID           string
 	StreamerID      string
