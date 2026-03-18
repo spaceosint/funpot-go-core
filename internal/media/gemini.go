@@ -204,12 +204,15 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	}
 
 	return StageClassification{
-		Label:       strings.TrimSpace(parsed.Label),
-		Confidence:  parsed.Confidence,
-		RawResponse: strings.TrimSpace(rawText),
-		TokensIn:    payload.UsageMetadata.PromptTokenCount,
-		TokensOut:   payload.UsageMetadata.CandidatesTokenCount,
-		Latency:     time.Since(started),
+		Label:             strings.TrimSpace(parsed.Label),
+		Confidence:        parsed.Confidence,
+		RawResponse:       strings.TrimSpace(rawText),
+		RequestRef:        endpoint,
+		ResponseRef:       strconv.Itoa(resp.StatusCode),
+		TokensIn:          payload.UsageMetadata.PromptTokenCount,
+		TokensOut:         payload.UsageMetadata.CandidatesTokenCount,
+		Latency:           time.Since(started),
+		NormalizedOutcome: strings.TrimSpace(parsed.Label),
 	}, nil
 }
 

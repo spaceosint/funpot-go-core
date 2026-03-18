@@ -91,22 +91,28 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	}
 	now = now.Add(time.Second)
 	second, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{
-		RunID:           "run-1",
-		StreamerID:      "str-1",
-		Stage:           "ranked_mode",
-		Label:           "competitive",
-		Confidence:      0.8,
-		PromptVersionID: "prompt-2",
-		PromptText:      "classify match type",
-		Model:           "gemini-2.0-flash",
-		Temperature:     0.1,
-		MaxTokens:       500,
-		TimeoutMS:       2500,
-		ChunkRef:        "streamlink://str-1/123",
-		RawResponse:     "{\"label\":\"competitive\"}",
-		TokensIn:        144,
-		TokensOut:       27,
-		LatencyMS:       180,
+		RunID:              "run-1",
+		StreamerID:         "str-1",
+		Stage:              "ranked_mode",
+		Label:              "competitive",
+		Confidence:         0.8,
+		ChunkCapturedAt:    now,
+		PromptVersionID:    "prompt-2",
+		PromptText:         "classify match type",
+		Model:              "gemini-2.0-flash",
+		Temperature:        0.1,
+		MaxTokens:          500,
+		TimeoutMS:          2500,
+		ChunkRef:           "streamlink://str-1/123",
+		RequestRef:         "gemini-request-1",
+		ResponseRef:        "gemini-response-1",
+		RawResponse:        "{\"label\":\"competitive\"}",
+		TokensIn:           144,
+		TokensOut:          27,
+		LatencyMS:          180,
+		TransitionOutcome:  "competitive",
+		TransitionToStep:   "wait_for_result",
+		TransitionTerminal: false,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -119,7 +125,7 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	if items[0].ID != second.ID {
 		t.Fatalf("expected latest decision first, got %s", items[0].ID)
 	}
-	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 {
+	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 || items[0].RequestRef == "" || items[0].TransitionToStep != "wait_for_result" {
 		t.Fatalf("expected metadata to be persisted, got %#v", items[0])
 	}
 }

@@ -920,6 +920,9 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        chunkCapturedAt:
+          type: string
+          format: date-time
         promptVersionId:
           type: string
         promptText:
@@ -934,6 +937,10 @@ components:
           type: integer
         chunkRef:
           type: string
+        requestRef:
+          type: string
+        responseRef:
+          type: string
         rawResponse:
           type: string
         tokensIn:
@@ -942,6 +949,12 @@ components:
           type: integer
         latencyMs:
           type: integer
+        transitionOutcome:
+          type: string
+        transitionToStep:
+          type: string
+        transitionTerminal:
+          type: boolean
     LLMDecision:
       type: object
       properties:
@@ -958,6 +971,9 @@ components:
           type: string
         confidence:
           type: number
+        chunkCapturedAt:
+          type: string
+          format: date-time
         promptVersionId:
           type: string
         promptText:
@@ -972,6 +988,10 @@ components:
           type: integer
         chunkRef:
           type: string
+        requestRef:
+          type: string
+        responseRef:
+          type: string
         rawResponse:
           type: string
         tokensIn:
@@ -980,6 +1000,12 @@ components:
           type: integer
         latencyMs:
           type: integer
+        transitionOutcome:
+          type: string
+        transitionToStep:
+          type: string
+        transitionTerminal:
+          type: boolean
         createdAt:
           type: string
           format: date-time

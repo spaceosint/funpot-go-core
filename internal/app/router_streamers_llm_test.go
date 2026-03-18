@@ -30,21 +30,26 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 
 	adminToken := buildToken(t, "admin-1")
 	body, _ := json.Marshal(map[string]any{
-		"runId":           "run-1",
-		"stage":           "detector",
-		"label":           "cs_detected",
-		"confidence":      0.93,
-		"promptVersionId": "prompt-1",
-		"promptText":      "detect stage",
-		"model":           "gemini-2.0-flash",
-		"temperature":     0.2,
-		"maxTokens":       512,
-		"timeoutMs":       3500,
-		"chunkRef":        "streamlink://str-1/100",
-		"rawResponse":     "{}",
-		"tokensIn":        123,
-		"tokensOut":       19,
-		"latencyMs":       120,
+		"runId":              "run-1",
+		"stage":              "detector",
+		"label":              "cs_detected",
+		"confidence":         0.93,
+		"chunkCapturedAt":    "2025-01-01T12:00:00Z",
+		"promptVersionId":    "prompt-1",
+		"promptText":         "detect stage",
+		"model":              "gemini-2.0-flash",
+		"temperature":        0.2,
+		"maxTokens":          512,
+		"timeoutMs":          3500,
+		"chunkRef":           "streamlink://str-1/100",
+		"requestRef":         "gemini-request-1",
+		"responseRef":        "gemini-response-1",
+		"rawResponse":        "{}",
+		"tokensIn":           123,
+		"tokensOut":          19,
+		"latencyMs":          120,
+		"transitionOutcome":  "cs_detected",
+		"transitionTerminal": true,
 	})
 	createReq := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(body))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -70,7 +75,7 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected one item, got %d", len(items))
 	}
-	if items[0]["promptVersionId"] != "prompt-1" {
+	if items[0]["promptVersionId"] != "prompt-1" || items[0]["requestRef"] != "gemini-request-1" || items[0]["transitionOutcome"] != "cs_detected" {
 		t.Fatalf("expected metadata to be returned, got %#v", items[0])
 	}
 }
@@ -102,5 +107,36 @@ func TestStreamerLLMDecisionCreateForbiddenForNonAdmin(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+func TestStreamerLLMDecisionCreateRejectsInvalidChunkTimestamp(t *testing.T) {
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		nil,
+		streamers.NewService(),
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	body, _ := json.Marshal(map[string]any{
+		"runId":           "run-1",
+		"stage":           "detector",
+		"label":           "cs_detected",
+		"confidence":      0.93,
+		"chunkCapturedAt": "not-a-time",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", res.Code)
 	}
 }

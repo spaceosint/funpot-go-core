@@ -111,11 +111,11 @@ func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.R
 func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}},
 		fakeClassifier{results: map[string]StageClassification{
-			"detector":    {Label: "cs_detected", Confidence: 0.91, RawResponse: `{"label":"cs_detected"}`, TokensIn: 128, TokensOut: 32, Latency: 230 * time.Millisecond},
-			"ranked_mode": {Label: "competitive", Confidence: 0.89, RawResponse: `{"label":"competitive"}`, TokensIn: 96, TokensOut: 18, Latency: 180 * time.Millisecond},
-			"result":      {Label: "win", Confidence: 0.93, RawResponse: `{"label":"win"}`, TokensIn: 75, TokensOut: 14, Latency: 140 * time.Millisecond},
+			"detector":    {Label: "cs_detected", Confidence: 0.91, RawResponse: `{"label":"cs_detected"}`, RequestRef: "req-1", ResponseRef: "res-1", TokensIn: 128, TokensOut: 32, Latency: 230 * time.Millisecond},
+			"ranked_mode": {Label: "competitive", Confidence: 0.89, RawResponse: `{"label":"competitive"}`, RequestRef: "req-2", ResponseRef: "res-2", TokensIn: 96, TokensOut: 18, Latency: 180 * time.Millisecond},
+			"result":      {Label: "win", Confidence: 0.93, RawResponse: `{"label":"win"}`, RequestRef: "req-3", ResponseRef: "res-3", TokensIn: 75, TokensOut: 14, Latency: 140 * time.Millisecond},
 		}},
 		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "prompt-a", Stage: "detector", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "detect cs", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}, {ID: "prompt-b", Stage: "ranked_mode", Position: 2, IsActive: true, MinConfidence: 0.5, Template: "detect mode", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}, {ID: "prompt-c", Stage: "result", Position: 3, IsActive: true, MinConfidence: 0.5, Template: "detect result", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
 		nil, &InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
@@ -129,6 +129,9 @@ func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 	}
 	if len(decisions.items) != 3 {
 		t.Fatalf("recorded %d decisions, want 3", len(decisions.items))
+	}
+	if decisions.items[0].RequestRef == "" || decisions.items[0].ResponseRef == "" || decisions.items[0].ChunkCapturedAt.IsZero() {
+		t.Fatalf("expected request/response/chunk metadata, got %#v", decisions.items[0])
 	}
 }
 
@@ -252,9 +255,9 @@ func TestWorkerProcessStreamerRunsGlobalDetectorAndScenarioSteps(t *testing.T) {
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
-			"global_detector": {Label: "counter_strike", Confidence: 0.98},
-			"match_start":     {Label: "match_started", Confidence: 0.93},
-			"match_result":    {Label: "win", Confidence: 0.95},
+			"global_detector": {Label: "counter_strike", Confidence: 0.98, NormalizedOutcome: "counter_strike"},
+			"match_start":     {Label: "match_started", Confidence: 0.93, NormalizedOutcome: "match_started"},
+			"match_result":    {Label: "win", Confidence: 0.95, NormalizedOutcome: "win"},
 		}},
 		nil,
 		fakeScenarioResolver{global: prompts.PromptTemplate{ID: "det-1", Stage: "global_detector", Template: "detect game", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000, MinConfidence: 0.5}, scenario: scenario},
@@ -272,5 +275,11 @@ func TestWorkerProcessStreamerRunsGlobalDetectorAndScenarioSteps(t *testing.T) {
 	}
 	if decisions.items[0].Stage != "global_detector" || decisions.items[1].Stage != "match_start" || decisions.items[2].Stage != "match_result" {
 		t.Fatalf("unexpected decision order: %#v", decisions.items)
+	}
+	if decisions.items[1].TransitionOutcome != "match_started" || decisions.items[1].TransitionToStep != "match_result" {
+		t.Fatalf("expected next-step transition metadata, got %#v", decisions.items[1])
+	}
+	if !decisions.items[2].TransitionTerminal || decisions.items[2].TransitionOutcome != "win" {
+		t.Fatalf("expected terminal transition metadata, got %#v", decisions.items[2])
 	}
 }
