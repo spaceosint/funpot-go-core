@@ -18,9 +18,17 @@ import (
 var (
 	ErrStreamlinkNoData         = errors.New("streamlink capture produced no data")
 	ErrStreamlinkChannelResolve = errors.New("failed to resolve streamlink channel")
+	ErrStreamlinkAdBreak        = errors.New("streamlink capture paused by ad break")
 )
 
 var streamlinkSafeTokenPattern = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+var streamlinkAdBreakMarkers = []string{
+	"waiting for pre-roll ads to finish",
+	"detected advertisement break",
+	"filtering out segments and pausing stream output",
+	"will skip ad segments",
+}
 
 type StreamlinkChannelResolver interface {
 	ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error)
@@ -145,11 +153,19 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 		return ChunkRef{}, err
 	}
 	if stat.Size() <= 0 {
-		logger.Warn("stream capture produced empty chunk", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", strings.TrimSpace(stderr.String())), zap.Error(runErr))
-		if runErr != nil {
-			return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkNoData, runErr, strings.TrimSpace(stderr.String()))
+		trimmedStderr := strings.TrimSpace(stderr.String())
+		if isStreamlinkAdBreak(trimmedStderr) {
+			logger.Info("stream capture paused by ad break", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", trimmedStderr), zap.Error(runErr))
+			if runErr != nil {
+				return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkAdBreak, runErr, trimmedStderr)
+			}
+			return ChunkRef{}, fmt.Errorf("%w (stderr=%s)", ErrStreamlinkAdBreak, trimmedStderr)
 		}
-		return ChunkRef{}, fmt.Errorf("%w (stderr=%s)", ErrStreamlinkNoData, strings.TrimSpace(stderr.String()))
+		logger.Warn("stream capture produced empty chunk", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", trimmedStderr), zap.Error(runErr))
+		if runErr != nil {
+			return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkNoData, runErr, trimmedStderr)
+		}
+		return ChunkRef{}, fmt.Errorf("%w (stderr=%s)", ErrStreamlinkNoData, trimmedStderr)
 	}
 
 	if runErr != nil && !errors.Is(captureCtx.Err(), context.DeadlineExceeded) && !errors.Is(runErr, context.DeadlineExceeded) {
@@ -182,4 +198,17 @@ func (c PromptedStageClassifier) Classify(_ context.Context, input StageRequest)
 		return StageClassification{Label: "uncertain", Confidence: 0.1}, nil
 	}
 	return StageClassification{Label: "ok", Confidence: 0.75}, nil
+}
+
+func isStreamlinkAdBreak(stderr string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(stderr))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range streamlinkAdBreakMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }

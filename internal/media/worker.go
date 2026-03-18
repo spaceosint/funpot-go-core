@@ -163,6 +163,10 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	logger.Info("active prompts loaded for streamer processing", zap.String("streamerID", id), zap.Int("promptCount", len(activePrompts)))
 	chunk, err := w.captureWithRetry(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrStreamlinkAdBreak) {
+			logger.Info("stream chunk capture skipped because stream is on ad break", zap.String("streamerID", id), zap.Error(err))
+			return streamers.LLMDecision{}, nil
+		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		return streamers.LLMDecision{}, err
 	}
