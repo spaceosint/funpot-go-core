@@ -147,6 +147,8 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/config` – exposes client configuration and feature flags for the authenticated user.
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
 - `POST /api/streamers` – submits a Twitch streamer username for moderation/validation.
+- `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM detector/scenario status for a streamer.
+- `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent detector/scenario decision history for a streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.

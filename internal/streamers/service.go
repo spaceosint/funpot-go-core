@@ -20,6 +20,13 @@ var (
 
 var twitchUsernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{4,25}$`)
 
+var stageOrder = map[string]int{
+	"stage_a": 0,
+	"stage_b": 1,
+	"stage_c": 2,
+	"stage_d": 3,
+}
+
 type TwitchValidator interface {
 	ValidateUsername(ctx context.Context, username string) (displayName string, err error)
 }
@@ -240,6 +247,7 @@ func (s *Service) RecordLLMDecision(_ context.Context, req RecordDecisionRequest
 
 	return item, nil
 }
+
 func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit int) []LLMDecision {
 	key := strings.TrimSpace(streamerID)
 	if key == "" {
@@ -266,6 +274,70 @@ func (s *Service) ListLLMDecisions(_ context.Context, streamerID string, limit i
 		out = append(out, items[i])
 	}
 	return out
+}
+
+func (s *Service) GetLLMStatus(_ context.Context, streamerID string) LLMStatus {
+	key := strings.TrimSpace(streamerID)
+	status := LLMStatus{StreamerID: key, State: "idle", LatestByStage: []LLMDecision{}}
+	if key == "" {
+		return status
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	items := s.decisions[key]
+	if len(items) == 0 {
+		return status
+	}
+
+	latest := items[len(items)-1]
+	status.CurrentRunID = latest.RunID
+	status.CurrentStage = latest.Stage
+	status.CurrentLabel = latest.Label
+	status.CurrentConfidence = latest.Confidence
+	status.UpdatedAt = latest.CreatedAt
+	status.State = "active"
+	status.DetectedGameKey = inferDetectedGameKey(items)
+
+	latestByStage := make(map[string]LLMDecision, len(stageOrder))
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if _, exists := latestByStage[item.Stage]; exists {
+			continue
+		}
+		latestByStage[item.Stage] = item
+		if len(latestByStage) == len(stageOrder) {
+			break
+		}
+	}
+
+	ordered := make([]LLMDecision, 0, len(latestByStage))
+	for _, stage := range []string{"stage_a", "stage_b", "stage_c", "stage_d"} {
+		if item, ok := latestByStage[stage]; ok {
+			ordered = append(ordered, item)
+		}
+	}
+	status.LatestByStage = ordered
+	return status
+}
+
+func inferDetectedGameKey(items []LLMDecision) string {
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if item.Stage != "stage_a" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(item.Label)) {
+		case "cs_detected":
+			return "counter_strike"
+		case "dota_detected":
+			return "dota_2"
+		case "valorant_detected":
+			return "valorant"
+		}
+	}
+	return ""
 }
 
 func isSupportedStage(stage string) bool {

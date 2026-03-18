@@ -397,6 +397,12 @@ func NewHandler(
 				}
 
 				switch action {
+				case "status":
+					if r.Method != http.MethodGet {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					writeJSON(w, http.StatusOK, streamersService.GetLLMStatus(r.Context(), streamerID))
 				case "llm-decisions":
 					switch r.Method {
 					case http.MethodGet:

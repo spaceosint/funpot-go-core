@@ -145,3 +145,38 @@ func TestRecordLLMDecisionValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestGetLLMStatusAggregatesLatestStageSnapshots(t *testing.T) {
+	svc := NewService()
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	svc.nowFn = func() time.Time { return now }
+
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_a", Label: "cs_detected", Confidence: 0.9}); err != nil {
+		t.Fatalf("unexpected error recording stage_a: %v", err)
+	}
+	now = now.Add(time.Second)
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_b", Label: "competitive", Confidence: 0.8}); err != nil {
+		t.Fatalf("unexpected error recording stage_b: %v", err)
+	}
+	now = now.Add(time.Second)
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-2", StreamerID: "str-1", Stage: "stage_a", Label: "uncertain", Confidence: 0.4}); err != nil {
+		t.Fatalf("unexpected error recording second stage_a: %v", err)
+	}
+
+	status := svc.GetLLMStatus(context.Background(), "str-1")
+	if status.State != "active" {
+		t.Fatalf("expected active state, got %#v", status)
+	}
+	if status.CurrentRunID != "run-2" || status.CurrentStage != "stage_a" || status.CurrentLabel != "uncertain" {
+		t.Fatalf("unexpected current status: %#v", status)
+	}
+	if status.DetectedGameKey != "counter_strike" {
+		t.Fatalf("expected detected game from latest positive stage_a, got %#v", status)
+	}
+	if len(status.LatestByStage) != 2 {
+		t.Fatalf("expected two stage snapshots, got %#v", status.LatestByStage)
+	}
+	if status.LatestByStage[0].Stage != "stage_a" || status.LatestByStage[1].Stage != "stage_b" {
+		t.Fatalf("expected snapshots ordered by stage, got %#v", status.LatestByStage)
+	}
+}
