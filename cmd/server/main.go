@@ -108,6 +108,7 @@ func main() {
 	streamersService.SetLogger(logger.Named("streamers"))
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
+	scenariosService := prompts.NewScenarioService()
 	eventsService := events.NewService(nil)
 
 	streamCapture := buildStreamCapture(cfg, streamersService)
@@ -119,6 +120,7 @@ func main() {
 		streamCapture,
 		buildStageClassifier(logger, cfg),
 		promptsService,
+		scenariosService,
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
