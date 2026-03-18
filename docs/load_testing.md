@@ -40,6 +40,11 @@
 - **Setup**: 10k simulated connections per node; publish `EVENT_UPDATED` at 2 Hz.
 - **Assertions**: 99% of clients receive updates within 1 s; dropped message rate < 0.5%.
 
+### S7 – Streamlink Capture Cadence & Idempotency
+- **Path**: background `streamlink -> LLM` scheduler for active streamers.
+- **Profile**: 100 active streamers across 15 minutes with a fixed 10-second capture cadence.
+- **Assertions**: no streamer executes more than one capture cycle per 10-second window; duplicate scheduler starts do not increase chunk volume; worker busy skips remain below 1% after warm-up.
+
 ## Metrics Collection
 - Export `http_server_duration_seconds` (histograms) to Prometheus.
 - Custom metrics: `votes_submitted_total`, `ws_clients_connected`, `ws_message_lag_seconds`.
@@ -53,4 +58,3 @@
 ## Test Automation
 - Add GitHub Actions workflow to run nightly k6 smoke (reduced load) against staging.
 - Full test suite executed before major releases.
-

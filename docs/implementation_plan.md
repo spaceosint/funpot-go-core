@@ -31,7 +31,7 @@ stream analysis immediately after a streamer is added:
 
 ### Priority checklist (must be tracked in status updates)
 - [x] Auto-start Streamlink analysis job after `POST /api/streamers` success.
-- [ ] Fixed 10-second capture cadence with lock/idempotency protections.
+- [x] Fixed 10-second capture cadence with lock/idempotency protections.
 - [ ] Persist the active global game-detection prompt in the database with audit/version history.
 - [ ] Persist active per-game scenarios in the database, including linked steps and expected transitions.
 - [x] Resolve the active global game-detection prompt from admin configuration.
