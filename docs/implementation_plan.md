@@ -18,16 +18,19 @@ stream analysis immediately after a streamer is added:
 
 - Trigger background orchestration when a streamer is created/activated.
 - Capture stream fragments every **10 seconds** via Streamlink.
-- For each fragment, call LLM with the **active admin-managed prompt**
-  (stage-specific, versioned template).
+- For each fragment, first call the **active global game-detection prompt**
+  managed by admins.
+- When a game is detected, resolve the **active admin-managed scenario** for that
+  game and execute its stage prompts/transition rules step-by-step.
 - Persist run/stage outputs and broadcast state updates to clients.
 
 ### Priority checklist (must be tracked in status updates)
 - [ ] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [ ] Fixed 10-second capture cadence with lock/idempotency protections.
-- [ ] Prompt resolution from admin configuration (`active` prompt version per stage).
-- [ ] Worker payload includes prompt text + runtime params (model, temperature, token limits).
-- [ ] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence.
+- [ ] Resolve the active global game-detection prompt from admin configuration.
+- [ ] Resolve the active per-game scenario and the active prompt for its current step.
+- [ ] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
+- [ ] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence, and transition outcome.
 - [ ] Publish realtime `LLM_STAGE_UPDATED` events and provide REST backfill/history.
 - [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
 - [ ] Add observability for chunk lag, stage latency, and per-streamer failure rate.
@@ -70,11 +73,16 @@ stream analysis immediately after a streamer is added:
   fallback strategy).
 - [ ] Implement stream capture worker pipeline:
   `streamlink -> media chunking -> Gemini request -> normalized stage result`.
-- [ ] Build staged game flow for Counter-Strike:
-  Stage A detects stream context (is streamer playing CS or not),
-  Stage B classifies match type (competitive / faceit / other),
-  Stage C tracks live match state (pre-game / in-progress / finished),
-  Stage D determines result (win / loss / unknown).
+- [ ] Implement global game detection prompt execution before game-specific flows.
+- [ ] Build admin-managed per-game scenario flows (initially Counter-Strike),
+  where each next step is selected from the previous LLM answer / normalized
+  transition outcome.
+- [ ] Ship the initial Counter-Strike scenario:
+  scenario entry after global detector returns Counter-Strike;
+  Step 1 identifies whether a new ranked match is starting and whether it is
+  competitive / faceit / other;
+  Step 2 waits for match completion when the scenario branch requires it;
+  Step 3 determines match result (win / loss / unknown) for the active branch.
 - [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
   handling for failed LLM jobs.
 - [ ] Publish live LLM status updates to clients via WebSocket channel.
@@ -85,9 +93,9 @@ stream analysis immediately after a streamer is added:
   (token pair issuance, rotation endpoint, and revoke-all/user-device controls).
 - [ ] Add observability: per-stage latency, success ratio, token usage, and
   drift alerts for prompt regressions.
-- Exit Criteria: admin can tune prompts per stage, worker pipeline produces
-  stage results for active streamers, and users observe near-real-time status
-  updates on streamer pages.
+- Exit Criteria: admin can tune the global detector plus per-game scenario
+  prompts/transitions, worker pipeline produces scenario step results for active
+  streamers, and users observe near-real-time status updates on streamer pages.
 
 ### M3 – Events Lifecycle & Realtime Delivery
 - [ ] Implement `/internal/worker/events` ingestion with validation, dedupe, and
