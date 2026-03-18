@@ -52,6 +52,11 @@ type PromptResolver interface {
 	ListActive(ctx context.Context) []prompts.PromptVersion
 }
 
+type ScenarioResolver interface {
+	GetActiveGlobalDetector(ctx context.Context) (prompts.PromptTemplate, error)
+	GetActiveScenarioByGame(ctx context.Context, gameSlug string) (prompts.ScenarioVersion, error)
+}
+
 type RunStore interface {
 	CreateRun(ctx context.Context, streamerID string) (string, error)
 }
@@ -70,6 +75,7 @@ type Worker struct {
 	capture             StreamCapture
 	classifier          StageClassifier
 	prompts             PromptResolver
+	scenarios           ScenarioResolver
 	runs                RunStore
 	decisions           DecisionStore
 	locker              Locker
@@ -87,7 +93,7 @@ type WorkerConfig struct {
 	CaptureRetryBackoff time.Duration
 }
 
-func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
+func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, scenarioResolver ScenarioResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
 	if cfg.LockTTL <= 0 {
 		cfg.LockTTL = 30 * time.Second
 	}
@@ -105,6 +111,7 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 		capture:             capture,
 		classifier:          classifier,
 		prompts:             promptResolver,
+		scenarios:           scenarioResolver,
 		runs:                runs,
 		decisions:           decisions,
 		locker:              locker,
@@ -155,12 +162,6 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		return streamers.LLMDecision{}, err
 	}
 	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
-	activePrompts := w.prompts.ListActive(ctx)
-	if len(activePrompts) == 0 {
-		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", id))
-		return streamers.LLMDecision{}, prompts.ErrNotFound
-	}
-	logger.Info("active prompts loaded for streamer processing", zap.String("streamerID", id), zap.Int("promptCount", len(activePrompts)))
 	chunk, err := w.captureWithRetry(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrStreamlinkAdBreak) {
@@ -173,19 +174,98 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	logger.Info("stream chunk captured", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference))
 	defer cleanupChunkRef(chunk.Reference)
 
-	var lastDecision streamers.LLMDecision
-	for _, activePrompt := range activePrompts {
-		logger.Info("processing prompt stage", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
-		decision, err := w.processStage(ctx, runID, id, chunk, activePrompt)
-		if err != nil {
-			logger.Error("prompt stage processing failed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
-			return streamers.LLMDecision{}, err
-		}
-		logger.Info("prompt stage processed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", decision.Stage), zap.String("label", decision.Label), zap.Float64("confidence", decision.Confidence))
-		lastDecision = decision
+	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk)
+	if err != nil {
+		return streamers.LLMDecision{}, err
 	}
 	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
 	return lastDecision, nil
+}
+
+func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID string, chunk ChunkRef) (streamers.LLMDecision, error) {
+	logger := w.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	if w.scenarios != nil {
+		globalPrompt, err := w.scenarios.GetActiveGlobalDetector(ctx)
+		if err != nil {
+			logger.Warn("no active global detector configured", zap.String("streamerID", streamerID), zap.Error(err))
+			return streamers.LLMDecision{}, err
+		}
+		detectorDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, globalPrompt)
+		if err != nil {
+			logger.Error("global detector stage failed", zap.String("streamerID", streamerID), zap.Error(err))
+			return streamers.LLMDecision{}, err
+		}
+		gameSlug := strings.TrimSpace(detectorDecision.Label)
+		if gameSlug == "" || gameSlug == "uncertain" {
+			return detectorDecision, nil
+		}
+		scenario, err := w.scenarios.GetActiveScenarioByGame(ctx, gameSlug)
+		if err != nil {
+			logger.Info("no active game scenario found after detector step", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(err))
+			return detectorDecision, nil
+		}
+		currentStep, ok := scenario.EntryStep()
+		if !ok {
+			return detectorDecision, nil
+		}
+		lastDecision := detectorDecision
+		for {
+			stepDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, currentStep.Prompt)
+			if err != nil {
+				return streamers.LLMDecision{}, err
+			}
+			lastDecision = stepDecision
+			transition, ok := scenario.ResolveTransition(currentStep.Code, stepDecision.Label)
+			if !ok || transition.Terminal {
+				return lastDecision, nil
+			}
+			nextStep, ok := scenario.FindStep(transition.ToStepCode)
+			if !ok {
+				return lastDecision, nil
+			}
+			currentStep = nextStep
+		}
+	}
+
+	activePrompts := w.prompts.ListActive(ctx)
+	if len(activePrompts) == 0 {
+		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", streamerID))
+		return streamers.LLMDecision{}, prompts.ErrNotFound
+	}
+	logger.Info("active prompts loaded for streamer processing", zap.String("streamerID", streamerID), zap.Int("promptCount", len(activePrompts)))
+
+	var lastDecision streamers.LLMDecision
+	for _, activePrompt := range activePrompts {
+		logger.Info("processing prompt stage", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
+		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt)
+		if err != nil {
+			logger.Error("prompt stage processing failed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
+			return streamers.LLMDecision{}, err
+		}
+		logger.Info("prompt stage processed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", decision.Stage), zap.String("label", decision.Label), zap.Float64("confidence", decision.Confidence))
+		lastDecision = decision
+	}
+	return lastDecision, nil
+}
+
+func (w *Worker) processPromptTemplate(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptTemplate) (streamers.LLMDecision, error) {
+	return w.processStage(ctx, runID, streamerID, chunk, prompts.PromptVersion{
+		ID:            activePrompt.ID,
+		Stage:         activePrompt.Stage,
+		Template:      activePrompt.Template,
+		Model:         activePrompt.Model,
+		Temperature:   activePrompt.Temperature,
+		MaxTokens:     activePrompt.MaxTokens,
+		TimeoutMS:     activePrompt.TimeoutMS,
+		RetryCount:    activePrompt.RetryCount,
+		BackoffMS:     activePrompt.BackoffMS,
+		CooldownMS:    activePrompt.CooldownMS,
+		MinConfidence: activePrompt.MinConfidence,
+	})
 }
 
 func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {

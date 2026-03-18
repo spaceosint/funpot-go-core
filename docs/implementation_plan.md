@@ -20,6 +20,11 @@ stream analysis immediately after a streamer is added:
 - Capture stream fragments every **10 seconds** via Streamlink.
 - For each fragment, first call the **active global game-detection prompt**
   managed by admins.
+- Persist prompts/scenarios in the database so agents and services never rely on
+  in-memory-only prompt configuration.
+- Model each game scenario as a **sequence of linked prompts** where every next
+  step is chosen only after the previous LLM response matches an expected
+  normalized outcome/transition rule.
 - When a game is detected, resolve the **active admin-managed scenario** for that
   game and execute its stage prompts/transition rules step-by-step.
 - Persist run/stage outputs and broadcast state updates to clients.
@@ -27,6 +32,8 @@ stream analysis immediately after a streamer is added:
 ### Priority checklist (must be tracked in status updates)
 - [ ] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [ ] Fixed 10-second capture cadence with lock/idempotency protections.
+- [ ] Persist the active global game-detection prompt in the database with audit/version history.
+- [ ] Persist active per-game scenarios in the database, including linked steps and expected transitions.
 - [x] Resolve the active global game-detection prompt from admin configuration.
 - [x] Resolve the active per-game scenario and the active prompt for its current step.
 - [x] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
@@ -71,6 +78,9 @@ stream analysis immediately after a streamer is added:
 - [x] Deliver admin panel backend contracts for managing LLM request templates,
   stage transitions, and safety limits (temperature, max tokens, timeout,
   fallback strategy).
+- [ ] Move prompt/scenario storage from in-memory services to database-backed
+  repositories with audit-ready versioning for the global detector and per-game
+  step chains.
 - [ ] Implement stream capture worker pipeline:
   `streamlink -> media chunking -> Gemini request -> normalized stage result`.
 - [x] Implement global game detection prompt execution before game-specific flows.
