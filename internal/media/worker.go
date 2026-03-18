@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
@@ -64,6 +66,7 @@ type Locker interface {
 }
 
 type Worker struct {
+	logger              *zap.Logger
 	capture             StreamCapture
 	classifier          StageClassifier
 	prompts             PromptResolver
@@ -98,6 +101,7 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 		cfg.CaptureRetryBackoff = 0
 	}
 	return &Worker{
+		logger:              zap.NewNop(),
 		capture:             capture,
 		classifier:          classifier,
 		prompts:             promptResolver,
@@ -112,39 +116,71 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 	}
 }
 
+func (w *Worker) SetLogger(logger *zap.Logger) {
+	if w == nil {
+		return
+	}
+	if logger == nil {
+		w.logger = zap.NewNop()
+		return
+	}
+	w.logger = logger
+}
+
 func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (streamers.LLMDecision, error) {
+	logger := w.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	id := strings.TrimSpace(streamerID)
 	if id == "" {
+		logger.Warn("worker rejected empty streamer id")
 		return streamers.LLMDecision{}, ErrStreamerIDRequired
 	}
+	logger.Info("streamer processing cycle started", zap.String("streamerID", id))
 	lockKey := fmt.Sprintf("stream-capture:%s", id)
 	if !w.locker.TryLock(lockKey, w.lockTTL) {
+		logger.Info("streamer processing skipped because worker is busy", zap.String("streamerID", id), zap.String("lockKey", lockKey))
 		return streamers.LLMDecision{}, ErrStreamerBusy
 	}
-	defer w.locker.Unlock(lockKey)
+	logger.Info("streamer processing lock acquired", zap.String("streamerID", id), zap.String("lockKey", lockKey), zap.Duration("lockTTL", w.lockTTL))
+	defer func() {
+		w.locker.Unlock(lockKey)
+		logger.Info("streamer processing lock released", zap.String("streamerID", id), zap.String("lockKey", lockKey))
+	}()
 
 	runID, err := w.runs.CreateRun(ctx, id)
 	if err != nil {
+		logger.Error("failed to create analysis run", zap.String("streamerID", id), zap.Error(err))
 		return streamers.LLMDecision{}, err
 	}
+	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 	activePrompts := w.prompts.ListActive(ctx)
 	if len(activePrompts) == 0 {
+		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", id))
 		return streamers.LLMDecision{}, prompts.ErrNotFound
 	}
+	logger.Info("active prompts loaded for streamer processing", zap.String("streamerID", id), zap.Int("promptCount", len(activePrompts)))
 	chunk, err := w.captureWithRetry(ctx, id)
 	if err != nil {
+		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		return streamers.LLMDecision{}, err
 	}
+	logger.Info("stream chunk captured", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference))
 	defer cleanupChunkRef(chunk.Reference)
 
 	var lastDecision streamers.LLMDecision
 	for _, activePrompt := range activePrompts {
+		logger.Info("processing prompt stage", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
 		decision, err := w.processStage(ctx, runID, id, chunk, activePrompt)
 		if err != nil {
+			logger.Error("prompt stage processing failed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
 			return streamers.LLMDecision{}, err
 		}
+		logger.Info("prompt stage processed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("stage", decision.Stage), zap.String("label", decision.Label), zap.Float64("confidence", decision.Confidence))
 		lastDecision = decision
 	}
+	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
 	return lastDecision, nil
 }
 

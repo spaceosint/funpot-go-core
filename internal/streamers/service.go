@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -39,6 +41,7 @@ type submissionLimit struct {
 }
 
 type Service struct {
+	logger         *zap.Logger
 	mu             sync.RWMutex
 	items          []Streamer
 	decisions      map[string][]LLMDecision
@@ -61,6 +64,7 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 		validator = noopTwitchValidator{}
 	}
 	return &Service{
+		logger:         zap.NewNop(),
 		items:          []Streamer{},
 		decisions:      make(map[string][]LLMDecision),
 		validator:      validator,
@@ -69,6 +73,17 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (s *Service) SetLogger(logger *zap.Logger) {
+	if s == nil {
+		return
+	}
+	if logger == nil {
+		s.logger = zap.NewNop()
+		return
+	}
+	s.logger = logger
 }
 
 func (s *Service) SetSubmissionHook(hook func(context.Context, string) error) {
@@ -140,7 +155,16 @@ func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string)
 
 func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (Submission, error) {
 	username := strings.TrimSpace(twitchUsername)
+	logger := s.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	logger.Info("streamer submission received",
+		zap.String("twitchUsername", username),
+		zap.String("addedBy", strings.TrimSpace(addedBy)),
+	)
 	if username == "" {
+		logger.Warn("streamer submission rejected: missing username", zap.String("addedBy", strings.TrimSpace(addedBy)))
 		return Submission{}, ErrInvalidUsername
 	}
 	if !IsSupportedStatus("pending") {
@@ -148,13 +172,16 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 	}
 
 	if !s.allowSubmission(addedBy) {
+		logger.Warn("streamer submission rate limited", zap.String("twitchUsername", username), zap.String("addedBy", strings.TrimSpace(addedBy)))
 		return Submission{}, ErrRateLimited
 	}
 
 	displayName, err := s.validator.ValidateUsername(ctx, username)
 	if err != nil {
+		logger.Warn("streamer submission validation failed", zap.String("twitchUsername", username), zap.Error(err))
 		return Submission{}, fmt.Errorf("%w: %v", ErrTwitchUnavailable, err)
 	}
+	logger.Info("streamer submission validated", zap.String("twitchUsername", username), zap.String("displayName", displayName))
 
 	now := s.nowFn().UnixNano()
 	id := fmt.Sprintf("str_%d", now)
@@ -173,8 +200,12 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 	s.items = append(s.items, streamer)
 	s.mu.Unlock()
 
+	logger.Info("streamer stored and awaiting worker scheduling", zap.String("streamerID", id), zap.String("status", streamer.Status))
+
 	if hook := s.submissionHook(); hook != nil {
+		logger.Info("starting streamer submission hook", zap.String("streamerID", id))
 		if err := hook(ctx, id); err != nil {
+			logger.Error("streamer submission hook failed", zap.String("streamerID", id), zap.Error(err))
 			s.mu.Lock()
 			if n := len(s.items); n > 0 && s.items[n-1].ID == id {
 				s.items = s.items[:n-1]
@@ -182,8 +213,10 @@ func (s *Service) Submit(ctx context.Context, twitchUsername, addedBy string) (S
 			s.mu.Unlock()
 			return Submission{}, err
 		}
+		logger.Info("streamer submission hook completed", zap.String("streamerID", id))
 	}
 
+	logger.Info("streamer submission completed", zap.String("streamerID", id), zap.String("status", "pending"))
 	return Submission{ID: id, Status: "pending", Reason: nil}, nil
 }
 

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -48,6 +50,7 @@ type StreamlinkCaptureConfig struct {
 // StreamlinkCaptureAdapter captures live stream bytes via streamlink and stores each
 // polling cycle into a local chunk file reference.
 type StreamlinkCaptureAdapter struct {
+	logger   *zap.Logger
 	cfg      StreamlinkCaptureConfig
 	resolver StreamlinkChannelResolver
 	runner   StreamlinkCommandRunner
@@ -73,26 +76,46 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 	if runner == nil {
 		runner = execStreamlinkRunner{}
 	}
-	return &StreamlinkCaptureAdapter{cfg: cfg, resolver: resolver, runner: runner, nowFn: time.Now}
+	return &StreamlinkCaptureAdapter{logger: zap.NewNop(), cfg: cfg, resolver: resolver, runner: runner, nowFn: time.Now}
+}
+
+func (a *StreamlinkCaptureAdapter) SetLogger(logger *zap.Logger) {
+	if a == nil {
+		return
+	}
+	if logger == nil {
+		a.logger = zap.NewNop()
+		return
+	}
+	a.logger = logger
 }
 
 func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID string) (ChunkRef, error) {
+	logger := a.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	id := strings.TrimSpace(streamerID)
 	if id == "" {
+		logger.Warn("stream capture rejected empty streamer id")
 		return ChunkRef{}, ErrStreamerIDRequired
 	}
+	logger.Info("starting stream capture", zap.String("streamerID", id))
 
 	channel := id
 	if a.resolver != nil {
 		resolved, err := a.resolver.ResolveStreamlinkChannel(ctx, id)
 		if err != nil {
+			logger.Error("failed to resolve streamlink channel", zap.String("streamerID", id), zap.Error(err))
 			return ChunkRef{}, fmt.Errorf("%w: %v", ErrStreamlinkChannelResolve, err)
 		}
 		channel = strings.TrimSpace(resolved)
 	}
 	if channel == "" {
+		logger.Warn("stream capture resolved empty channel", zap.String("streamerID", id))
 		return ChunkRef{}, fmt.Errorf("%w: empty channel", ErrStreamlinkChannelResolve)
 	}
+	logger.Info("stream capture channel resolved", zap.String("streamerID", id), zap.String("channel", channel))
 
 	chunkDir := filepath.Join(a.cfg.OutputDir, sanitizeToken(id))
 	if err := os.MkdirAll(chunkDir, 0o755); err != nil {
@@ -114,6 +137,7 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	args := []string{"--stdout", streamURL, a.cfg.Quality}
 
 	var stderr strings.Builder
+	logger.Info("executing streamlink capture", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath), zap.String("streamURL", streamURL), zap.String("quality", a.cfg.Quality), zap.String("chunkPath", chunkPath))
 	runErr := a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
 
 	stat, err := file.Stat()
@@ -121,6 +145,7 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 		return ChunkRef{}, err
 	}
 	if stat.Size() <= 0 {
+		logger.Warn("stream capture produced empty chunk", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", strings.TrimSpace(stderr.String())), zap.Error(runErr))
 		if runErr != nil {
 			return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkNoData, runErr, strings.TrimSpace(stderr.String()))
 		}
@@ -128,9 +153,11 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	}
 
 	if runErr != nil && !errors.Is(captureCtx.Err(), context.DeadlineExceeded) && !errors.Is(runErr, context.DeadlineExceeded) {
+		logger.Error("streamlink capture command failed", zap.String("streamerID", id), zap.String("stderr", strings.TrimSpace(stderr.String())), zap.Error(runErr))
 		return ChunkRef{}, fmt.Errorf("streamlink command failed: %w (stderr=%s)", runErr, strings.TrimSpace(stderr.String()))
 	}
 
+	logger.Info("stream capture completed", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int64("bytes", stat.Size()))
 	return ChunkRef{Reference: chunkPath}, nil
 }
 

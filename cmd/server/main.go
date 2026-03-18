@@ -105,12 +105,18 @@ func main() {
 	userService := users.NewService(userRepo)
 	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamersService := streamers.NewService()
+	streamersService.SetLogger(logger.Named("streamers"))
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
 	eventsService := events.NewService(nil)
 
+	streamCapture := buildStreamCapture(cfg, streamersService)
+	if configurableCapture, ok := streamCapture.(interface{ SetLogger(*zap.Logger) }); ok {
+		configurableCapture.SetLogger(logger.Named("stream_capture"))
+	}
+
 	streamWorker := media.NewWorker(
-		buildStreamCapture(cfg, streamersService),
+		streamCapture,
 		buildStageClassifier(logger, cfg),
 		promptsService,
 		&media.InMemoryRunStore{},
@@ -118,7 +124,9 @@ func main() {
 		media.NewInMemoryLocker(),
 		media.WorkerConfig{LockTTL: 15 * time.Second, MinConfidence: 0.5},
 	)
+	streamWorker.SetLogger(logger.Named("stream_worker"))
 	streamScheduler := media.NewScheduler(streamWorker, 10*time.Second)
+	streamScheduler.SetLogger(logger.Named("stream_scheduler"))
 	streamersService.SetSubmissionHook(func(_ context.Context, streamerID string) error {
 		return streamScheduler.Start(streamerID)
 	})
