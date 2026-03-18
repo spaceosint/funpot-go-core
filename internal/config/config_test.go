@@ -43,6 +43,9 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", "14s")
 	t.Setenv("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/chunks")
 	t.Setenv("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s")
+	t.Setenv("FUNPOT_GEMINI_API_KEY", "test-gemini-key")
+	t.Setenv("FUNPOT_GEMINI_BASE_URL", "https://example.test")
+	t.Setenv("FUNPOT_GEMINI_MAX_INLINE_BYTES", "123456")
 
 	cfg, err := Load()
 	if err != nil {
@@ -133,6 +136,15 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Streamlink.CaptureTimeout != 14*time.Second {
 		t.Fatalf("expected streamlink capture timeout 14s, got %s", cfg.Streamlink.CaptureTimeout)
 	}
+	if cfg.Gemini.APIKey != "test-gemini-key" {
+		t.Fatalf("expected gemini api key to be set")
+	}
+	if cfg.Gemini.BaseURL != "https://example.test" {
+		t.Fatalf("expected gemini base url to be set")
+	}
+	if cfg.Gemini.MaxInlineBytes != 123456 {
+		t.Fatalf("expected gemini max inline bytes to be set")
+	}
 }
 
 func TestLoadDatabaseValidation(t *testing.T) {
@@ -191,6 +203,12 @@ func TestLoadDatabaseValidation(t *testing.T) {
 			env: map[string]string{
 				"FUNPOT_STREAMLINK_ENABLED":      "true",
 				"FUNPOT_STREAMLINK_URL_TEMPLATE": "https://twitch.tv/channel",
+			},
+		},
+		{
+			name: "invalid gemini inline limit",
+			env: map[string]string{
+				"FUNPOT_GEMINI_MAX_INLINE_BYTES": "0",
 			},
 		},
 	}

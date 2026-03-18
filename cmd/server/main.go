@@ -111,7 +111,7 @@ func main() {
 
 	streamWorker := media.NewWorker(
 		buildStreamCapture(cfg, streamersService),
-		media.PromptedStageClassifier{},
+		buildStageClassifier(logger, cfg),
 		promptsService,
 		&media.InMemoryRunStore{},
 		streamersService,
@@ -202,6 +202,25 @@ func buildStreamCapture(cfg config.Config, streamersService *streamers.Service) 
 		OutputDir:      cfg.Streamlink.OutputDir,
 		URLTemplate:    cfg.Streamlink.URLTemplate,
 	}, streamersService, nil)
+}
+
+func buildStageClassifier(logger *zap.Logger, cfg config.Config) media.StageClassifier {
+	if cfg.Gemini.APIKey == "" {
+		logger.Warn("gemini api key is not configured; using deterministic fallback classifier")
+		return media.PromptedStageClassifier{}
+	}
+
+	classifier, err := media.NewGeminiStageClassifier(media.GeminiClassifierConfig{
+		APIKey:         cfg.Gemini.APIKey,
+		BaseURL:        cfg.Gemini.BaseURL,
+		MaxInlineBytes: cfg.Gemini.MaxInlineBytes,
+	})
+	if err != nil {
+		logger.Warn("failed to configure gemini classifier; using deterministic fallback classifier", zap.Error(err))
+		return media.PromptedStageClassifier{}
+	}
+
+	return classifier
 }
 
 func newLogger(level string) (*zap.Logger, error) {
