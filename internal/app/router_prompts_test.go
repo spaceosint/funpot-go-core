@@ -58,6 +58,12 @@ func TestAdminPromptsCreateListAndActivate(t *testing.T) {
 	if id == "" {
 		t.Fatal("expected created prompt id")
 	}
+	if created["isActive"] != true {
+		t.Fatalf("expected first created prompt to be active automatically, got %#v", created["isActive"])
+	}
+	if position, ok := created["position"].(float64); !ok || int(position) != 1 {
+		t.Fatalf("expected position 1 in response, got %#v", created["position"])
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/prompts", nil)
 	listReq.Header.Set("Authorization", "Bearer "+token)

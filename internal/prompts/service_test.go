@@ -30,6 +30,9 @@ func TestCreateAndActivate(t *testing.T) {
 	if created.Position != 1 {
 		t.Fatalf("expected position 1, got %d", created.Position)
 	}
+	if !created.IsActive {
+		t.Fatal("expected first prompt version to become active automatically")
+	}
 
 	active, err := svc.Activate(context.Background(), created.ID, "admin-1")
 	if err != nil {
@@ -92,5 +95,32 @@ func TestListActiveOrdersByPosition(t *testing.T) {
 	}
 	if items[0].Stage != "detector" || items[1].Stage != "queue" || items[2].Stage != "result" {
 		t.Fatalf("unexpected order: %#v", items)
+	}
+}
+
+func TestCreateAutoActivatesFirstPromptPerStageOnly(t *testing.T) {
+	svc := NewService()
+	first, err := svc.Create(context.Background(), CreateRequest{Stage: "detector", Position: 1, Template: "first", Model: "m", Temperature: 0.1, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4, ActorID: "admin-1"})
+	if err != nil {
+		t.Fatalf("Create(first) error = %v", err)
+	}
+	second, err := svc.Create(context.Background(), CreateRequest{Stage: "detector", Position: 1, Template: "second", Model: "m", Temperature: 0.1, MaxTokens: 1, TimeoutMS: 1, MinConfidence: 0.4, ActorID: "admin-2"})
+	if err != nil {
+		t.Fatalf("Create(second) error = %v", err)
+	}
+
+	if !first.IsActive {
+		t.Fatal("expected first prompt to be active")
+	}
+	if second.IsActive {
+		t.Fatal("expected later prompt versions to require explicit activation")
+	}
+
+	active, err := svc.GetActiveByStage(context.Background(), "detector")
+	if err != nil {
+		t.Fatalf("GetActiveByStage() error = %v", err)
+	}
+	if active.ID != first.ID {
+		t.Fatalf("active id = %q, want %q", active.ID, first.ID)
 	}
 }
