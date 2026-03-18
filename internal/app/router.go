@@ -606,6 +606,7 @@ func NewHandler(
 					}
 					created, err := promptsService.Create(r.Context(), prompts.CreateRequest{
 						Stage:         req.Stage,
+						Position:      req.Position,
 						Template:      req.Template,
 						Model:         req.Model,
 						Temperature:   req.Temperature,
