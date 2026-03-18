@@ -23,6 +23,7 @@ type Config struct {
 	Redis       RedisConfig
 	Database    DatabaseConfig
 	Streamlink  StreamlinkConfig
+	Gemini      GeminiConfig
 	Features    FeatureConfig
 	Client      ClientConfig
 }
@@ -35,6 +36,13 @@ type StreamlinkConfig struct {
 	CaptureTimeout time.Duration
 	OutputDir      string
 	URLTemplate    string
+}
+
+// GeminiConfig controls outbound Gemini API integration for stage classification.
+type GeminiConfig struct {
+	APIKey         string
+	BaseURL        string
+	MaxInlineBytes int64
 }
 
 // AdminConfig controls role-based admin access.
@@ -291,6 +299,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	geminiMaxInlineBytes, err := getInt64("FUNPOT_GEMINI_MAX_INLINE_BYTES", 19*1024*1024)
+	if err != nil {
+		return Config{}, err
+	}
+
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
 	if err != nil {
 		return Config{}, err
@@ -408,6 +421,11 @@ func Load() (Config, error) {
 			OutputDir:      getString("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/stream_chunks"),
 			URLTemplate:    getString("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s"),
 		},
+		Gemini: GeminiConfig{
+			APIKey:         os.Getenv("FUNPOT_GEMINI_API_KEY"),
+			BaseURL:        getString("FUNPOT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+			MaxInlineBytes: geminiMaxInlineBytes,
+		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
 		},
@@ -462,6 +480,10 @@ func Load() (Config, error) {
 		}
 	}
 
+	if cfg.Gemini.MaxInlineBytes < 1 {
+		return Config{}, fmt.Errorf("FUNPOT_GEMINI_MAX_INLINE_BYTES must be > 0")
+	}
+
 	return cfg, nil
 }
 func getString(key, fallback string) string {
@@ -509,6 +531,17 @@ func getInt(key string, fallback int) (int, error) {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
 			return 0, fmt.Errorf("invalid int for %s: %w", key, err)
+		}
+		return parsed, nil
+	}
+	return fallback, nil
+}
+
+func getInt64(key string, fallback int64) (int64, error) {
+	if value := os.Getenv(key); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid int64 for %s: %w", key, err)
 		}
 		return parsed, nil
 	}
