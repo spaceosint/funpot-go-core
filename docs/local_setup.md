@@ -183,6 +183,10 @@ local smoke tests.
 ## Observability Notes
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.
 - Adjust the log level (`debug`, `info`, `warn`, `error`) via `FUNPOT_LOG_LEVEL`.
+- Stream-analysis metrics now expose worker health signals on `/metrics`, including
+  `funpot_stream_chunk_lag_seconds`, `funpot_stream_stage_latency_ms`,
+  `funpot_stream_stage_results_total`, `funpot_stream_stage_tokens_total`, and
+  `funpot_stream_streamer_failures_total` for M2.1 orchestration monitoring.
 - When Sentry is enabled, the shutdown process flushes pending events with a
   2-second timeout.
 - Telegram authentication requires a bot token; for local development you can
