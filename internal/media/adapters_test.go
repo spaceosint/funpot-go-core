@@ -24,17 +24,21 @@ func (f fakeChannelResolver) ResolveStreamlinkChannel(_ context.Context, _ strin
 }
 
 type fakeCommandRunner struct {
-	err       error
-	writeData []byte
-	lastName  string
-	lastArgs  []string
+	err          error
+	writeData    []byte
+	stderrOutput string
+	lastName     string
+	lastArgs     []string
 }
 
-func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, _ io.Writer, name string, args ...string) error {
+func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) error {
 	f.lastName = name
 	f.lastArgs = append([]string(nil), args...)
 	if len(f.writeData) > 0 {
 		_, _ = stdout.Write(f.writeData)
+	}
+	if f.stderrOutput != "" {
+		_, _ = io.WriteString(stderr, f.stderrOutput)
 	}
 	return f.err
 }
@@ -93,5 +97,23 @@ func TestStreamlinkCaptureAdapterFailsWithoutBytes(t *testing.T) {
 	_, err := adapter.Capture(context.Background(), "str_3")
 	if !errors.Is(err, ErrStreamlinkNoData) {
 		t.Fatalf("expected ErrStreamlinkNoData, got %v", err)
+	}
+}
+
+func TestStreamlinkCaptureAdapterReturnsAdBreakErrorWhenAdsPauseOutput(t *testing.T) {
+	runner := &fakeCommandRunner{
+		err: errors.New("signal: killed"),
+		stderrOutput: strings.Join([]string{
+			"[plugins.twitch][info] Will skip ad segments",
+			"[plugins.twitch][info] Waiting for pre-roll ads to finish, be patient",
+			"[plugins.twitch][info] Detected advertisement break of 15 seconds",
+			"[stream.hls][info] Filtering out segments and pausing stream output",
+		}, "\n"),
+	}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: t.TempDir()}, nil, runner)
+
+	_, err := adapter.Capture(context.Background(), "str_ads")
+	if !errors.Is(err, ErrStreamlinkAdBreak) {
+		t.Fatalf("expected ErrStreamlinkAdBreak, got %v", err)
 	}
 }

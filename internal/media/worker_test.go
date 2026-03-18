@@ -200,3 +200,15 @@ func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
 		t.Fatalf("classifier calls = %d, want 2", got)
 	}
 }
+
+func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
+	worker := NewWorker(fakeCapture{err: ErrStreamlinkAdBreak}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-ads")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got != (streamers.LLMDecision{}) {
+		t.Fatalf("expected zero decision on ad break, got %#v", got)
+	}
+}
