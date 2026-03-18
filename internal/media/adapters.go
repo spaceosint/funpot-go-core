@@ -174,7 +174,7 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	}
 
 	logger.Info("stream capture completed", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int64("bytes", stat.Size()))
-	return ChunkRef{Reference: chunkPath}, nil
+	return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
 }
 
 func sanitizeToken(value string) string {

@@ -21,7 +21,8 @@ var (
 )
 
 type ChunkRef struct {
-	Reference string
+	Reference  string
+	CapturedAt time.Time
 }
 
 type StageRequest struct {
@@ -32,12 +33,15 @@ type StageRequest struct {
 }
 
 type StageClassification struct {
-	Label       string
-	Confidence  float64
-	RawResponse string
-	TokensIn    int
-	TokensOut   int
-	Latency     time.Duration
+	Label             string
+	Confidence        float64
+	RawResponse       string
+	RequestRef        string
+	ResponseRef       string
+	TokensIn          int
+	TokensOut         int
+	Latency           time.Duration
+	NormalizedOutcome string
 }
 
 type StreamCapture interface {
@@ -194,7 +198,7 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 			logger.Warn("no active global detector configured", zap.String("streamerID", streamerID), zap.Error(err))
 			return streamers.LLMDecision{}, err
 		}
-		detectorDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, globalPrompt)
+		detectorDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, globalPrompt, nil)
 		if err != nil {
 			logger.Error("global detector stage failed", zap.String("streamerID", streamerID), zap.Error(err))
 			return streamers.LLMDecision{}, err
@@ -214,12 +218,11 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		}
 		lastDecision := detectorDecision
 		for {
-			stepDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, currentStep.Prompt)
+			stepDecision, transition, ok, err := w.processScenarioStep(ctx, runID, streamerID, chunk, currentStep, scenario)
 			if err != nil {
 				return streamers.LLMDecision{}, err
 			}
 			lastDecision = stepDecision
-			transition, ok := scenario.ResolveTransition(currentStep.Code, stepDecision.Label)
 			if !ok || transition.Terminal {
 				return lastDecision, nil
 			}
@@ -241,7 +244,7 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 	var lastDecision streamers.LLMDecision
 	for _, activePrompt := range activePrompts {
 		logger.Info("processing prompt stage", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
-		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt)
+		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt, nil)
 		if err != nil {
 			logger.Error("prompt stage processing failed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
 			return streamers.LLMDecision{}, err
@@ -252,8 +255,37 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 	return lastDecision, nil
 }
 
-func (w *Worker) processPromptTemplate(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptTemplate) (streamers.LLMDecision, error) {
-	return w.processStage(ctx, runID, streamerID, chunk, prompts.PromptVersion{
+func (w *Worker) processPromptTemplate(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptTemplate, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
+	return w.processStage(ctx, runID, streamerID, chunk, promptVersionFromTemplate(activePrompt), transition)
+}
+
+func (w *Worker) processScenarioStep(ctx context.Context, runID, streamerID string, chunk ChunkRef, step prompts.ScenarioStep, scenario prompts.ScenarioVersion) (streamers.LLMDecision, prompts.ScenarioTransition, bool, error) {
+	activePrompt := promptVersionFromTemplate(step.Prompt)
+	result, err := w.classifyWithRetry(ctx, StageRequest{
+		StreamerID: streamerID,
+		Stage:      activePrompt.Stage,
+		Chunk:      chunk,
+		Prompt:     activePrompt,
+	}, activePrompt)
+	if err != nil {
+		return streamers.LLMDecision{}, prompts.ScenarioTransition{}, false, err
+	}
+	label := strings.TrimSpace(result.Label)
+	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
+		label = "uncertain"
+	}
+	transition, ok := scenario.ResolveTransition(step.Code, label)
+	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, func() *prompts.ScenarioTransition {
+		if !ok {
+			return nil
+		}
+		return &transition
+	}())
+	return decision, transition, ok, err
+}
+
+func promptVersionFromTemplate(activePrompt prompts.PromptTemplate) prompts.PromptVersion {
+	return prompts.PromptVersion{
 		ID:            activePrompt.ID,
 		Stage:         activePrompt.Stage,
 		Template:      activePrompt.Template,
@@ -265,7 +297,7 @@ func (w *Worker) processPromptTemplate(ctx context.Context, runID, streamerID st
 		BackoffMS:     activePrompt.BackoffMS,
 		CooldownMS:    activePrompt.CooldownMS,
 		MinConfidence: activePrompt.MinConfidence,
-	})
+	}
 }
 
 func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {
@@ -291,33 +323,50 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 	return ChunkRef{}, lastErr
 }
 
-func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
+func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
 	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt}, activePrompt)
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
+	return w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, transition)
+}
+
+func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID string, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
 	label := strings.TrimSpace(result.Label)
 	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
 		label = "uncertain"
 	}
-	return w.decisions.RecordLLMDecision(ctx, streamers.RecordDecisionRequest{
-		RunID:           runID,
-		StreamerID:      streamerID,
-		Stage:           activePrompt.Stage,
-		Label:           label,
-		Confidence:      result.Confidence,
-		PromptVersionID: activePrompt.ID,
-		PromptText:      activePrompt.Template,
-		Model:           activePrompt.Model,
-		Temperature:     activePrompt.Temperature,
-		MaxTokens:       activePrompt.MaxTokens,
-		TimeoutMS:       activePrompt.TimeoutMS,
-		ChunkRef:        chunk.Reference,
-		RawResponse:     result.RawResponse,
-		TokensIn:        result.TokensIn,
-		TokensOut:       result.TokensOut,
-		LatencyMS:       result.Latency.Milliseconds(),
-	})
+	transitionOutcome := strings.TrimSpace(result.NormalizedOutcome)
+	if transitionOutcome == "" {
+		transitionOutcome = label
+	}
+	recordReq := streamers.RecordDecisionRequest{
+		RunID:             runID,
+		StreamerID:        streamerID,
+		Stage:             activePrompt.Stage,
+		Label:             label,
+		Confidence:        result.Confidence,
+		ChunkCapturedAt:   chunk.CapturedAt,
+		PromptVersionID:   activePrompt.ID,
+		PromptText:        activePrompt.Template,
+		Model:             activePrompt.Model,
+		Temperature:       activePrompt.Temperature,
+		MaxTokens:         activePrompt.MaxTokens,
+		TimeoutMS:         activePrompt.TimeoutMS,
+		ChunkRef:          chunk.Reference,
+		RequestRef:        result.RequestRef,
+		ResponseRef:       result.ResponseRef,
+		RawResponse:       result.RawResponse,
+		TokensIn:          result.TokensIn,
+		TokensOut:         result.TokensOut,
+		LatencyMS:         result.Latency.Milliseconds(),
+		TransitionOutcome: transitionOutcome,
+	}
+	if transition != nil {
+		recordReq.TransitionToStep = transition.ToStepCode
+		recordReq.TransitionTerminal = transition.Terminal
+	}
+	return w.decisions.RecordLLMDecision(ctx, recordReq)
 }
 
 func (w *Worker) classifyWithRetry(ctx context.Context, input StageRequest, activePrompt prompts.PromptVersion) (StageClassification, error) {

@@ -87,21 +87,27 @@ type promptCreateRequest struct {
 }
 
 type llmDecisionRecordRequest struct {
-	RunID           string  `json:"runId"`
-	Stage           string  `json:"stage"`
-	Label           string  `json:"label"`
-	Confidence      float64 `json:"confidence"`
-	PromptVersionID string  `json:"promptVersionId"`
-	PromptText      string  `json:"promptText"`
-	Model           string  `json:"model"`
-	Temperature     float64 `json:"temperature"`
-	MaxTokens       int     `json:"maxTokens"`
-	TimeoutMS       int     `json:"timeoutMs"`
-	ChunkRef        string  `json:"chunkRef"`
-	RawResponse     string  `json:"rawResponse"`
-	TokensIn        int     `json:"tokensIn"`
-	TokensOut       int     `json:"tokensOut"`
-	LatencyMS       int64   `json:"latencyMs"`
+	RunID              string  `json:"runId"`
+	Stage              string  `json:"stage"`
+	Label              string  `json:"label"`
+	Confidence         float64 `json:"confidence"`
+	ChunkCapturedAt    string  `json:"chunkCapturedAt"`
+	PromptVersionID    string  `json:"promptVersionId"`
+	PromptText         string  `json:"promptText"`
+	Model              string  `json:"model"`
+	Temperature        float64 `json:"temperature"`
+	MaxTokens          int     `json:"maxTokens"`
+	TimeoutMS          int     `json:"timeoutMs"`
+	ChunkRef           string  `json:"chunkRef"`
+	RequestRef         string  `json:"requestRef"`
+	ResponseRef        string  `json:"responseRef"`
+	RawResponse        string  `json:"rawResponse"`
+	TokensIn           int     `json:"tokensIn"`
+	TokensOut          int     `json:"tokensOut"`
+	LatencyMS          int64   `json:"latencyMs"`
+	TransitionOutcome  string  `json:"transitionOutcome"`
+	TransitionToStep   string  `json:"transitionToStep"`
+	TransitionTerminal bool    `json:"transitionTerminal"`
 }
 
 type meResponse struct {
@@ -439,23 +445,38 @@ func NewHandler(
 							writeError(w, http.StatusBadRequest, "invalid request body")
 							return
 						}
+						var chunkCapturedAt time.Time
+						if strings.TrimSpace(req.ChunkCapturedAt) != "" {
+							parsed, err := time.Parse(time.RFC3339Nano, req.ChunkCapturedAt)
+							if err != nil {
+								writeError(w, http.StatusBadRequest, "chunkCapturedAt must be RFC3339 timestamp")
+								return
+							}
+							chunkCapturedAt = parsed
+						}
 						item, err := streamersService.RecordLLMDecision(r.Context(), streamers.RecordDecisionRequest{
-							RunID:           req.RunID,
-							StreamerID:      streamerID,
-							Stage:           req.Stage,
-							Label:           req.Label,
-							Confidence:      req.Confidence,
-							PromptVersionID: req.PromptVersionID,
-							PromptText:      req.PromptText,
-							Model:           req.Model,
-							Temperature:     req.Temperature,
-							MaxTokens:       req.MaxTokens,
-							TimeoutMS:       req.TimeoutMS,
-							ChunkRef:        req.ChunkRef,
-							RawResponse:     req.RawResponse,
-							TokensIn:        req.TokensIn,
-							TokensOut:       req.TokensOut,
-							LatencyMS:       req.LatencyMS,
+							RunID:              req.RunID,
+							StreamerID:         streamerID,
+							Stage:              req.Stage,
+							Label:              req.Label,
+							Confidence:         req.Confidence,
+							ChunkCapturedAt:    chunkCapturedAt,
+							PromptVersionID:    req.PromptVersionID,
+							PromptText:         req.PromptText,
+							Model:              req.Model,
+							Temperature:        req.Temperature,
+							MaxTokens:          req.MaxTokens,
+							TimeoutMS:          req.TimeoutMS,
+							ChunkRef:           req.ChunkRef,
+							RequestRef:         req.RequestRef,
+							ResponseRef:        req.ResponseRef,
+							RawResponse:        req.RawResponse,
+							TokensIn:           req.TokensIn,
+							TokensOut:          req.TokensOut,
+							LatencyMS:          req.LatencyMS,
+							TransitionOutcome:  req.TransitionOutcome,
+							TransitionToStep:   req.TransitionToStep,
+							TransitionTerminal: req.TransitionTerminal,
 						})
 						if err != nil {
 							writeError(w, http.StatusBadRequest, err.Error())
