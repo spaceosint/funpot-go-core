@@ -21,6 +21,13 @@ func TestSubmitCallsSubmissionHook(t *testing.T) {
 	if !called {
 		t.Fatalf("expected submission hook to be called")
 	}
+	status := svc.GetLLMStatus(context.Background(), svc.List(context.Background(), "", "", 1)[0].ID)
+	if status.State != "active" {
+		t.Fatalf("expected active analysis status after successful hook, got %q", status.State)
+	}
+	if status.UpdatedAt == "" {
+		t.Fatal("expected status updated timestamp after successful hook")
+	}
 }
 
 func TestSubmitRollsBackOnHookError(t *testing.T) {
@@ -51,5 +58,20 @@ func TestResolveStreamlinkChannel(t *testing.T) {
 	}
 	if channel != "stream_name" {
 		t.Fatalf("channel = %q, want stream_name", channel)
+	}
+}
+
+func TestMarkAnalysisInactiveResetsIdleStatusWithoutDecisions(t *testing.T) {
+	svc := NewService()
+	result, err := svc.Submit(context.Background(), "stream_name", "user-1")
+	if err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	svc.MarkAnalysisInactive(result.ID)
+
+	status := svc.GetLLMStatus(context.Background(), result.ID)
+	if status.State != "idle" {
+		t.Fatalf("expected idle status after deactivation, got %q", status.State)
 	}
 }
