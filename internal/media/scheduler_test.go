@@ -101,3 +101,43 @@ func TestSchedulerLifecycleHooksTrackStartAndStop(t *testing.T) {
 		t.Fatalf("unexpected stop hook calls: %#v", stopped)
 	}
 }
+
+func TestSchedulerRunCycleIsIdempotentWithinWindow(t *testing.T) {
+	processor := &fakeProcessor{}
+	now := time.Date(2026, 3, 18, 12, 0, 7, 0, time.UTC)
+	scheduler := NewSchedulerWithProcessorAndLocker(processor, 10*time.Second, NewInMemoryLocker())
+	scheduler.nowFn = func() time.Time { return now }
+
+	scheduler.runCycle(context.Background(), "str-1")
+	scheduler.runCycle(context.Background(), "str-1")
+
+	if got := processor.callCount(); got != 1 {
+		t.Fatalf("expected one call in same window, got %d", got)
+	}
+}
+
+func TestSchedulerRunCycleProcessesNextWindow(t *testing.T) {
+	processor := &fakeProcessor{}
+	now := time.Date(2026, 3, 18, 12, 0, 7, 0, time.UTC)
+	scheduler := NewSchedulerWithProcessorAndLocker(processor, 10*time.Second, NewInMemoryLocker())
+	scheduler.nowFn = func() time.Time { return now }
+
+	scheduler.runCycle(context.Background(), "str-1")
+	now = now.Add(10 * time.Second)
+	scheduler.runCycle(context.Background(), "str-1")
+
+	if got := processor.callCount(); got != 2 {
+		t.Fatalf("expected processing in two distinct windows, got %d", got)
+	}
+}
+
+func TestSchedulerWaitUntilNextWindowAlignsToCadence(t *testing.T) {
+	scheduler := NewSchedulerWithProcessorAndLocker(&fakeProcessor{}, 10*time.Second, NewInMemoryLocker())
+	now := time.Date(2026, 3, 18, 12, 0, 7, 500_000_000, time.UTC)
+	scheduler.nowFn = func() time.Time { return now }
+
+	wait := scheduler.waitUntilNextWindow()
+	if wait != 2500*time.Millisecond {
+		t.Fatalf("expected 2.5s wait until next window, got %s", wait)
+	}
+}

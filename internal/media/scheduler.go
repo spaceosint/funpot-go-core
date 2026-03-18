@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,8 @@ type Scheduler struct {
 	logger    *zap.Logger
 	processor StreamProcessor
 	interval  time.Duration
+	locker    Locker
+	nowFn     func() time.Time
 
 	mu      sync.Mutex
 	jobs    map[string]context.CancelFunc
@@ -44,10 +47,26 @@ func NewScheduler(worker *Worker, interval time.Duration) *Scheduler {
 }
 
 func NewSchedulerWithProcessor(processor StreamProcessor, interval time.Duration) *Scheduler {
+	return NewSchedulerWithProcessorAndLocker(processor, interval, NewInMemoryLocker())
+}
+
+func NewSchedulerWithProcessorAndLocker(processor StreamProcessor, interval time.Duration, locker Locker) *Scheduler {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
-	return &Scheduler{logger: zap.NewNop(), processor: processor, interval: interval, jobs: make(map[string]context.CancelFunc)}
+	if locker == nil {
+		locker = NewInMemoryLocker()
+	}
+	return &Scheduler{
+		logger:    zap.NewNop(),
+		processor: processor,
+		interval:  interval,
+		locker:    locker,
+		nowFn: func() time.Time {
+			return time.Now().UTC()
+		},
+		jobs: make(map[string]context.CancelFunc),
+	}
 }
 
 func (s *Scheduler) SetLogger(logger *zap.Logger) {
@@ -114,16 +133,14 @@ func (s *Scheduler) run(ctx context.Context, streamerID string) {
 		logger.Info("scheduler stopped for streamer", zap.String("streamerID", streamerID))
 	}()
 
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-
 	s.runCycle(ctx, streamerID)
 	for {
+		wait := s.waitUntilNextWindow()
 		select {
 		case <-ctx.Done():
 			logger.Info("scheduler context cancelled", zap.String("streamerID", streamerID))
 			return
-		case <-ticker.C:
+		case <-time.After(wait):
 			s.runCycle(ctx, streamerID)
 		}
 	}
@@ -138,12 +155,53 @@ func (s *Scheduler) runCycle(ctx context.Context, streamerID string) {
 		logger.Warn("scheduler skipped cycle because processor is not configured", zap.String("streamerID", streamerID))
 		return
 	}
-	logger.Info("scheduler cycle triggered", zap.String("streamerID", streamerID))
+	windowStart := s.currentWindowStart()
+	windowKey := fmt.Sprintf("stream-schedule:%s:%d", streamerID, windowStart.Unix())
+	windowTTL := time.Until(windowStart.Add(s.interval))
+	if windowTTL <= 0 {
+		windowTTL = s.interval
+	}
+	if s.locker != nil && !s.locker.TryLock(windowKey, windowTTL) {
+		logger.Info("scheduler cycle skipped due to existing window idempotency key", zap.String("streamerID", streamerID), zap.String("windowKey", windowKey), zap.Time("windowStart", windowStart), zap.Duration("windowTTL", windowTTL))
+		return
+	}
+	logger.Info("scheduler cycle triggered", zap.String("streamerID", streamerID), zap.Time("windowStart", windowStart), zap.String("windowKey", windowKey))
 	if err := s.processor.ProcessStreamer(ctx, streamerID); err != nil {
 		logger.Error("scheduler cycle failed", zap.String("streamerID", streamerID), zap.Error(err))
 		return
 	}
 	logger.Info("scheduler cycle completed", zap.String("streamerID", streamerID))
+}
+
+func (s *Scheduler) currentWindowStart() time.Time {
+	now := time.Now().UTC()
+	if s != nil && s.nowFn != nil {
+		now = s.nowFn().UTC()
+	}
+	if s == nil || s.interval <= 0 {
+		return now
+	}
+	return now.Truncate(s.interval)
+}
+
+func (s *Scheduler) waitUntilNextWindow() time.Duration {
+	if s == nil || s.interval <= 0 {
+		return 10 * time.Second
+	}
+	now := s.currentWindowStart()
+	current := time.Now().UTC()
+	if s.nowFn != nil {
+		current = s.nowFn().UTC()
+	}
+	next := now.Add(s.interval)
+	wait := time.Until(next)
+	if s.nowFn != nil {
+		wait = next.Sub(current)
+	}
+	if wait <= 0 {
+		return s.interval
+	}
+	return wait
 }
 
 func (s *Scheduler) Stop(streamerID string) {
