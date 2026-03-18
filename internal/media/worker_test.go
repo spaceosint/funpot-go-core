@@ -51,6 +51,37 @@ type fakeDecisionStore struct {
 	items []streamers.RecordDecisionRequest
 }
 
+type flakyCapture struct {
+	failures int
+	calls    int
+	chunk    ChunkRef
+}
+
+func (f *flakyCapture) Capture(_ context.Context, _ string) (ChunkRef, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return ChunkRef{}, errors.New("capture failed")
+	}
+	return f.chunk, nil
+}
+
+type flakyClassifier struct {
+	failures int
+	calls    map[string]int
+	result   StageClassification
+}
+
+func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (StageClassification, error) {
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[input.Stage]++
+	if f.calls[input.Stage] <= f.failures {
+		return StageClassification{}, errors.New("temporary llm failure")
+	}
+	return f.result, nil
+}
+
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
 	s.items = append(s.items, req)
 	return streamers.LLMDecision{RunID: req.RunID, StreamerID: req.StreamerID, Stage: req.Stage, Label: req.Label, Confidence: req.Confidence}, nil
@@ -128,5 +159,44 @@ func TestWorkerProcessStreamerCleansUpChunkFileOnClassifierError(t *testing.T) {
 	}
 	if _, err := os.Stat(chunkPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected deletion, err=%v", err)
+	}
+}
+
+func TestWorkerProcessStreamerRetriesCapture(t *testing.T) {
+	capture := &flakyCapture{failures: 1, chunk: ChunkRef{Reference: "chunk-1"}}
+	worker := NewWorker(capture, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, CaptureRetryCount: 1})
+	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if capture.calls != 2 {
+		t.Fatalf("capture calls = %d, want 2", capture.calls)
+	}
+}
+
+func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
+	classifier := &flakyClassifier{failures: 1, result: StageClassification{Label: "ok", Confidence: 0.9}}
+	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got := classifier.calls["custom"]; got != 2 {
+		t.Fatalf("classifier calls = %d, want 2", got)
+	}
+}
+
+func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
+	classifier := &flakyClassifier{failures: 2, result: StageClassification{Label: "ok", Confidence: 0.9}}
+	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
+		t.Fatal("expected classifier retry exhaustion error")
+	}
+	if got := classifier.calls["custom"]; got != 2 {
+		t.Fatalf("classifier calls = %d, want 2", got)
 	}
 }
