@@ -73,6 +73,7 @@ type gameUpsertRequest struct {
 
 type promptCreateRequest struct {
 	Stage         string  `json:"stage"`
+	Position      int     `json:"position"`
 	Template      string  `json:"template"`
 	Model         string  `json:"model"`
 	Temperature   float64 `json:"temperature"`

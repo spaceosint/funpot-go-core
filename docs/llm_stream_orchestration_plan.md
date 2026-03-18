@@ -39,6 +39,7 @@ Question: What game is currently on the stream?
 ### Per-game scenarios
 - Each game can have one active scenario at a time.
 - A scenario contains ordered or graph-based steps.
+- Step count is admin-defined: some games may have 2 stages, others 4+ stages.
 - Each step references an active admin-managed prompt version plus runtime config.
 - Each step declares transition rules: which normalized answer(s) move to which next step, pause state, terminal state, or fallback.
 - Admin must be able to create, edit, activate, deactivate, and delete scenarios/steps/transitions.
@@ -283,7 +284,7 @@ Definition of done:
 ## Delivery checklist mapped to `docs/implementation_plan.md`
 
 ### M2.1 completion checklist
-- [ ] Implement stream capture worker pipeline with global detector + per-game scenario routing.
+- [x] Implement stream capture worker pipeline with global detector + per-game scenario routing.
 - [ ] Build staged CS game flow (A/B/C/D).
 - [ ] Add retries, idempotency, and dead-letter handling.
 - [ ] Publish live LLM status updates via WebSocket.

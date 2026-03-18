@@ -146,14 +146,13 @@ func sanitizeToken(value string) string {
 	return replaced
 }
 
-// PromptedStageAClassifier is a deterministic baseline classifier that accepts
-// stage prompt context and returns a normalized guess until Gemini integration is wired.
-type PromptedStageAClassifier struct{}
+// PromptedStageClassifier is a deterministic baseline classifier that accepts
+// stage prompt context and returns a generic placeholder until Gemini integration is wired.
+type PromptedStageClassifier struct{}
 
-func (c PromptedStageAClassifier) Classify(_ context.Context, input StageARequest) (StageAClassification, error) {
-	label := string(StageALabelCSDetected)
-	if input.Prompt.Template == "" {
-		label = string(StageALabelUncertain)
+func (c PromptedStageClassifier) Classify(_ context.Context, input StageRequest) (StageClassification, error) {
+	if strings.TrimSpace(input.Prompt.Template) == "" {
+		return StageClassification{Label: "uncertain", Confidence: 0.1}, nil
 	}
-	return StageAClassification{Label: label, Confidence: 0.75}, nil
+	return StageClassification{Label: "ok", Confidence: 0.75}, nil
 }

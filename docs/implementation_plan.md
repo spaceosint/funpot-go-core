@@ -27,9 +27,9 @@ stream analysis immediately after a streamer is added:
 ### Priority checklist (must be tracked in status updates)
 - [ ] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [ ] Fixed 10-second capture cadence with lock/idempotency protections.
-- [ ] Resolve the active global game-detection prompt from admin configuration.
-- [ ] Resolve the active per-game scenario and the active prompt for its current step.
-- [ ] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
+- [x] Resolve the active global game-detection prompt from admin configuration.
+- [x] Resolve the active per-game scenario and the active prompt for its current step.
+- [x] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
 - [ ] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence, and transition outcome.
 - [ ] Publish realtime `LLM_STAGE_UPDATED` events and provide REST backfill/history.
 - [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
@@ -73,8 +73,8 @@ stream analysis immediately after a streamer is added:
   fallback strategy).
 - [ ] Implement stream capture worker pipeline:
   `streamlink -> media chunking -> Gemini request -> normalized stage result`.
-- [ ] Implement global game detection prompt execution before game-specific flows.
-- [ ] Build admin-managed per-game scenario flows (initially Counter-Strike),
+- [x] Implement global game detection prompt execution before game-specific flows.
+- [x] Build admin-managed per-game scenario flows (initially Counter-Strike),
   where each next step is selected from the previous LLM answer / normalized
   transition outcome.
 - [ ] Ship the initial Counter-Strike scenario:

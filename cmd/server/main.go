@@ -111,7 +111,7 @@ func main() {
 
 	streamWorker := media.NewWorker(
 		buildStreamCapture(cfg, streamersService),
-		media.PromptedStageAClassifier{},
+		media.PromptedStageClassifier{},
 		promptsService,
 		&media.InMemoryRunStore{},
 		streamersService,

@@ -913,7 +913,7 @@ components:
           type: string
         stage:
           type: string
-          enum: [stage_a, stage_b, stage_c, stage_d]
+          description: Admin-defined stage key.
         label:
           type: string
         confidence:
@@ -953,7 +953,7 @@ components:
           type: string
         stage:
           type: string
-          enum: [stage_a, stage_b, stage_c, stage_d]
+          description: Admin-defined stage key.
         label:
           type: string
         confidence:
@@ -1030,7 +1030,11 @@ components:
       properties:
         stage:
           type: string
-          enum: [stage_a, stage_b, stage_c, stage_d]
+          description: Admin-defined stage key.
+        position:
+          type: integer
+          minimum: 1
+          description: Execution order configured by admin.
         template:
           type: string
         model:

@@ -33,14 +33,14 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 	for _, payload := range []map[string]any{
 		{
 			"runId":           "run-1",
-			"stage":           "stage_a",
+			"stage":           "detector",
 			"label":           "cs_detected",
 			"confidence":      0.94,
 			"promptVersionId": "prompt-a",
 		},
 		{
 			"runId":           "run-1",
-			"stage":           "stage_b",
+			"stage":           "ranked_mode",
 			"label":           "competitive",
 			"confidence":      0.77,
 			"promptVersionId": "prompt-b",
@@ -71,7 +71,7 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 	if got["state"] != "active" {
 		t.Fatalf("expected active state, got %#v", got)
 	}
-	if got["currentStage"] != "stage_b" || got["currentLabel"] != "competitive" {
+	if got["currentStage"] != "ranked_mode" || got["currentLabel"] != "competitive" {
 		t.Fatalf("expected latest decision to drive current status, got %#v", got)
 	}
 	if got["detectedGameKey"] != "counter_strike" {

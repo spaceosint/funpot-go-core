@@ -22,13 +22,14 @@ type ChunkRef struct {
 	Reference string
 }
 
-type StageARequest struct {
+type StageRequest struct {
 	StreamerID string
+	Stage      string
 	Chunk      ChunkRef
 	Prompt     prompts.PromptVersion
 }
 
-type StageAClassification struct {
+type StageClassification struct {
 	Label       string
 	Confidence  float64
 	RawResponse string
@@ -41,12 +42,12 @@ type StreamCapture interface {
 	Capture(ctx context.Context, streamerID string) (ChunkRef, error)
 }
 
-type StageAClassifier interface {
-	Classify(ctx context.Context, input StageARequest) (StageAClassification, error)
+type StageClassifier interface {
+	Classify(ctx context.Context, input StageRequest) (StageClassification, error)
 }
 
 type PromptResolver interface {
-	GetActiveByStage(ctx context.Context, stage string) (prompts.PromptVersion, error)
+	ListActive(ctx context.Context) []prompts.PromptVersion
 }
 
 type RunStore interface {
@@ -64,7 +65,7 @@ type Locker interface {
 
 type Worker struct {
 	capture       StreamCapture
-	classifier    StageAClassifier
+	classifier    StageClassifier
 	prompts       PromptResolver
 	runs          RunStore
 	decisions     DecisionStore
@@ -78,23 +79,14 @@ type WorkerConfig struct {
 	MinConfidence float64
 }
 
-func NewWorker(capture StreamCapture, classifier StageAClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
+func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
 	if cfg.LockTTL <= 0 {
 		cfg.LockTTL = 30 * time.Second
 	}
 	if cfg.MinConfidence < 0 || cfg.MinConfidence > 1 {
 		cfg.MinConfidence = 0.5
 	}
-	return &Worker{
-		capture:       capture,
-		classifier:    classifier,
-		prompts:       promptResolver,
-		runs:          runs,
-		decisions:     decisions,
-		locker:        locker,
-		lockTTL:       cfg.LockTTL,
-		minConfidence: cfg.MinConfidence,
-	}
+	return &Worker{capture: capture, classifier: classifier, prompts: promptResolver, runs: runs, decisions: decisions, locker: locker, lockTTL: cfg.LockTTL, minConfidence: cfg.MinConfidence}
 }
 
 func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (streamers.LLMDecision, error) {
@@ -102,7 +94,6 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	if id == "" {
 		return streamers.LLMDecision{}, ErrStreamerIDRequired
 	}
-
 	lockKey := fmt.Sprintf("stream-capture:%s", id)
 	if !w.locker.TryLock(lockKey, w.lockTTL) {
 		return streamers.LLMDecision{}, ErrStreamerBusy
@@ -113,37 +104,41 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
-
-	activePrompt, err := w.prompts.GetActiveByStage(ctx, prompts.StageA)
-	if err != nil {
-		return streamers.LLMDecision{}, err
+	activePrompts := w.prompts.ListActive(ctx)
+	if len(activePrompts) == 0 {
+		return streamers.LLMDecision{}, prompts.ErrNotFound
 	}
-
 	chunk, err := w.capture.Capture(ctx, id)
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
 	defer cleanupChunkRef(chunk.Reference)
 
-	result, err := w.classifier.Classify(ctx, StageARequest{StreamerID: id, Chunk: chunk, Prompt: activePrompt})
+	var lastDecision streamers.LLMDecision
+	for _, activePrompt := range activePrompts {
+		decision, err := w.processStage(ctx, runID, id, chunk, activePrompt)
+		if err != nil {
+			return streamers.LLMDecision{}, err
+		}
+		lastDecision = decision
+	}
+	return lastDecision, nil
+}
+
+func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
+	result, err := w.classifier.Classify(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt})
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
-
-	label := NormalizeStageALabel(result.Label)
-	minConfidence := w.minConfidence
-	if activePrompt.MinConfidence > 0 {
-		minConfidence = activePrompt.MinConfidence
+	label := strings.TrimSpace(result.Label)
+	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
+		label = "uncertain"
 	}
-	if result.Confidence < minConfidence {
-		label = StageALabelUncertain
-	}
-
 	return w.decisions.RecordLLMDecision(ctx, streamers.RecordDecisionRequest{
 		RunID:           runID,
-		StreamerID:      id,
-		Stage:           prompts.StageA,
-		Label:           string(label),
+		StreamerID:      streamerID,
+		Stage:           activePrompt.Stage,
+		Label:           label,
 		Confidence:      result.Confidence,
 		PromptVersionID: activePrompt.ID,
 		PromptText:      activePrompt.Template,
@@ -159,12 +154,16 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	})
 }
 
+func effectiveConfidenceThreshold(defaultValue, promptValue float64) float64 {
+	if promptValue > 0 {
+		return promptValue
+	}
+	return defaultValue
+}
+
 func cleanupChunkRef(ref string) {
 	path := strings.TrimSpace(ref)
-	if path == "" {
-		return
-	}
-	if strings.Contains(path, "://") {
+	if path == "" || strings.Contains(path, "://") {
 		return
 	}
 	if ext := strings.ToLower(filepath.Ext(path)); ext == "" {

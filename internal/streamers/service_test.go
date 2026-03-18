@@ -85,7 +85,7 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	svc.nowFn = func() time.Time { return now }
 
-	_, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_a", Label: "yes", Confidence: 0.9})
+	_, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "detector", Label: "yes", Confidence: 0.9})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	second, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{
 		RunID:           "run-1",
 		StreamerID:      "str-1",
-		Stage:           "stage_b",
+		Stage:           "ranked_mode",
 		Label:           "competitive",
 		Confidence:      0.8,
 		PromptVersionID: "prompt-2",
@@ -129,11 +129,11 @@ func TestRecordLLMDecisionValidation(t *testing.T) {
 		name string
 		req  RecordDecisionRequest
 	}{
-		{name: "missing streamer", req: RecordDecisionRequest{RunID: "run-1", Stage: "stage_a", Label: "yes", Confidence: 0.9}},
-		{name: "missing run", req: RecordDecisionRequest{StreamerID: "str-1", Stage: "stage_a", Label: "yes", Confidence: 0.9}},
-		{name: "invalid stage", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "bad", Label: "yes", Confidence: 0.9}},
-		{name: "missing label", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_a", Confidence: 0.9}},
-		{name: "invalid confidence", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_a", Label: "yes", Confidence: 1.9}},
+		{name: "missing streamer", req: RecordDecisionRequest{RunID: "run-1", Stage: "detector", Label: "yes", Confidence: 0.9}},
+		{name: "missing run", req: RecordDecisionRequest{StreamerID: "str-1", Stage: "detector", Label: "yes", Confidence: 0.9}},
+		{name: "missing stage", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "   ", Label: "yes", Confidence: 0.9}},
+		{name: "missing label", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "detector", Confidence: 0.9}},
+		{name: "invalid confidence", req: RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "detector", Label: "yes", Confidence: 1.9}},
 	}
 
 	for _, tt := range tests {
@@ -151,15 +151,15 @@ func TestGetLLMStatusAggregatesLatestStageSnapshots(t *testing.T) {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	svc.nowFn = func() time.Time { return now }
 
-	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_a", Label: "cs_detected", Confidence: 0.9}); err != nil {
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "detector", Label: "cs_detected", Confidence: 0.9}); err != nil {
 		t.Fatalf("unexpected error recording stage_a: %v", err)
 	}
 	now = now.Add(time.Second)
-	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "stage_b", Label: "competitive", Confidence: 0.8}); err != nil {
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "ranked_mode", Label: "competitive", Confidence: 0.8}); err != nil {
 		t.Fatalf("unexpected error recording stage_b: %v", err)
 	}
 	now = now.Add(time.Second)
-	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-2", StreamerID: "str-1", Stage: "stage_a", Label: "uncertain", Confidence: 0.4}); err != nil {
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-2", StreamerID: "str-1", Stage: "detector", Label: "uncertain", Confidence: 0.4}); err != nil {
 		t.Fatalf("unexpected error recording second stage_a: %v", err)
 	}
 
@@ -167,7 +167,7 @@ func TestGetLLMStatusAggregatesLatestStageSnapshots(t *testing.T) {
 	if status.State != "active" {
 		t.Fatalf("expected active state, got %#v", status)
 	}
-	if status.CurrentRunID != "run-2" || status.CurrentStage != "stage_a" || status.CurrentLabel != "uncertain" {
+	if status.CurrentRunID != "run-2" || status.CurrentStage != "detector" || status.CurrentLabel != "uncertain" {
 		t.Fatalf("unexpected current status: %#v", status)
 	}
 	if status.DetectedGameKey != "counter_strike" {
@@ -176,7 +176,21 @@ func TestGetLLMStatusAggregatesLatestStageSnapshots(t *testing.T) {
 	if len(status.LatestByStage) != 2 {
 		t.Fatalf("expected two stage snapshots, got %#v", status.LatestByStage)
 	}
-	if status.LatestByStage[0].Stage != "stage_a" || status.LatestByStage[1].Stage != "stage_b" {
+	if status.LatestByStage[0].Stage != "detector" || status.LatestByStage[1].Stage != "ranked_mode" {
 		t.Fatalf("expected snapshots ordered by stage, got %#v", status.LatestByStage)
+	}
+}
+
+func TestRecordLLMDecisionAllowsCustomStageAndStatusIncludesIt(t *testing.T) {
+	svc := NewService()
+	if _, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{RunID: "run-1", StreamerID: "str-1", Stage: "ranked_mode", Label: "competitive", Confidence: 0.9}); err != nil {
+		t.Fatalf("RecordLLMDecision() error = %v", err)
+	}
+	status := svc.GetLLMStatus(context.Background(), "str-1")
+	if len(status.LatestByStage) != 1 {
+		t.Fatalf("len(LatestByStage) = %d, want 1", len(status.LatestByStage))
+	}
+	if status.LatestByStage[0].Stage != "ranked_mode" {
+		t.Fatalf("stage = %q, want ranked_mode", status.LatestByStage[0].Stage)
 	}
 }
