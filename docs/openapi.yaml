@@ -193,6 +193,26 @@ paths:
                 $ref: '#/components/schemas/LLMStatus'
         default:
           $ref: '#/components/responses/Error'
+  /api/streamers/{streamerId}/tracking:
+    delete:
+      summary: Stop streamer analysis tracking
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Updated streamer tracking status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMStatus'
+        default:
+          $ref: '#/components/responses/Error'
   /api/streamers/{streamerId}/llm-decisions:
     get:
       summary: List latest LLM stage decisions for streamer

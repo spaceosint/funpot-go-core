@@ -46,19 +46,21 @@ type analysisState struct {
 }
 
 type Service struct {
-	logger         *zap.Logger
-	mu             sync.RWMutex
-	items          []Streamer
-	decisionRepo   DecisionRepository
-	analysis       map[string]analysisState
-	validator      TwitchValidator
-	rateLimitMu    sync.Mutex
-	rateLimitByKey map[string]submissionLimit
-	nowFn          func() time.Time
-	counterMu      sync.Mutex
-	counter        int64
-	onSubmittedMu  sync.RWMutex
-	onSubmitted    func(context.Context, string) error
+	logger           *zap.Logger
+	mu               sync.RWMutex
+	items            []Streamer
+	decisionRepo     DecisionRepository
+	analysis         map[string]analysisState
+	validator        TwitchValidator
+	rateLimitMu      sync.Mutex
+	rateLimitByKey   map[string]submissionLimit
+	nowFn            func() time.Time
+	counterMu        sync.Mutex
+	counter          int64
+	onSubmittedMu    sync.RWMutex
+	onSubmitted      func(context.Context, string) error
+	onTrackingStopMu sync.RWMutex
+	onTrackingStop   func(context.Context, string) error
 }
 
 func NewService() *Service {
@@ -112,6 +114,18 @@ func (s *Service) submissionHook() func(context.Context, string) error {
 	s.onSubmittedMu.RLock()
 	defer s.onSubmittedMu.RUnlock()
 	return s.onSubmitted
+}
+
+func (s *Service) SetTrackingStopHook(hook func(context.Context, string) error) {
+	s.onTrackingStopMu.Lock()
+	s.onTrackingStop = hook
+	s.onTrackingStopMu.Unlock()
+}
+
+func (s *Service) trackingStopHook() func(context.Context, string) error {
+	s.onTrackingStopMu.RLock()
+	defer s.onTrackingStopMu.RUnlock()
+	return s.onTrackingStop
 }
 
 func (s *Service) List(_ context.Context, query, status string, page int) []Streamer {
@@ -238,6 +252,35 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 
 	logger.Info("streamer submission completed", zap.String("streamerID", id), zap.String("status", "pending"))
 	return Submission{ID: id, Status: "pending", Reason: nil}, nil
+}
+
+func (s *Service) StopTracking(ctx context.Context, streamerID string) error {
+	id := strings.TrimSpace(streamerID)
+	if id == "" {
+		return ErrNotFound
+	}
+
+	s.mu.RLock()
+	exists := false
+	for _, item := range s.items {
+		if item.ID == id {
+			exists = true
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if !exists {
+		return ErrNotFound
+	}
+
+	if hook := s.trackingStopHook(); hook != nil {
+		if err := hook(ctx, id); err != nil {
+			return err
+		}
+	}
+
+	s.MarkAnalysisInactive(id)
+	return nil
 }
 
 func (s *Service) RecordLLMDecision(ctx context.Context, req RecordDecisionRequest) (LLMDecision, error) {
@@ -367,9 +410,15 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 			items = loaded
 		}
 	}
-	if ok && state.active {
-		status.State = "active"
+	if ok {
 		status.UpdatedAt = state.updatedAt
+		if state.active {
+			if status.State != "stopped" {
+				status.State = "active"
+			}
+		} else {
+			status.State = "stopped"
+		}
 	}
 	if len(items) == 0 {
 		return status
@@ -380,8 +429,10 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 	status.CurrentStage = latest.Stage
 	status.CurrentLabel = latest.Label
 	status.CurrentConfidence = latest.Confidence
-	status.UpdatedAt = latest.CreatedAt
-	status.State = "active"
+	if status.State != "stopped" {
+		status.UpdatedAt = latest.CreatedAt
+		status.State = "active"
+	}
 	status.DetectedGameKey = inferDetectedGameKey(items)
 
 	orderedStages := make([]string, 0)
