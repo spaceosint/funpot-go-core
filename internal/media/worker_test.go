@@ -72,6 +72,10 @@ type fakeDecisionStore struct {
 	items []streamers.RecordDecisionRequest
 }
 
+type countingRunStore struct {
+	count int
+}
+
 type flakyCapture struct {
 	failures int
 	calls    int
@@ -106,6 +110,11 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
 	s.items = append(s.items, req)
 	return streamers.LLMDecision{RunID: req.RunID, StreamerID: req.StreamerID, Stage: req.Stage, Label: req.Label, Confidence: req.Confidence}, nil
+}
+
+func (s *countingRunStore) CreateRun(_ context.Context, streamerID string) (string, error) {
+	s.count++
+	return streamerID + "-run", nil
 }
 
 func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
@@ -226,7 +235,8 @@ func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
 }
 
 func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
-	worker := NewWorker(fakeCapture{err: ErrStreamlinkAdBreak}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, nil, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	runStore := &countingRunStore{}
+	worker := NewWorker(fakeCapture{err: ErrStreamlinkAdBreak}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, nil, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 
 	got, err := worker.ProcessStreamer(context.Background(), "str-ads")
 	if err != nil {
@@ -234,6 +244,9 @@ func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
 	}
 	if got != (streamers.LLMDecision{}) {
 		t.Fatalf("expected zero decision on ad break, got %#v", got)
+	}
+	if runStore.count != 0 {
+		t.Fatalf("expected ad break to skip run creation, got %d runs", runStore.count)
 	}
 }
 
