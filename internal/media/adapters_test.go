@@ -64,6 +64,9 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	if runner.lastName != "streamlink-bin" {
 		t.Fatalf("runner binary = %q", runner.lastName)
 	}
+	if got := runner.lastArgs[len(runner.lastArgs)-1]; got != defaultPreferredStreamQuality {
+		t.Fatalf("runner quality = %q, want %q", got, defaultPreferredStreamQuality)
+	}
 	joined := strings.Join(runner.lastArgs, " ")
 	if !strings.Contains(joined, "https://twitch.tv/shroud") {
 		t.Fatalf("expected resolved channel in args, got %q", joined)
@@ -101,6 +104,7 @@ func TestStreamlinkCaptureAdapterFailsWithoutBytes(t *testing.T) {
 }
 
 func TestStreamlinkCaptureAdapterReturnsAdBreakErrorWhenAdsPauseOutput(t *testing.T) {
+	outDir := t.TempDir()
 	runner := &fakeCommandRunner{
 		err: errors.New("signal: killed"),
 		stderrOutput: strings.Join([]string{
@@ -110,10 +114,28 @@ func TestStreamlinkCaptureAdapterReturnsAdBreakErrorWhenAdsPauseOutput(t *testin
 			"[stream.hls][info] Filtering out segments and pausing stream output",
 		}, "\n"),
 	}
-	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: t.TempDir()}, nil, runner)
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: outDir}, nil, runner)
 
 	_, err := adapter.Capture(context.Background(), "str_ads")
 	if !errors.Is(err, ErrStreamlinkAdBreak) {
 		t.Fatalf("expected ErrStreamlinkAdBreak, got %v", err)
+	}
+	files, readErr := os.ReadDir(filepath.Join(outDir, "str_ads"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir() error = %v", readErr)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected ad-break empty chunk to be removed, found %d files", len(files))
+	}
+}
+
+func TestNormalizeStreamlinkQualityPrefersNear720p(t *testing.T) {
+	for _, input := range []string{"", "best", " BEST "} {
+		if got := normalizeStreamlinkQuality(input); got != defaultPreferredStreamQuality {
+			t.Fatalf("normalizeStreamlinkQuality(%q) = %q, want %q", input, got, defaultPreferredStreamQuality)
+		}
+	}
+	if got := normalizeStreamlinkQuality("480p"); got != "480p" {
+		t.Fatalf("normalizeStreamlinkQuality(custom) = %q, want 480p", got)
 	}
 }

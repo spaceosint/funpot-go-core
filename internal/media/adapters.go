@@ -25,10 +25,13 @@ var streamlinkSafeTokenPattern = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 var streamlinkAdBreakMarkers = []string{
 	"waiting for pre-roll ads to finish",
+	"waiting for mid-roll ads to finish",
 	"detected advertisement break",
 	"filtering out segments and pausing stream output",
 	"will skip ad segments",
 }
+
+const defaultPreferredStreamQuality = "720p60,720p,936p60,936p,648p60,648p,480p,1080p60,1080p,best"
 
 type StreamlinkChannelResolver interface {
 	ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error)
@@ -69,9 +72,7 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 	if strings.TrimSpace(cfg.BinaryPath) == "" {
 		cfg.BinaryPath = "streamlink"
 	}
-	if strings.TrimSpace(cfg.Quality) == "" {
-		cfg.Quality = "best"
-	}
+	cfg.Quality = normalizeStreamlinkQuality(cfg.Quality)
 	if cfg.CaptureTimeout <= 0 {
 		cfg.CaptureTimeout = 12 * time.Second
 	}
@@ -154,6 +155,7 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	}
 	if stat.Size() <= 0 {
 		trimmedStderr := strings.TrimSpace(stderr.String())
+		_ = os.Remove(chunkPath)
 		if isStreamlinkAdBreak(trimmedStderr) {
 			logger.Info("stream capture paused by ad break", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", trimmedStderr), zap.Error(runErr))
 			if runErr != nil {
@@ -187,6 +189,14 @@ func sanitizeToken(value string) string {
 		return "unknown"
 	}
 	return replaced
+}
+
+func normalizeStreamlinkQuality(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.EqualFold(trimmed, "best") {
+		return defaultPreferredStreamQuality
+	}
+	return trimmed
 }
 
 // PromptedStageClassifier is a deterministic baseline classifier that accepts
