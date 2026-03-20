@@ -61,7 +61,7 @@ func TestResolveStreamlinkChannel(t *testing.T) {
 	}
 }
 
-func TestMarkAnalysisInactiveResetsIdleStatusWithoutDecisions(t *testing.T) {
+func TestMarkAnalysisInactiveMarksStoppedStatusWithoutDecisions(t *testing.T) {
 	svc := NewService()
 	result, err := svc.Submit(context.Background(), "stream_name", "user-1")
 	if err != nil {
@@ -71,7 +71,7 @@ func TestMarkAnalysisInactiveResetsIdleStatusWithoutDecisions(t *testing.T) {
 	svc.MarkAnalysisInactive(result.ID)
 
 	status := svc.GetLLMStatus(context.Background(), result.ID)
-	if status.State != "idle" {
-		t.Fatalf("expected idle status after deactivation, got %q", status.State)
+	if status.State != "stopped" {
+		t.Fatalf("expected stopped status after deactivation, got %q", status.State)
 	}
 }
