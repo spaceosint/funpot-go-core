@@ -298,7 +298,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	streamlinkCaptureTimeout, err := getDuration("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", 12*time.Second)
+	streamlinkCaptureTimeout, err := getDuration("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", 25*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
