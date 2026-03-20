@@ -129,6 +129,30 @@ func TestStreamlinkCaptureAdapterReturnsAdBreakErrorWhenAdsPauseOutput(t *testin
 	}
 }
 
+func TestStreamlinkCaptureAdapterReturnsStreamEndedErrorWhenNoPlayableStreamsRemain(t *testing.T) {
+	outDir := t.TempDir()
+	runner := &fakeCommandRunner{
+		err: errors.New("exit status 1"),
+		stderrOutput: strings.Join([]string{
+			"[cli][info] Found matching plugin twitch for URL https://twitch.tv/donacs",
+			"error: No playable streams found on this URL: https://twitch.tv/donacs",
+		}, "\n"),
+	}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: outDir}, nil, runner)
+
+	_, err := adapter.Capture(context.Background(), "str_offline")
+	if !errors.Is(err, ErrStreamlinkStreamEnded) {
+		t.Fatalf("expected ErrStreamlinkStreamEnded, got %v", err)
+	}
+	files, readErr := os.ReadDir(filepath.Join(outDir, "str_offline"))
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatalf("ReadDir() error = %v", readErr)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected offline empty chunk to be removed, found %d files", len(files))
+	}
+}
+
 func TestNormalizeStreamlinkQualityPrefersNear720p(t *testing.T) {
 	for _, input := range []string{"", "best", " BEST "} {
 		if got := normalizeStreamlinkQuality(input); got != defaultPreferredStreamQuality {

@@ -19,6 +19,7 @@ var (
 	ErrStreamlinkNoData         = errors.New("streamlink capture produced no data")
 	ErrStreamlinkChannelResolve = errors.New("failed to resolve streamlink channel")
 	ErrStreamlinkAdBreak        = errors.New("streamlink capture paused by ad break")
+	ErrStreamlinkStreamEnded    = errors.New("streamlink capture ended because stream is unavailable")
 )
 
 var streamlinkSafeTokenPattern = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
@@ -29,6 +30,12 @@ var streamlinkAdBreakMarkers = []string{
 	"detected advertisement break",
 	"filtering out segments and pausing stream output",
 	"will skip ad segments",
+}
+
+var streamlinkEndedMarkers = []string{
+	"no playable streams found on this url",
+	"this stream is unavailable",
+	"could not open stream",
 }
 
 const defaultPreferredStreamQuality = "720p60,720p,936p60,936p,648p60,648p,480p,1080p60,1080p,best"
@@ -163,6 +170,13 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 			}
 			return ChunkRef{}, fmt.Errorf("%w (stderr=%s)", ErrStreamlinkAdBreak, trimmedStderr)
 		}
+		if isStreamlinkEnded(trimmedStderr) {
+			logger.Info("stream capture skipped because stream is unavailable", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", trimmedStderr), zap.Error(runErr))
+			if runErr != nil {
+				return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkStreamEnded, runErr, trimmedStderr)
+			}
+			return ChunkRef{}, fmt.Errorf("%w (stderr=%s)", ErrStreamlinkStreamEnded, trimmedStderr)
+		}
 		logger.Warn("stream capture produced empty chunk", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.String("stderr", trimmedStderr), zap.Error(runErr))
 		if runErr != nil {
 			return ChunkRef{}, fmt.Errorf("%w: %v (stderr=%s)", ErrStreamlinkNoData, runErr, trimmedStderr)
@@ -216,6 +230,19 @@ func isStreamlinkAdBreak(stderr string) bool {
 		return false
 	}
 	for _, marker := range streamlinkAdBreakMarkers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isStreamlinkEnded(stderr string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(stderr))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range streamlinkEndedMarkers {
 		if strings.Contains(normalized, marker) {
 			return true
 		}
