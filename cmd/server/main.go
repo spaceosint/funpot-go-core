@@ -190,6 +190,7 @@ func main() {
 		streamersService,
 		gamesService,
 		promptsService,
+		scenariosService,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
 	)

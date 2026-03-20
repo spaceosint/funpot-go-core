@@ -26,6 +26,7 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		ClientConfigResponse{},
 	)
 
@@ -92,6 +93,7 @@ func TestStreamerStatusReturnsIdleWhenNoDecisionsYet(t *testing.T) {
 		admin.NewService([]string{"admin-1"}),
 		nil,
 		streamers.NewService(),
+		nil,
 		nil,
 		nil,
 		nil,
