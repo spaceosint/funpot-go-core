@@ -112,6 +112,9 @@ func main() {
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
 	scenariosService := prompts.NewScenarioService()
+	if db != nil {
+		scenariosService = prompts.NewPostgresScenarioService(db)
+	}
 	eventsService := events.NewService(nil)
 
 	streamCapture := buildStreamCapture(cfg, streamersService)
