@@ -164,14 +164,6 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		logger.Info("streamer processing lock released", zap.String("streamerID", id), zap.String("lockKey", lockKey))
 	}()
 
-	runID, err := w.runs.CreateRun(ctx, id)
-	if err != nil {
-		logger.Error("failed to create analysis run", zap.String("streamerID", id), zap.Error(err))
-		w.metrics.recordFailure(ctx, id, "create_run")
-		w.metrics.recordCycle(ctx, id, "failed")
-		return streamers.LLMDecision{}, err
-	}
-	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 	chunk, err := w.captureWithRetry(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrStreamlinkAdBreak) {
@@ -186,6 +178,15 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	}
 	logger.Info("stream chunk captured", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference))
 	defer cleanupChunkRef(chunk.Reference)
+
+	runID, err := w.runs.CreateRun(ctx, id)
+	if err != nil {
+		logger.Error("failed to create analysis run", zap.String("streamerID", id), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "create_run")
+		w.metrics.recordCycle(ctx, id, "failed")
+		return streamers.LLMDecision{}, err
+	}
+	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 
 	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk)
 	if err != nil {
