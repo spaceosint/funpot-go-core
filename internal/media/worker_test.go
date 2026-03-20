@@ -250,6 +250,22 @@ func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
 	}
 }
 
+func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) {
+	runStore := &countingRunStore{}
+	worker := NewWorker(fakeCapture{err: ErrStreamlinkStreamEnded}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, nil, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-ended")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got != (streamers.LLMDecision{}) {
+		t.Fatalf("expected zero decision on ended stream, got %#v", got)
+	}
+	if runStore.count != 0 {
+		t.Fatalf("expected ended stream to skip run creation, got %d runs", runStore.count)
+	}
+}
+
 func TestWorkerProcessStreamerRunsGlobalDetectorAndScenarioSteps(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	scenario := prompts.ScenarioVersion{

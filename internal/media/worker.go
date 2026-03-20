@@ -171,6 +171,11 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 			w.metrics.recordCycle(ctx, id, "ad_break")
 			return streamers.LLMDecision{}, nil
 		}
+		if errors.Is(err, ErrStreamlinkStreamEnded) {
+			logger.Info("stream chunk capture skipped because stream has ended or is unavailable", zap.String("streamerID", id), zap.Error(err))
+			w.metrics.recordCycle(ctx, id, "stream_unavailable")
+			return streamers.LLMDecision{}, nil
+		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "capture")
 		w.metrics.recordCycle(ctx, id, "failed")
