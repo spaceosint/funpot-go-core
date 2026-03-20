@@ -165,6 +165,10 @@ type ClientConfig struct {
 	VotePerMin int
 }
 
+func defaultStreamlinkQuality() string {
+	return "720p60,720p,936p60,936p,648p60,648p,480p,1080p60,1080p,best"
+}
+
 // Load reads configuration from the environment, applying defaults and .env overrides.
 func Load() (Config, error) {
 	_ = godotenv.Load()
@@ -416,7 +420,7 @@ func Load() (Config, error) {
 		Streamlink: StreamlinkConfig{
 			Enabled:        streamlinkEnabled,
 			BinaryPath:     getString("FUNPOT_STREAMLINK_BINARY", "streamlink"),
-			Quality:        getString("FUNPOT_STREAMLINK_QUALITY", "best"),
+			Quality:        getString("FUNPOT_STREAMLINK_QUALITY", defaultStreamlinkQuality()),
 			CaptureTimeout: streamlinkCaptureTimeout,
 			OutputDir:      getString("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/stream_chunks"),
 			URLTemplate:    getString("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s"),
