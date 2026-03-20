@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -55,8 +56,6 @@ type Service struct {
 	rateLimitMu      sync.Mutex
 	rateLimitByKey   map[string]submissionLimit
 	nowFn            func() time.Time
-	counterMu        sync.Mutex
-	counter          int64
 	onSubmittedMu    sync.RWMutex
 	onSubmitted      func(context.Context, string) error
 	onTrackingStopMu sync.RWMutex
@@ -304,13 +303,8 @@ func (s *Service) RecordLLMDecision(ctx context.Context, req RecordDecisionReque
 		return LLMDecision{}, errors.New("confidence must be between 0 and 1")
 	}
 
-	s.counterMu.Lock()
-	s.counter++
-	id := fmt.Sprintf("llm_%d", s.counter)
-	s.counterMu.Unlock()
-
 	item := LLMDecision{
-		ID:                 id,
+		ID:                 "llm_" + uuid.NewString(),
 		RunID:              runID,
 		StreamerID:         streamerID,
 		Stage:              stage,

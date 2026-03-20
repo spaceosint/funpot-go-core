@@ -128,6 +128,42 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 || items[0].RequestRef == "" || items[0].TransitionToStep != "wait_for_result" {
 		t.Fatalf("expected metadata to be persisted, got %#v", items[0])
 	}
+	if items[0].ID == "" || items[0].ID[:4] != "llm_" {
+		t.Fatalf("expected generated llm id, got %q", items[0].ID)
+	}
+}
+
+func TestRecordLLMDecisionGeneratesUniqueIDs(t *testing.T) {
+	svc := NewService()
+
+	first, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{
+		RunID:      "run-1",
+		StreamerID: "str-1",
+		Stage:      "detector",
+		Label:      "counter_strike",
+		Confidence: 0.95,
+	})
+	if err != nil {
+		t.Fatalf("first RecordLLMDecision() error = %v", err)
+	}
+
+	second, err := svc.RecordLLMDecision(context.Background(), RecordDecisionRequest{
+		RunID:      "run-2",
+		StreamerID: "str-1",
+		Stage:      "detector",
+		Label:      "valorant",
+		Confidence: 0.91,
+	})
+	if err != nil {
+		t.Fatalf("second RecordLLMDecision() error = %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected unique ids, got %q and %q", first.ID, second.ID)
+	}
+	if first.ID == "" || second.ID == "" || first.ID[:4] != "llm_" || second.ID[:4] != "llm_" {
+		t.Fatalf("expected llm-prefixed ids, got %q and %q", first.ID, second.ID)
+	}
 }
 
 func TestRecordLLMDecisionValidation(t *testing.T) {
