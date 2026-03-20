@@ -166,7 +166,7 @@ type ClientConfig struct {
 }
 
 func defaultStreamlinkQuality() string {
-	return "720p60,720p,936p60,936p,648p60,648p,480p,1080p60,1080p,best"
+	return "1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best"
 }
 
 // Load reads configuration from the environment, applying defaults and .env overrides.

@@ -164,7 +164,7 @@ func TestStreamlinkCaptureAdapterReturnsStreamEndedErrorWhenNoPlayableStreamsRem
 	}
 }
 
-func TestNormalizeStreamlinkQualityPrefersNear720p(t *testing.T) {
+func TestNormalizeStreamlinkQualityPrefers1080p(t *testing.T) {
 	for _, input := range []string{"", "best", " BEST "} {
 		if got := normalizeStreamlinkQuality(input); got != defaultPreferredStreamQuality {
 			t.Fatalf("normalizeStreamlinkQuality(%q) = %q, want %q", input, got, defaultPreferredStreamQuality)
