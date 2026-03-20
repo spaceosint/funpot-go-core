@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -114,5 +115,57 @@ func TestStreamerStatusReturnsIdleWhenNoDecisionsYet(t *testing.T) {
 	}
 	if got["state"] != "idle" {
 		t.Fatalf("expected idle state, got %#v", got)
+	}
+}
+
+func TestStreamerTrackingDeleteStopsMonitoring(t *testing.T) {
+	streamersService := streamers.NewService()
+	if _, err := streamersService.Submit(context.Background(), "stopstreamer", "user-1"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	items := streamersService.List(context.Background(), "stopstreamer", "pending", 1)
+	if len(items) != 1 {
+		t.Fatalf("expected one streamer, got %d", len(items))
+	}
+
+	stoppedID := ""
+	streamersService.SetTrackingStopHook(func(_ context.Context, streamerID string) error {
+		stoppedID = streamerID
+		return nil
+	})
+	streamersService.MarkAnalysisActive(items[0].ID)
+
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		nil,
+		streamersService,
+		nil,
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/streamers/"+items[0].ID+"/tracking", nil)
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if stoppedID != items[0].ID {
+		t.Fatalf("expected stop hook for %q, got %q", items[0].ID, stoppedID)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if got["state"] != "stopped" {
+		t.Fatalf("expected stopped state, got %#v", got)
 	}
 }

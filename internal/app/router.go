@@ -482,6 +482,21 @@ func NewHandler(
 						return
 					}
 					writeJSON(w, http.StatusOK, streamersService.GetLLMStatus(r.Context(), streamerID))
+				case "tracking":
+					if r.Method != http.MethodDelete {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					if err := streamersService.StopTracking(r.Context(), streamerID); err != nil {
+						if errors.Is(err, streamers.ErrNotFound) {
+							writeError(w, http.StatusNotFound, err.Error())
+							return
+						}
+						logger.Error("failed to stop streamer tracking", zap.String("streamerID", streamerID), zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to stop streamer tracking")
+						return
+					}
+					writeJSON(w, http.StatusOK, streamersService.GetLLMStatus(r.Context(), streamerID))
 				case "llm-decisions":
 					switch r.Method {
 					case http.MethodGet:

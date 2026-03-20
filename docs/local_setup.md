@@ -156,6 +156,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/streamers` – submits a Twitch streamer nickname for moderation/validation, then immediately starts the per-streamer Streamlink analysis scheduler when background orchestration is configured.
 - When Streamlink reports that a Twitch URL has no playable streams (for example, the stream ended or is offline), the scheduler treats that cycle as a graceful skip instead of a hard worker failure and retries on the next 10-second window.
 - `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM detector/scenario status for a streamer.
+- `DELETE /api/streamers/{streamerId}/tracking` – stops the active Streamlink/LLM tracking loop for a streamer and returns the updated `stopped` status so the client can disable the tracking button immediately.
 - When PostgreSQL is enabled, detailed LLM decision history (`chunkRef`, prompt/runtime params, request/response refs, transition outcome) is persisted in `streamer_llm_decisions` so `/api/streamers/{streamerId}/llm-decisions` and `/status` survive service restarts. The API now bootstraps this table/index set on first access if migrations were missed, but versioned migrations remain the canonical deployment path.
 - `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent detector/scenario decision history for a streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.

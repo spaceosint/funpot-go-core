@@ -136,6 +136,10 @@ func main() {
 	streamersService.SetSubmissionHook(func(_ context.Context, streamerID string) error {
 		return streamScheduler.Start(streamerID)
 	})
+	streamersService.SetTrackingStopHook(func(_ context.Context, streamerID string) error {
+		streamScheduler.Stop(streamerID)
+		return nil
+	})
 
 	authService, err := auth.NewService(logger, cfg.Auth, userService)
 	if err != nil {
