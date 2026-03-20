@@ -50,7 +50,7 @@ func buildToken(t *testing.T, userID string) string {
 }
 
 func TestAdminGamesForbiddenForNonAdmin(t *testing.T) {
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, games.NewService(), nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, games.NewService(), nil, nil, nil, ClientConfigResponse{})
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/games", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
 	res := httptest.NewRecorder()
@@ -62,7 +62,7 @@ func TestAdminGamesForbiddenForNonAdmin(t *testing.T) {
 }
 
 func TestAdminGamesCreateAndList(t *testing.T) {
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, games.NewService(), nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, games.NewService(), nil, nil, nil, ClientConfigResponse{})
 	token := buildToken(t, "admin-1")
 
 	body, _ := json.Marshal(map[string]any{"slug": "cs2", "title": "Counter-Strike 2", "status": "draft"})

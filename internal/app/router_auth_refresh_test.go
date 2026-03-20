@@ -33,7 +33,7 @@ func TestAuthRefreshEndpointRotatesTokens(t *testing.T) {
 		t.Fatalf("store.Create() error = %v", err)
 	}
 
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, authService, nil, nil, nil, nil, nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, authService, nil, nil, nil, nil, nil, nil, nil, ClientConfigResponse{})
 	body, _ := json.Marshal(map[string]string{"refreshToken": refreshToken})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", bytes.NewReader(body))
 	res := httptest.NewRecorder()
@@ -72,7 +72,7 @@ func TestAuthLogoutAllEndpoint(t *testing.T) {
 		t.Fatalf("store.Create() error = %v", err)
 	}
 
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, authService, nil, nil, nil, nil, nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, authService, nil, nil, nil, nil, nil, nil, nil, ClientConfigResponse{})
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/logout-all", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
 	res := httptest.NewRecorder()

@@ -25,6 +25,7 @@ func TestAdminPromptsCreateListAndActivate(t *testing.T) {
 		nil,
 		prompts.NewService(),
 		nil,
+		nil,
 		ClientConfigResponse{},
 	)
 	token := buildToken(t, "admin-1")
@@ -93,6 +94,7 @@ func TestAdminPromptsForbiddenForNonAdmin(t *testing.T) {
 		nil,
 		nil,
 		prompts.NewService(),
+		nil,
 		nil,
 		ClientConfigResponse{},
 	)

@@ -27,6 +27,7 @@ func TestSubmitStreamerUsesTwitchNickname(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		ClientConfigResponse{},
 	)
 
@@ -59,6 +60,7 @@ func TestSubmitStreamerFallsBackToLegacyTwitchUsername(t *testing.T) {
 		admin.NewService([]string{"admin-1"}),
 		nil,
 		streamersService,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -100,6 +102,7 @@ func TestSubmitStreamerStartsAnalysisStatusWhenHookConfigured(t *testing.T) {
 		admin.NewService([]string{"admin-1"}),
 		nil,
 		streamersService,
+		nil,
 		nil,
 		nil,
 		nil,

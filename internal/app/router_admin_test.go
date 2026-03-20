@@ -20,7 +20,7 @@ func TestMeReturnsIsAdminTrueForAdmin(t *testing.T) {
 		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
 	}
 
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, nil, ClientConfigResponse{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
@@ -50,7 +50,7 @@ func TestMeReturnsIsAdminFalseForNonAdmin(t *testing.T) {
 		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
 	}
 
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, nil, ClientConfigResponse{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
@@ -74,7 +74,7 @@ func TestMeReturnsIsAdminFalseForNonAdmin(t *testing.T) {
 }
 
 func TestAdminMeEndpointRemovedFallsBackToRoot(t *testing.T) {
-	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, nil, nil, nil, ClientConfigResponse{})
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, nil, nil, nil, nil, nil, ClientConfigResponse{})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))

@@ -375,6 +375,234 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptVersion'
+  /api/admin/global-detectors:
+    get:
+      summary: List global detector prompts (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Global detector prompts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PromptTemplate'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create global detector prompt (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptCreateRequest'
+      responses:
+        '201':
+          description: Created global detector prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptTemplate'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/global-detectors/{detectorId}:
+    get:
+      summary: Get global detector prompt (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: detectorId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Global detector prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptTemplate'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update global detector prompt (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: detectorId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptCreateRequest'
+      responses:
+        '200':
+          description: Updated global detector prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptTemplate'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete global detector prompt (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: detectorId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Global detector deleted
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/global-detectors/{detectorId}/activate:
+    post:
+      summary: Activate global detector prompt (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: detectorId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activated global detector prompt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptTemplate'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/scenarios:
+    get:
+      summary: List scenarios (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Scenario versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScenarioVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create scenario (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioCreateRequest'
+      responses:
+        '201':
+          description: Created scenario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioVersion'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/scenarios/{scenarioId}:
+    get:
+      summary: Get scenario (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: scenarioId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Scenario version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update scenario (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: scenarioId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScenarioCreateRequest'
+      responses:
+        '200':
+          description: Updated scenario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete scenario (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: scenarioId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Scenario deleted
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/scenarios/{scenarioId}/activate:
+    post:
+      summary: Activate scenario (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: scenarioId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activated scenario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioVersion'
         default:
           $ref: '#/components/responses/Error'
   /api/events/live:
@@ -1112,6 +1340,147 @@ components:
               type: string
               format: date-time
               nullable: true
+    PromptTemplate:
+      allOf:
+        - $ref: '#/components/schemas/PromptCreateRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+            kind:
+              type: string
+            gameSlug:
+              type: string
+              nullable: true
+            version:
+              type: integer
+            isActive:
+              type: boolean
+            createdBy:
+              type: string
+            activatedBy:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+            activatedAt:
+              type: string
+              format: date-time
+              nullable: true
+    ScenarioStepRequest:
+      type: object
+      required: [code, title, promptTemplate, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      properties:
+        code:
+          type: string
+        title:
+          type: string
+        promptTemplate:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+        timeoutMs:
+          type: integer
+        retryCount:
+          type: integer
+        backoffMs:
+          type: integer
+        cooldownMs:
+          type: integer
+        minConfidence:
+          type: number
+    ScenarioTransitionRequest:
+      type: object
+      required: [fromStepCode, outcome]
+      properties:
+        fromStepCode:
+          type: string
+        outcome:
+          type: string
+        toStepCode:
+          type: string
+        terminal:
+          type: boolean
+    ScenarioCreateRequest:
+      type: object
+      required: [gameSlug, name, steps, transitions]
+      properties:
+        gameSlug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioStepRequest'
+        transitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioTransitionRequest'
+    ScenarioStep:
+      type: object
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+        title:
+          type: string
+        position:
+          type: integer
+        prompt:
+          $ref: '#/components/schemas/PromptTemplate'
+    ScenarioTransition:
+      type: object
+      properties:
+        id:
+          type: string
+        fromStepCode:
+          type: string
+        outcome:
+          type: string
+        toStepCode:
+          type: string
+        terminal:
+          type: boolean
+    ScenarioVersion:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioCreateRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+            version:
+              type: integer
+            isActive:
+              type: boolean
+            createdBy:
+              type: string
+            activatedBy:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+            activatedAt:
+              type: string
+              format: date-time
+              nullable: true
+            steps:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScenarioStep'
+            transitions:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScenarioTransition'
     LiveEvent:
       type: object
       properties:

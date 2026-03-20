@@ -55,6 +55,42 @@ func ConfigResponseFromConfig(cfg config.Config) ClientConfigResponse {
 	}
 }
 
+func scenarioRequestToCreateRequest(req scenarioCreateRequest, actorID string) prompts.CreateScenarioRequest {
+	steps := make([]prompts.ScenarioStepInput, 0, len(req.Steps))
+	for _, step := range req.Steps {
+		steps = append(steps, prompts.ScenarioStepInput{
+			Code:           step.Code,
+			Title:          step.Title,
+			PromptTemplate: step.PromptTemplate,
+			Model:          step.Model,
+			Temperature:    step.Temperature,
+			MaxTokens:      step.MaxTokens,
+			TimeoutMS:      step.TimeoutMS,
+			RetryCount:     step.RetryCount,
+			BackoffMS:      step.BackoffMS,
+			CooldownMS:     step.CooldownMS,
+			MinConfidence:  step.MinConfidence,
+		})
+	}
+	transitions := make([]prompts.ScenarioTransitionInput, 0, len(req.Transitions))
+	for _, transition := range req.Transitions {
+		transitions = append(transitions, prompts.ScenarioTransitionInput{
+			FromStepCode: transition.FromStepCode,
+			Outcome:      transition.Outcome,
+			ToStepCode:   transition.ToStepCode,
+			Terminal:     transition.Terminal,
+		})
+	}
+	return prompts.CreateScenarioRequest{
+		GameSlug:    req.GameSlug,
+		Name:        req.Name,
+		Description: req.Description,
+		ActorID:     actorID,
+		Steps:       steps,
+		Transitions: transitions,
+	}
+}
+
 type configLimits struct {
 	VotePerMin int `json:"votePerMin"`
 }
@@ -84,6 +120,35 @@ type promptCreateRequest struct {
 	BackoffMS     int     `json:"backoffMs"`
 	CooldownMS    int     `json:"cooldownMs"`
 	MinConfidence float64 `json:"minConfidence"`
+}
+
+type scenarioStepRequest struct {
+	Code           string  `json:"code"`
+	Title          string  `json:"title"`
+	PromptTemplate string  `json:"promptTemplate"`
+	Model          string  `json:"model"`
+	Temperature    float64 `json:"temperature"`
+	MaxTokens      int     `json:"maxTokens"`
+	TimeoutMS      int     `json:"timeoutMs"`
+	RetryCount     int     `json:"retryCount"`
+	BackoffMS      int     `json:"backoffMs"`
+	CooldownMS     int     `json:"cooldownMs"`
+	MinConfidence  float64 `json:"minConfidence"`
+}
+
+type scenarioTransitionRequest struct {
+	FromStepCode string `json:"fromStepCode"`
+	Outcome      string `json:"outcome"`
+	ToStepCode   string `json:"toStepCode"`
+	Terminal     bool   `json:"terminal"`
+}
+
+type scenarioCreateRequest struct {
+	GameSlug    string                      `json:"gameSlug"`
+	Name        string                      `json:"name"`
+	Description string                      `json:"description"`
+	Steps       []scenarioStepRequest       `json:"steps"`
+	Transitions []scenarioTransitionRequest `json:"transitions"`
 }
 
 type llmDecisionRecordRequest struct {
@@ -126,6 +191,7 @@ func NewHandler(
 	streamersService *streamers.Service,
 	gamesService *games.Service,
 	promptsService *prompts.Service,
+	scenariosService *prompts.ScenarioService,
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
 ) http.Handler {
@@ -709,6 +775,273 @@ func NewHandler(
 				}
 
 				writeJSON(w, http.StatusOK, updated)
+			})))
+		}
+
+		if scenariosService != nil {
+			mux.Handle("/api/admin/global-detectors", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, scenariosService.ListGlobalDetectors(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req promptCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := scenariosService.CreateGlobalDetector(r.Context(), prompts.CreateRequest{
+						Stage:         req.Stage,
+						Template:      req.Template,
+						Model:         req.Model,
+						Temperature:   req.Temperature,
+						MaxTokens:     req.MaxTokens,
+						TimeoutMS:     req.TimeoutMS,
+						RetryCount:    req.RetryCount,
+						BackoffMS:     req.BackoffMS,
+						CooldownMS:    req.CooldownMS,
+						MinConfidence: req.MinConfidence,
+						ActorID:       claims.Subject,
+					})
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/global-detectors/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.TrimPrefix(r.URL.Path, "/api/admin/global-detectors/")
+				path = strings.Trim(path, "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "detector id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					detectorID := strings.TrimSuffix(path, "/activate")
+					detectorID = strings.Trim(detectorID, "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := scenariosService.ActivateGlobalDetector(r.Context(), detectorID, claims.Subject)
+					if err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrDetectorNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+
+				switch r.Method {
+				case http.MethodGet:
+					item, err := scenariosService.GetGlobalDetector(r.Context(), path)
+					if err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrDetectorNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req promptCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := scenariosService.UpdateGlobalDetector(r.Context(), path, prompts.CreateRequest{
+						Stage:         req.Stage,
+						Template:      req.Template,
+						Model:         req.Model,
+						Temperature:   req.Temperature,
+						MaxTokens:     req.MaxTokens,
+						TimeoutMS:     req.TimeoutMS,
+						RetryCount:    req.RetryCount,
+						BackoffMS:     req.BackoffMS,
+						CooldownMS:    req.CooldownMS,
+						MinConfidence: req.MinConfidence,
+						ActorID:       claims.Subject,
+					})
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrDetectorNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := scenariosService.DeleteGlobalDetector(r.Context(), path); err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrDetectorNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/scenarios", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, scenariosService.ListScenarios(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req scenarioCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := scenariosService.CreateScenario(r.Context(), scenarioRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/scenarios/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.TrimPrefix(r.URL.Path, "/api/admin/scenarios/")
+				path = strings.Trim(path, "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "scenario id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					scenarioID := strings.TrimSuffix(path, "/activate")
+					scenarioID = strings.Trim(scenarioID, "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := scenariosService.ActivateScenario(r.Context(), scenarioID, claims.Subject)
+					if err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrScenarioNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					item, err := scenariosService.GetScenario(r.Context(), path)
+					if err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrScenarioNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req scenarioCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := scenariosService.UpdateScenario(r.Context(), path, scenarioRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := scenariosService.DeleteScenario(r.Context(), path); err != nil {
+						status := http.StatusInternalServerError
+						if errors.Is(err, prompts.ErrScenarioNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
 			})))
 		}
 

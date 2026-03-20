@@ -25,6 +25,7 @@ func TestStreamerLLMDecisionsCreateAndList(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		ClientConfigResponse{},
 	)
 
@@ -92,6 +93,7 @@ func TestStreamerLLMDecisionCreateForbiddenForNonAdmin(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		ClientConfigResponse{},
 	)
 
@@ -119,6 +121,7 @@ func TestStreamerLLMDecisionCreateRejectsInvalidChunkTimestamp(t *testing.T) {
 		admin.NewService([]string{"admin-1"}),
 		nil,
 		streamers.NewService(),
+		nil,
 		nil,
 		nil,
 		nil,
