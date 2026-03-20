@@ -70,8 +70,13 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text       string            `json:"text,omitempty"`
-	InlineData *geminiInlineData `json:"inlineData,omitempty"`
+	Text            string                 `json:"text,omitempty"`
+	InlineData      *geminiInlineData      `json:"inlineData,omitempty"`
+	MediaResolution *geminiMediaResolution `json:"mediaResolution,omitempty"`
+}
+
+type geminiMediaResolution struct {
+	Level string `json:"level"`
 }
 
 type geminiInlineData struct {
@@ -134,7 +139,10 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		Contents: []geminiContent{{
 			Parts: []geminiPart{
 				{Text: buildGeminiInstruction(input)},
-				{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(data)}},
+				{
+					InlineData:      &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(data)},
+					MediaResolution: &geminiMediaResolution{Level: "media_resolution_low"},
+				},
 			},
 		}},
 		GenerationConfig: geminiGenerationConfig{

@@ -38,7 +38,7 @@ var streamlinkEndedMarkers = []string{
 	"could not open stream",
 }
 
-const defaultPreferredStreamQuality = "720p60,720p,936p60,936p,648p60,648p,480p,1080p60,1080p,best"
+const defaultPreferredStreamQuality = "1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best"
 const minimumStreamlinkCaptureTimeout = 25 * time.Second
 
 type StreamlinkChannelResolver interface {
