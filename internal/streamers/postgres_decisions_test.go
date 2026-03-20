@@ -18,6 +18,7 @@ func TestPostgresDecisionRepositoryRecordLLMDecision(t *testing.T) {
 	defer db.Close()
 
 	repo := NewPostgresDecisionRepository(db)
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	capturedAt := createdAt.Add(-10 * time.Second)
 	item := LLMDecision{
@@ -103,6 +104,7 @@ func TestPostgresDecisionRepositoryListLLMDecisions(t *testing.T) {
 	defer db.Close()
 
 	repo := NewPostgresDecisionRepository(db)
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	capturedAt := createdAt.Add(-10 * time.Second)
 	rows := sqlmock.NewRows([]string{
@@ -158,4 +160,53 @@ func (s stringValuer) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(s), nil
+}
+
+func TestPostgresDecisionRepositoryEnsuresSchemaOnce(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresDecisionRepository(db)
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	rows := sqlmock.NewRows([]string{
+		"id", "run_id", "streamer_id", "stage", "label", "confidence", "chunk_captured_at",
+		"prompt_version_id", "prompt_text", "model", "temperature", "max_tokens", "timeout_ms",
+		"chunk_ref", "request_ref", "response_ref", "raw_response", "tokens_in", "tokens_out",
+		"latency_ms", "transition_outcome", "transition_to_step", "transition_terminal", "created_at",
+	})
+	mock.ExpectQuery(regexp.QuoteMeta(`
+SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
+       prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
+       chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
+       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+FROM streamer_llm_decisions
+WHERE streamer_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2`)).
+		WithArgs("str_1", 1).
+		WillReturnRows(rows)
+	mock.ExpectQuery(regexp.QuoteMeta(`
+SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
+       prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
+       chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
+       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+FROM streamer_llm_decisions
+WHERE streamer_id = $1
+ORDER BY created_at ASC, id ASC`)).
+		WithArgs("str_1").
+		WillReturnRows(rows)
+
+	if _, err := repo.ListLLMDecisions(context.Background(), "str_1", 1); err != nil {
+		t.Fatalf("ListLLMDecisions() error = %v", err)
+	}
+	if _, err := repo.ListAllLLMDecisions(context.Background(), "str_1"); err != nil {
+		t.Fatalf("ListAllLLMDecisions() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
 }
