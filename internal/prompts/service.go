@@ -11,13 +11,19 @@ import (
 
 // Service manages versioned LLM prompt templates for each stage.
 type Service struct {
-	mu       sync.RWMutex
-	counter  int
-	versions map[string][]PromptVersion
+	mu           sync.RWMutex
+	counter      int
+	versions     map[string][]PromptVersion
+	stateSchemas map[string][]StateSchemaVersion
+	ruleSets     map[string][]RuleSetVersion
 }
 
 func NewService() *Service {
-	return &Service{versions: map[string][]PromptVersion{}}
+	return &Service{
+		versions:     map[string][]PromptVersion{},
+		stateSchemas: map[string][]StateSchemaVersion{},
+		ruleSets:     map[string][]RuleSetVersion{},
+	}
 }
 
 func (s *Service) List(_ context.Context) []PromptVersion {

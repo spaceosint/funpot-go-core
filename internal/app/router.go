@@ -91,6 +91,36 @@ func scenarioRequestToCreateRequest(req scenarioCreateRequest, actorID string) p
 	}
 }
 
+func stateSchemaRequestToCreateRequest(req stateSchemaCreateRequest, actorID string) prompts.StateSchemaCreateRequest {
+	fields := make([]prompts.StateFieldDefinition, 0, len(req.Fields))
+	for _, field := range req.Fields {
+		fields = append(fields, prompts.StateFieldDefinition{
+			Key:                field.Key,
+			Label:              field.Label,
+			Description:        field.Description,
+			Type:               field.Type,
+			EnumValues:         field.EnumValues,
+			ConfidenceRequired: field.ConfidenceRequired,
+			EvidenceBearing:    field.EvidenceBearing,
+			Inferred:           field.Inferred,
+			FinalOnly:          field.FinalOnly,
+		})
+	}
+	return prompts.StateSchemaCreateRequest{GameSlug: req.GameSlug, Name: req.Name, Description: req.Description, Fields: fields, ActorID: actorID}
+}
+
+func ruleSetRequestToCreateRequest(req ruleSetCreateRequest, actorID string) prompts.RuleSetCreateRequest {
+	ruleItems := make([]prompts.RuleItem, 0, len(req.RuleItems))
+	for idx, item := range req.RuleItems {
+		ruleItems = append(ruleItems, prompts.RuleItem{ID: "rule-item-" + strconv.Itoa(idx+1), FieldKey: item.FieldKey, Operation: item.Operation, EvidenceKinds: item.EvidenceKinds, ConfidenceMode: item.ConfidenceMode, FinalOnly: item.FinalOnly})
+	}
+	finalizationRules := make([]prompts.RuleCondition, 0, len(req.FinalizationRules))
+	for idx, item := range req.FinalizationRules {
+		finalizationRules = append(finalizationRules, prompts.RuleCondition{ID: "rule-condition-" + strconv.Itoa(idx+1), Priority: item.Priority, Condition: item.Condition, Action: item.Action, TargetField: item.TargetField})
+	}
+	return prompts.RuleSetCreateRequest{GameSlug: req.GameSlug, Name: req.Name, Description: req.Description, RuleItems: ruleItems, FinalizationRules: finalizationRules, ActorID: actorID}
+}
+
 type configLimits struct {
 	VotePerMin int `json:"votePerMin"`
 }
@@ -173,6 +203,48 @@ type llmDecisionRecordRequest struct {
 	TransitionOutcome  string  `json:"transitionOutcome"`
 	TransitionToStep   string  `json:"transitionToStep"`
 	TransitionTerminal bool    `json:"transitionTerminal"`
+}
+
+type stateFieldRequest struct {
+	Key                string   `json:"key"`
+	Label              string   `json:"label"`
+	Description        string   `json:"description"`
+	Type               string   `json:"type"`
+	EnumValues         []string `json:"enumValues"`
+	ConfidenceRequired bool     `json:"confidenceRequired"`
+	EvidenceBearing    bool     `json:"evidenceBearing"`
+	Inferred           bool     `json:"inferred"`
+	FinalOnly          bool     `json:"finalOnly"`
+}
+
+type stateSchemaCreateRequest struct {
+	GameSlug    string              `json:"gameSlug"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Fields      []stateFieldRequest `json:"fields"`
+}
+
+type ruleItemRequest struct {
+	FieldKey       string   `json:"fieldKey"`
+	Operation      string   `json:"operation"`
+	EvidenceKinds  []string `json:"evidenceKinds"`
+	ConfidenceMode string   `json:"confidenceMode"`
+	FinalOnly      bool     `json:"finalOnly"`
+}
+
+type ruleConditionRequest struct {
+	Priority    int    `json:"priority"`
+	Condition   string `json:"condition"`
+	Action      string `json:"action"`
+	TargetField string `json:"targetField"`
+}
+
+type ruleSetCreateRequest struct {
+	GameSlug          string                 `json:"gameSlug"`
+	Name              string                 `json:"name"`
+	Description       string                 `json:"description"`
+	RuleItems         []ruleItemRequest      `json:"ruleItems"`
+	FinalizationRules []ruleConditionRequest `json:"finalizationRules"`
 }
 
 type meResponse struct {
@@ -686,6 +758,242 @@ func NewHandler(
 		}
 
 		if promptsService != nil {
+			mux.Handle("/api/admin/llm/state-schemas", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, promptsService.ListStateSchemas(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req stateSchemaCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := promptsService.CreateStateSchema(r.Context(), stateSchemaRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/state-schemas/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/llm/state-schemas/"), "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "state schema id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					id := strings.Trim(strings.TrimSuffix(path, "/activate"), "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := promptsService.ActivateStateSchema(r.Context(), id, claims.Subject)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrStateSchemaNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					item, err := promptsService.GetStateSchema(r.Context(), path)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrStateSchemaNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req stateSchemaCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := promptsService.UpdateStateSchema(r.Context(), path, stateSchemaRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrStateSchemaNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := promptsService.DeleteStateSchema(r.Context(), path); err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrStateSchemaNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/rule-sets", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, promptsService.ListRuleSets(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req ruleSetCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := promptsService.CreateRuleSet(r.Context(), ruleSetRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/rule-sets/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/llm/rule-sets/"), "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "rule set id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					id := strings.Trim(strings.TrimSuffix(path, "/activate"), "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := promptsService.ActivateRuleSet(r.Context(), id, claims.Subject)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrRuleSetNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					item, err := promptsService.GetRuleSet(r.Context(), path)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrRuleSetNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req ruleSetCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := promptsService.UpdateRuleSet(r.Context(), path, ruleSetRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrRuleSetNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := promptsService.DeleteRuleSet(r.Context(), path); err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrRuleSetNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
 			mux.Handle("/api/admin/prompts", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				claims, ok := auth.ClaimsFromContext(r.Context())
 				if !ok {
