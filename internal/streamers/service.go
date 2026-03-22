@@ -327,6 +327,11 @@ func (s *Service) RecordLLMDecision(ctx context.Context, req RecordDecisionReque
 		TransitionOutcome:  strings.TrimSpace(req.TransitionOutcome),
 		TransitionToStep:   strings.TrimSpace(req.TransitionToStep),
 		TransitionTerminal: req.TransitionTerminal,
+		PreviousStateJSON:  strings.TrimSpace(req.PreviousStateJSON),
+		UpdatedStateJSON:   strings.TrimSpace(req.UpdatedStateJSON),
+		EvidenceDeltaJSON:  strings.TrimSpace(req.EvidenceDeltaJSON),
+		ConflictsJSON:      strings.TrimSpace(req.ConflictsJSON),
+		FinalOutcome:       strings.TrimSpace(req.FinalOutcome),
 		CreatedAt:          s.nowFn().UTC().Format(time.RFC3339Nano),
 	}
 
@@ -353,6 +358,29 @@ func formatOptionalTime(value time.Time) string {
 		return ""
 	}
 	return value.UTC().Format(time.RFC3339Nano)
+}
+
+func (s *Service) ListAllLLMDecisions(ctx context.Context, streamerID string) []LLMDecision {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return []LLMDecision{}
+	}
+
+	s.mu.RLock()
+	repo := s.decisionRepo
+	s.mu.RUnlock()
+	if repo == nil {
+		return []LLMDecision{}
+	}
+
+	items, err := repo.ListAllLLMDecisions(ctx, key)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to list all llm decisions", zap.String("streamerID", key), zap.Error(err))
+		}
+		return []LLMDecision{}
+	}
+	return items
 }
 
 func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit int) []LLMDecision {

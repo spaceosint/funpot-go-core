@@ -43,6 +43,11 @@ type LLMDecision struct {
 	TransitionOutcome  string  `json:"transitionOutcome,omitempty"`
 	TransitionToStep   string  `json:"transitionToStep,omitempty"`
 	TransitionTerminal bool    `json:"transitionTerminal,omitempty"`
+	PreviousStateJSON  string  `json:"previousStateJson,omitempty"`
+	UpdatedStateJSON   string  `json:"updatedStateJson,omitempty"`
+	EvidenceDeltaJSON  string  `json:"evidenceDeltaJson,omitempty"`
+	ConflictsJSON      string  `json:"conflictsJson,omitempty"`
+	FinalOutcome       string  `json:"finalOutcome,omitempty"`
 	CreatedAt          string  `json:"createdAt"`
 }
 
@@ -81,4 +86,9 @@ type RecordDecisionRequest struct {
 	TransitionOutcome  string
 	TransitionToStep   string
 	TransitionTerminal bool
+	PreviousStateJSON  string
+	UpdatedStateJSON   string
+	EvidenceDeltaJSON  string
+	ConflictsJSON      string
+	FinalOutcome       string
 }

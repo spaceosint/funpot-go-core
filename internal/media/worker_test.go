@@ -109,7 +109,25 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
 	s.items = append(s.items, req)
-	return streamers.LLMDecision{RunID: req.RunID, StreamerID: req.StreamerID, Stage: req.Stage, Label: req.Label, Confidence: req.Confidence}, nil
+	return streamers.LLMDecision{RunID: req.RunID, StreamerID: req.StreamerID, Stage: req.Stage, Label: req.Label, Confidence: req.Confidence, UpdatedStateJSON: req.UpdatedStateJSON}, nil
+}
+
+func (s *fakeDecisionStore) ListAllLLMDecisions(_ context.Context, streamerID string) []streamers.LLMDecision {
+	items := make([]streamers.LLMDecision, 0, len(s.items))
+	for _, item := range s.items {
+		if item.StreamerID != streamerID {
+			continue
+		}
+		items = append(items, streamers.LLMDecision{
+			RunID:            item.RunID,
+			StreamerID:       item.StreamerID,
+			Stage:            item.Stage,
+			Label:            item.Label,
+			Confidence:       item.Confidence,
+			UpdatedStateJSON: item.UpdatedStateJSON,
+		})
+	}
+	return items
 }
 
 func (s *countingRunStore) CreateRun(_ context.Context, streamerID string) (string, error) {
@@ -266,49 +284,49 @@ func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) 
 	}
 }
 
-func TestWorkerProcessStreamerRunsGlobalDetectorAndScenarioSteps(t *testing.T) {
+func TestWorkerProcessStreamerIgnoresLegacyScenarioResolver(t *testing.T) {
 	decisions := &fakeDecisionStore{}
-	scenario := prompts.ScenarioVersion{
-		ID:       "scenario-cs",
-		GameSlug: "counter_strike",
-		IsActive: true,
-		Steps: []prompts.ScenarioStep{
-			{Code: "match_start", Position: 1, Prompt: prompts.PromptTemplate{ID: "step-1", Stage: "match_start", Template: "is new match", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000, MinConfidence: 0.5}},
-			{Code: "match_result", Position: 2, Prompt: prompts.PromptTemplate{ID: "step-2", Stage: "match_result", Template: "result?", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000, MinConfidence: 0.5}},
-		},
-		Transitions: []prompts.ScenarioTransition{
-			{FromStepCode: "match_start", Outcome: "match_started", ToStepCode: "match_result"},
-			{FromStepCode: "match_result", Outcome: "win", Terminal: true},
-		},
-	}
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
-			"global_detector": {Label: "counter_strike", Confidence: 0.98, NormalizedOutcome: "counter_strike"},
-			"match_start":     {Label: "match_started", Confidence: 0.93, NormalizedOutcome: "match_started"},
-			"match_result":    {Label: "win", Confidence: 0.95, NormalizedOutcome: "win"},
+			"match_update": {Label: "state_updated", Confidence: 0.98, UpdatedStateJSON: `{"match_status":"in_progress"}`},
 		}},
-		nil,
-		fakeScenarioResolver{global: prompts.PromptTemplate{ID: "det-1", Stage: "global_detector", Template: "detect game", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000, MinConfidence: 0.5}, scenario: scenario},
+		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		fakeScenarioResolver{globalErr: errors.New("legacy scenario resolver should not be called")},
 		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
 	)
 	got, err := worker.ProcessStreamer(context.Background(), "str-1")
 	if err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
-	if got.Stage != "match_result" || got.Label != "win" {
+	if got.Stage != "match_update" || got.Label != "state_updated" {
 		t.Fatalf("final decision = %#v", got)
 	}
-	if len(decisions.items) != 3 {
-		t.Fatalf("recorded %d decisions, want 3", len(decisions.items))
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
-	if decisions.items[0].Stage != "global_detector" || decisions.items[1].Stage != "match_start" || decisions.items[2].Stage != "match_result" {
-		t.Fatalf("unexpected decision order: %#v", decisions.items)
+}
+
+func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	classifier := &flakyClassifier{result: StageClassification{Label: "state_updated", Confidence: 0.95, UpdatedStateJSON: `{"score":{"ct":8,"t":5}}`}}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		classifier,
+		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		nil,
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("first ProcessStreamer() error = %v", err)
 	}
-	if decisions.items[1].TransitionOutcome != "match_started" || decisions.items[1].TransitionToStep != "match_result" {
-		t.Fatalf("expected next-step transition metadata, got %#v", decisions.items[1])
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("second ProcessStreamer() error = %v", err)
 	}
-	if !decisions.items[2].TransitionTerminal || decisions.items[2].TransitionOutcome != "win" {
-		t.Fatalf("expected terminal transition metadata, got %#v", decisions.items[2])
+	if len(decisions.items) != 2 {
+		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
+	}
+	if decisions.items[1].PreviousStateJSON != `{"score":{"ct":8,"t":5}}` {
+		t.Fatalf("previous state = %q", decisions.items[1].PreviousStateJSON)
 	}
 }
