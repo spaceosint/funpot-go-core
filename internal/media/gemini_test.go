@@ -27,7 +27,7 @@ func TestNewGeminiStageClassifierRequiresAPIKey(t *testing.T) {
 
 func TestGeminiStageClassifierClassify(t *testing.T) {
 	dir := t.TempDir()
-	chunkPath := filepath.Join(dir, "chunk.ts")
+	chunkPath := filepath.Join(dir, "chunk.mp4")
 	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
 		t.Fatalf("write chunk: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 		Prompt: prompts.PromptVersion{
 			Stage:       "detector",
 			Template:    "Detect the game being played",
-			Model:       "gemini-2.0-flash",
+			Model:       "gemini",
 			Temperature: 0.2,
 			MaxTokens:   128,
 			TimeoutMS:   1000,
@@ -86,11 +86,11 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	if result.TokensIn != 111 || result.TokensOut != 22 {
 		t.Fatalf("unexpected token usage: in=%d out=%d", result.TokensIn, result.TokensOut)
 	}
-	if !strings.Contains(gotBody, `"mimeType":"video/mp2t"`) {
+	if !strings.Contains(gotBody, `"mimeType":"video/mp4"`) {
 		t.Fatalf("expected transport stream mime type in request body: %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"mediaResolution":{"level":"media_resolution_low"}`) {
-		t.Fatalf("expected low media resolution in request body: %s", gotBody)
+	if !strings.Contains(gotBody, `"mediaResolution":"LOW"`) {
+		t.Fatalf("expected low media resolution in generation config: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, "Detect the game being played") {
 		t.Fatalf("expected prompt template in request body: %s", gotBody)
@@ -127,5 +127,40 @@ func TestGeminiStageClassifierRejectsLargeChunk(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), ErrGeminiChunkTooLarge.Error()) {
 		t.Fatalf("expected large chunk error, got %v", err)
+	}
+}
+
+func TestGeminiStageClassifierRejectsUnsupportedChunkMimeType(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.ts")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:     "gemini-key",
+		BaseURL:    "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) { return nil, fmt.Errorf("unexpected request") })},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	_, err = classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "detector",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt: prompts.PromptVersion{
+			Stage:     "detector",
+			Template:  "Detect the game being played",
+			Model:     "gemini",
+			MaxTokens: 128,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), ErrGeminiUnsupportedMIME.Error()) {
+		t.Fatalf("expected unsupported mime error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "video/mp4") {
+		t.Fatalf("expected conversion hint, got %v", err)
 	}
 }

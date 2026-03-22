@@ -23,6 +23,7 @@ var (
 	ErrGeminiChunkTooLarge     = errors.New("gemini chunk exceeds inline upload limit")
 	ErrGeminiEmptyResponse     = errors.New("gemini returned empty response")
 	ErrGeminiInvalidConfidence = errors.New("gemini confidence must be between 0 and 1")
+	ErrGeminiUnsupportedMIME   = errors.New("gemini does not support the chunk mime type")
 )
 
 type GeminiClassifierConfig struct {
@@ -70,13 +71,8 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text            string                 `json:"text,omitempty"`
-	InlineData      *geminiInlineData      `json:"inlineData,omitempty"`
-	MediaResolution *geminiMediaResolution `json:"mediaResolution,omitempty"`
-}
-
-type geminiMediaResolution struct {
-	Level string `json:"level"`
+	Text       string            `json:"text,omitempty"`
+	InlineData *geminiInlineData `json:"inlineData,omitempty"`
 }
 
 type geminiInlineData struct {
@@ -88,6 +84,7 @@ type geminiGenerationConfig struct {
 	Temperature      float64 `json:"temperature,omitempty"`
 	MaxOutputTokens  int     `json:"maxOutputTokens,omitempty"`
 	ResponseMIMEType string  `json:"responseMimeType,omitempty"`
+	MediaResolution  string  `json:"mediaResolution,omitempty"`
 }
 
 type geminiGenerateContentResponse struct {
@@ -135,20 +132,22 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		return StageClassification{}, err
 	}
 
+	if err := validateGeminiMIMEType(mimeType); err != nil {
+		return StageClassification{}, err
+	}
+
 	requestBody := geminiGenerateContentRequest{
 		Contents: []geminiContent{{
 			Parts: []geminiPart{
 				{Text: buildGeminiInstruction(input)},
-				{
-					InlineData:      &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(data)},
-					MediaResolution: &geminiMediaResolution{Level: "media_resolution_low"},
-				},
+				{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(data)}},
 			},
 		}},
 		GenerationConfig: geminiGenerationConfig{
 			Temperature:      input.Prompt.Temperature,
 			MaxOutputTokens:  input.Prompt.MaxTokens,
 			ResponseMIMEType: "application/json",
+			MediaResolution:  "LOW",
 		},
 	}
 
@@ -157,10 +156,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		return StageClassification{}, err
 	}
 
-	model := strings.TrimSpace(input.Prompt.Model)
-	if model == "" {
-		model = "gemini-2.0-flash"
-	}
+	model := normalizeGeminiModel(input.Prompt.Model)
 
 	requestCtx := ctx
 	cancel := func() {}
@@ -313,4 +309,21 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
+}
+
+func normalizeGeminiModel(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" || strings.EqualFold(trimmed, "gemini") {
+		return "gemini-2.0-flash"
+	}
+	return trimmed
+}
+
+func validateGeminiMIMEType(mimeType string) error {
+	switch strings.TrimSpace(strings.ToLower(mimeType)) {
+	case "video/mp4", "video/mpeg", "video/mov", "video/avi", "video/x-flv", "video/mpg", "video/webm", "video/wmv", "video/3gpp", "audio/mpeg", "audio/wav":
+		return nil
+	default:
+		return fmt.Errorf("%w: %s (convert Streamlink .ts chunks to a supported format such as video/mp4 before calling Gemini)", ErrGeminiUnsupportedMIME, mimeType)
+	}
 }
