@@ -168,10 +168,12 @@ func TestGeminiStageClassifierRejectsUnsupportedChunkMimeType(t *testing.T) {
 
 func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	instruction := buildGeminiInstruction(StageRequest{
-		StreamerID: "str-42",
-		Stage:      "match_update",
-		Chunk:      ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
-		Prompt:     prompts.PromptVersion{Template: "Update the CS2 tracker state"},
+		StreamerID:  "str-42",
+		Stage:       "match_update",
+		Chunk:       ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+		Prompt:      prompts.PromptVersion{Template: "Update the CS2 tracker state"},
+		StateSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
+		RuleSet:     `rule_set[CS2 rules v1]: rule_items=[{"fieldKey":"score.ct"}]`,
 	})
 	for _, fragment := range []string{
 		"Streamer ID: str-42",
@@ -180,6 +182,10 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 		defaultTrackerState(),
 		"updated_state",
 		"next_needed_evidence",
+		"Active state schema:",
+		"state_schema[CS2 v1]",
+		"Active rule set:",
+		"rule_set[CS2 rules v1]",
 	} {
 		if !strings.Contains(instruction, fragment) {
 			t.Fatalf("expected instruction to contain %q, got %s", fragment, instruction)

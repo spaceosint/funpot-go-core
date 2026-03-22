@@ -251,6 +251,10 @@ Streamer ID: %s
 Chunk captured at: %s
 Chunk reference: %s
 Use this admin-managed tracker prompt as the source of truth:
+%s
+Active state schema:
+%s
+Active rule set:
 %s`
 	previousState := strings.TrimSpace(input.PreviousState)
 	if previousState == "" {
@@ -261,7 +265,7 @@ Use this admin-managed tracker prompt as the source of truth:
 Return ONLY valid JSON with keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
-- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template)))
+- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
@@ -282,7 +286,7 @@ Rules:
 - Always update and return compact state JSON in updated_state.
 - Never emit narrative commentary outside JSON.
 - Keep final_outcome as unknown until direct evidence exists.
-- Store contradictions in hard_conflicts instead of overwriting prior facts.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), previousState))
+- Store contradictions in hard_conflicts instead of overwriting prior facts.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
 }
 
 func loadGeminiChunk(path string, maxBytes int64) ([]byte, string, error) {

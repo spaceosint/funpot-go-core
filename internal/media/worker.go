@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,8 @@ type StageRequest struct {
 	Chunk         ChunkRef
 	Prompt        prompts.PromptVersion
 	PreviousState string
+	StateSchema   string
+	RuleSet       string
 }
 
 const (
@@ -298,7 +301,8 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 
 func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
 	previousState := w.resolvePreviousState(ctx, streamerID)
-	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState}, activePrompt)
+	stateSchema, ruleSet := w.resolveTrackerConfig(ctx)
+	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState, StateSchema: stateSchema, RuleSet: ruleSet}, activePrompt)
 	if err != nil {
 		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, err
@@ -439,4 +443,40 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+type activeStateSchemaResolver interface {
+	GetActiveStateSchema(ctx context.Context, gameSlug string) (prompts.StateSchemaVersion, error)
+}
+
+type activeRuleSetResolver interface {
+	GetActiveRuleSet(ctx context.Context, gameSlug string) (prompts.RuleSetVersion, error)
+}
+
+func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string) {
+	const gameSlug = "cs2"
+	var stateSchema string
+	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
+		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
+			stateSchema = fmt.Sprintf("state_schema[%s v%d]: %s", item.Name, item.Version, compactJSON(item.Fields))
+		}
+	}
+	var ruleSet string
+	if resolver, ok := w.prompts.(activeRuleSetResolver); ok {
+		if item, err := resolver.GetActiveRuleSet(ctx, gameSlug); err == nil {
+			ruleSet = fmt.Sprintf("rule_set[%s v%d]: rule_items=%s finalization_rules=%s", item.Name, item.Version, compactJSON(item.RuleItems), compactJSON(item.FinalizationRules))
+		}
+	}
+	return stateSchema, ruleSet
+}
+
+func compactJSON(value any) string {
+	if value == nil {
+		return ""
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
