@@ -45,6 +45,11 @@ func TestPostgresDecisionRepositoryRecordLLMDecision(t *testing.T) {
 		TransitionOutcome:  "cs_detected",
 		TransitionToStep:   "match_start",
 		TransitionTerminal: false,
+		PreviousStateJSON:  `{"status":"discovering"}`,
+		UpdatedStateJSON:   `{"status":"in_progress"}`,
+		EvidenceDeltaJSON:  `["score updated"]`,
+		ConflictsJSON:      `["side not confirmed"]`,
+		FinalOutcome:       "unknown",
 		CreatedAt:          createdAt.Format(time.RFC3339Nano),
 	}
 
@@ -53,12 +58,14 @@ INSERT INTO streamer_llm_decisions (
 	id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
 	prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
 	chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-	latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+	latency_ms, transition_outcome, transition_to_step, transition_terminal,
+	previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 ) VALUES (
 	$1, $2, $3, $4, $5, $6, $7,
 	$8, $9, $10, $11, $12, $13,
 	$14, $15, $16, $17, $18, $19,
-	$20, $21, $22, $23, $24
+	$20, $21, $22, $23,
+	$24, $25, $26, $27, $28, $29
 )`)).
 		WithArgs(
 			item.ID,
@@ -84,6 +91,11 @@ INSERT INTO streamer_llm_decisions (
 			nullDriverString(item.TransitionOutcome),
 			nullDriverString(item.TransitionToStep),
 			item.TransitionTerminal,
+			nullDriverString(item.PreviousStateJSON),
+			nullDriverString(item.UpdatedStateJSON),
+			nullDriverString(item.EvidenceDeltaJSON),
+			nullDriverString(item.ConflictsJSON),
+			nullDriverString(item.FinalOutcome),
 			createdAt,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -111,19 +123,21 @@ func TestPostgresDecisionRepositoryListLLMDecisions(t *testing.T) {
 		"id", "run_id", "streamer_id", "stage", "label", "confidence", "chunk_captured_at",
 		"prompt_version_id", "prompt_text", "model", "temperature", "max_tokens", "timeout_ms",
 		"chunk_ref", "request_ref", "response_ref", "raw_response", "tokens_in", "tokens_out",
-		"latency_ms", "transition_outcome", "transition_to_step", "transition_terminal", "created_at",
+		"latency_ms", "transition_outcome", "transition_to_step", "transition_terminal",
+		"previous_state_json", "updated_state_json", "evidence_delta_json", "conflicts_json", "final_outcome", "created_at",
 	}).AddRow(
 		"llm_1", "run_1", "str_1", "detector", "cs_detected", 0.91, capturedAt,
 		"prompt_1", "detect the game", "gemini-2.0-flash", 0.2, 256, 2000,
 		"streamlink://chunk-1", "req-1", "resp-1", "raw", 123, 45,
-		890, "cs_detected", "match_start", false, createdAt,
+		890, "cs_detected", "match_start", false, `{"status":"discovering"}`, `{"status":"in_progress"}`, `["score updated"]`, `["side not confirmed"]`, "unknown", createdAt,
 	)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
        prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
        chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+       latency_ms, transition_outcome, transition_to_step, transition_terminal,
+       previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 FROM streamer_llm_decisions
 WHERE streamer_id = $1
 ORDER BY created_at DESC, id DESC
@@ -141,7 +155,7 @@ LIMIT $2`)).
 	if items[0].ChunkCapturedAt != capturedAt.Format(time.RFC3339Nano) || items[0].CreatedAt != createdAt.Format(time.RFC3339Nano) {
 		t.Fatalf("unexpected timestamps: %+v", items[0])
 	}
-	if items[0].TransitionToStep != "match_start" || items[0].RequestRef != "req-1" {
+	if items[0].TransitionToStep != "match_start" || items[0].RequestRef != "req-1" || items[0].UpdatedStateJSON != `{"status":"in_progress"}` || items[0].FinalOutcome != "unknown" {
 		t.Fatalf("unexpected decision payload: %+v", items[0])
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -176,13 +190,15 @@ func TestPostgresDecisionRepositoryEnsuresSchemaOnce(t *testing.T) {
 		"id", "run_id", "streamer_id", "stage", "label", "confidence", "chunk_captured_at",
 		"prompt_version_id", "prompt_text", "model", "temperature", "max_tokens", "timeout_ms",
 		"chunk_ref", "request_ref", "response_ref", "raw_response", "tokens_in", "tokens_out",
-		"latency_ms", "transition_outcome", "transition_to_step", "transition_terminal", "created_at",
+		"latency_ms", "transition_outcome", "transition_to_step", "transition_terminal",
+		"previous_state_json", "updated_state_json", "evidence_delta_json", "conflicts_json", "final_outcome", "created_at",
 	})
 	mock.ExpectQuery(regexp.QuoteMeta(`
 SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
        prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
        chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+       latency_ms, transition_outcome, transition_to_step, transition_terminal,
+       previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 FROM streamer_llm_decisions
 WHERE streamer_id = $1
 ORDER BY created_at DESC, id DESC
@@ -193,7 +209,8 @@ LIMIT $2`)).
 SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
        prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
        chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+       latency_ms, transition_outcome, transition_to_step, transition_terminal,
+       previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 FROM streamer_llm_decisions
 WHERE streamer_id = $1
 ORDER BY created_at ASC, id ASC`)).

@@ -26,10 +26,11 @@ type ChunkRef struct {
 }
 
 type StageRequest struct {
-	StreamerID string
-	Stage      string
-	Chunk      ChunkRef
-	Prompt     prompts.PromptVersion
+	StreamerID    string
+	Stage         string
+	Chunk         ChunkRef
+	Prompt        prompts.PromptVersion
+	PreviousState string
 }
 
 type StageClassification struct {
@@ -42,6 +43,11 @@ type StageClassification struct {
 	TokensOut         int
 	Latency           time.Duration
 	NormalizedOutcome string
+	UpdatedStateJSON  string
+	EvidenceDeltaJSON string
+	NextEvidenceJSON  string
+	ConflictsJSON     string
+	FinalOutcome      string
 }
 
 type StreamCapture interface {
@@ -67,6 +73,7 @@ type RunStore interface {
 
 type DecisionStore interface {
 	RecordLLMDecision(ctx context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error)
+	ListAllLLMDecisions(ctx context.Context, streamerID string) []streamers.LLMDecision
 }
 
 type Locker interface {
@@ -210,48 +217,6 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		logger = zap.NewNop()
 	}
 
-	if w.scenarios != nil {
-		globalPrompt, err := w.scenarios.GetActiveGlobalDetector(ctx)
-		if err != nil {
-			logger.Warn("no active global detector configured", zap.String("streamerID", streamerID), zap.Error(err))
-			return streamers.LLMDecision{}, err
-		}
-		detectorDecision, err := w.processPromptTemplate(ctx, runID, streamerID, chunk, globalPrompt, nil)
-		if err != nil {
-			logger.Error("global detector stage failed", zap.String("streamerID", streamerID), zap.Error(err))
-			return streamers.LLMDecision{}, err
-		}
-		gameSlug := strings.TrimSpace(detectorDecision.Label)
-		if gameSlug == "" || gameSlug == "uncertain" {
-			return detectorDecision, nil
-		}
-		scenario, err := w.scenarios.GetActiveScenarioByGame(ctx, gameSlug)
-		if err != nil {
-			logger.Info("no active game scenario found after detector step", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(err))
-			return detectorDecision, nil
-		}
-		currentStep, ok := scenario.EntryStep()
-		if !ok {
-			return detectorDecision, nil
-		}
-		lastDecision := detectorDecision
-		for {
-			stepDecision, transition, ok, err := w.processScenarioStep(ctx, runID, streamerID, chunk, currentStep, scenario)
-			if err != nil {
-				return streamers.LLMDecision{}, err
-			}
-			lastDecision = stepDecision
-			if !ok || transition.Terminal {
-				return lastDecision, nil
-			}
-			nextStep, ok := scenario.FindStep(transition.ToStepCode)
-			if !ok {
-				return lastDecision, nil
-			}
-			currentStep = nextStep
-		}
-	}
-
 	activePrompts := w.prompts.ListActive(ctx)
 	if len(activePrompts) == 0 {
 		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", streamerID))
@@ -262,7 +227,7 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 	var lastDecision streamers.LLMDecision
 	for _, activePrompt := range activePrompts {
 		logger.Info("processing prompt stage", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
-		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt, nil)
+		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt)
 		if err != nil {
 			logger.Error("prompt stage processing failed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
 			return streamers.LLMDecision{}, err
@@ -271,52 +236,6 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		lastDecision = decision
 	}
 	return lastDecision, nil
-}
-
-func (w *Worker) processPromptTemplate(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptTemplate, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
-	return w.processStage(ctx, runID, streamerID, chunk, promptVersionFromTemplate(activePrompt), transition)
-}
-
-func (w *Worker) processScenarioStep(ctx context.Context, runID, streamerID string, chunk ChunkRef, step prompts.ScenarioStep, scenario prompts.ScenarioVersion) (streamers.LLMDecision, prompts.ScenarioTransition, bool, error) {
-	activePrompt := promptVersionFromTemplate(step.Prompt)
-	result, err := w.classifyWithRetry(ctx, StageRequest{
-		StreamerID: streamerID,
-		Stage:      activePrompt.Stage,
-		Chunk:      chunk,
-		Prompt:     activePrompt,
-	}, activePrompt)
-	if err != nil {
-		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
-		return streamers.LLMDecision{}, prompts.ScenarioTransition{}, false, err
-	}
-	label := strings.TrimSpace(result.Label)
-	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
-		label = "uncertain"
-	}
-	transition, ok := scenario.ResolveTransition(step.Code, label)
-	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, func() *prompts.ScenarioTransition {
-		if !ok {
-			return nil
-		}
-		return &transition
-	}())
-	return decision, transition, ok, err
-}
-
-func promptVersionFromTemplate(activePrompt prompts.PromptTemplate) prompts.PromptVersion {
-	return prompts.PromptVersion{
-		ID:            activePrompt.ID,
-		Stage:         activePrompt.Stage,
-		Template:      activePrompt.Template,
-		Model:         activePrompt.Model,
-		Temperature:   activePrompt.Temperature,
-		MaxTokens:     activePrompt.MaxTokens,
-		TimeoutMS:     activePrompt.TimeoutMS,
-		RetryCount:    activePrompt.RetryCount,
-		BackoffMS:     activePrompt.BackoffMS,
-		CooldownMS:    activePrompt.CooldownMS,
-		MinConfidence: activePrompt.MinConfidence,
-	}
 }
 
 func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {
@@ -342,16 +261,17 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 	return ChunkRef{}, lastErr
 }
 
-func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
-	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt}, activePrompt)
+func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
+	previousState := w.resolvePreviousState(ctx, streamerID)
+	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState}, activePrompt)
 	if err != nil {
 		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, err
 	}
-	return w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, transition)
+	return w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
 }
 
-func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID string, transition *prompts.ScenarioTransition) (streamers.LLMDecision, error) {
+func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID, previousState string) (streamers.LLMDecision, error) {
 	label := strings.TrimSpace(result.Label)
 	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
 		label = "uncertain"
@@ -383,10 +303,11 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		TokensOut:         result.TokensOut,
 		LatencyMS:         result.Latency.Milliseconds(),
 		TransitionOutcome: transitionOutcome,
-	}
-	if transition != nil {
-		recordReq.TransitionToStep = transition.ToStepCode
-		recordReq.TransitionTerminal = transition.Terminal
+		PreviousStateJSON: previousState,
+		UpdatedStateJSON:  firstNonEmpty(strings.TrimSpace(result.UpdatedStateJSON), strings.TrimSpace(result.RawResponse)),
+		EvidenceDeltaJSON: firstNonEmpty(strings.TrimSpace(result.EvidenceDeltaJSON), strings.TrimSpace(result.NextEvidenceJSON)),
+		ConflictsJSON:     strings.TrimSpace(result.ConflictsJSON),
+		FinalOutcome:      strings.TrimSpace(result.FinalOutcome),
 	}
 	decision, err := w.decisions.RecordLLMDecision(ctx, recordReq)
 	if err != nil {
@@ -394,6 +315,28 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		return streamers.LLMDecision{}, err
 	}
 	return decision, nil
+}
+
+func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) string {
+	if w == nil || w.decisions == nil {
+		return ""
+	}
+	items := w.decisions.ListAllLLMDecisions(ctx, streamerID)
+	for i := len(items) - 1; i >= 0; i-- {
+		if state := strings.TrimSpace(items[i].UpdatedStateJSON); state != "" {
+			return state
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (w *Worker) classifyWithRetry(ctx context.Context, input StageRequest, activePrompt prompts.PromptVersion) (StageClassification, error) {

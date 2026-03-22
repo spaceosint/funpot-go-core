@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS streamer_llm_decisions (
     transition_outcome TEXT,
     transition_to_step TEXT,
     transition_terminal BOOLEAN NOT NULL DEFAULT FALSE,
+    previous_state_json TEXT,
+    updated_state_json TEXT,
+    evidence_delta_json TEXT,
+    conflicts_json TEXT,
+    final_outcome TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     CHECK (char_length(id) > 0),
     CHECK (char_length(run_id) > 0),
@@ -95,12 +100,14 @@ INSERT INTO streamer_llm_decisions (
 	id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
 	prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
 	chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-	latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+	latency_ms, transition_outcome, transition_to_step, transition_terminal,
+	previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 ) VALUES (
 	$1, $2, $3, $4, $5, $6, $7,
 	$8, $9, $10, $11, $12, $13,
 	$14, $15, $16, $17, $18, $19,
-	$20, $21, $22, $23, $24
+	$20, $21, $22, $23,
+	$24, $25, $26, $27, $28, $29
 )`
 	_, err := r.db.ExecContext(ctx, query,
 		item.ID,
@@ -126,6 +133,11 @@ INSERT INTO streamer_llm_decisions (
 		nullString(item.TransitionOutcome),
 		nullString(item.TransitionToStep),
 		item.TransitionTerminal,
+		nullString(item.PreviousStateJSON),
+		nullString(item.UpdatedStateJSON),
+		nullString(item.EvidenceDeltaJSON),
+		nullString(item.ConflictsJSON),
+		nullString(item.FinalOutcome),
 		parseRFC3339Time(item.CreatedAt),
 	)
 	if err != nil {
@@ -145,7 +157,8 @@ func (r *PostgresDecisionRepository) ListLLMDecisions(ctx context.Context, strea
 SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
        prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
        chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+       latency_ms, transition_outcome, transition_to_step, transition_terminal,
+       previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 FROM streamer_llm_decisions
 WHERE streamer_id = $1
 ORDER BY created_at DESC, id DESC
@@ -161,7 +174,8 @@ func (r *PostgresDecisionRepository) ListAllLLMDecisions(ctx context.Context, st
 SELECT id, run_id, streamer_id, stage, label, confidence, chunk_captured_at,
        prompt_version_id, prompt_text, model, temperature, max_tokens, timeout_ms,
        chunk_ref, request_ref, response_ref, raw_response, tokens_in, tokens_out,
-       latency_ms, transition_outcome, transition_to_step, transition_terminal, created_at
+       latency_ms, transition_outcome, transition_to_step, transition_terminal,
+       previous_state_json, updated_state_json, evidence_delta_json, conflicts_json, final_outcome, created_at
 FROM streamer_llm_decisions
 WHERE streamer_id = $1
 ORDER BY created_at ASC, id ASC`
@@ -206,6 +220,11 @@ func scanDecision(row decisionScanner) (LLMDecision, error) {
 		rawResponse       sql.NullString
 		transitionOutcome sql.NullString
 		transitionToStep  sql.NullString
+		previousState     sql.NullString
+		updatedState      sql.NullString
+		evidenceDelta     sql.NullString
+		conflicts         sql.NullString
+		finalOutcome      sql.NullString
 		createdAt         time.Time
 	)
 	if err := row.Scan(
@@ -232,6 +251,11 @@ func scanDecision(row decisionScanner) (LLMDecision, error) {
 		&transitionOutcome,
 		&transitionToStep,
 		&item.TransitionTerminal,
+		&previousState,
+		&updatedState,
+		&evidenceDelta,
+		&conflicts,
+		&finalOutcome,
 		&createdAt,
 	); err != nil {
 		return LLMDecision{}, fmt.Errorf("scan streamer llm decision: %w", err)
@@ -246,6 +270,11 @@ func scanDecision(row decisionScanner) (LLMDecision, error) {
 	item.RawResponse = rawResponse.String
 	item.TransitionOutcome = transitionOutcome.String
 	item.TransitionToStep = transitionToStep.String
+	item.PreviousStateJSON = previousState.String
+	item.UpdatedStateJSON = updatedState.String
+	item.EvidenceDeltaJSON = evidenceDelta.String
+	item.ConflictsJSON = conflicts.String
+	item.FinalOutcome = finalOutcome.String
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
 	return item, nil
 }

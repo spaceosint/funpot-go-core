@@ -117,9 +117,14 @@ type geminiUsageMetadata struct {
 }
 
 type geminiStageResponse struct {
-	Label      string  `json:"label"`
-	Confidence float64 `json:"confidence"`
-	Summary    string  `json:"summary,omitempty"`
+	Label              string          `json:"label"`
+	Confidence         float64         `json:"confidence"`
+	Summary            string          `json:"summary,omitempty"`
+	UpdatedState       json.RawMessage `json:"updated_state,omitempty"`
+	Delta              json.RawMessage `json:"delta,omitempty"`
+	NextNeededEvidence json.RawMessage `json:"next_needed_evidence,omitempty"`
+	HardConflicts      json.RawMessage `json:"hard_conflicts,omitempty"`
+	FinalOutcome       string          `json:"final_outcome,omitempty"`
 }
 
 func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest) (StageClassification, error) {
@@ -207,28 +212,59 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		return StageClassification{}, ErrGeminiInvalidConfidence
 	}
 
+	label := strings.TrimSpace(parsed.Label)
+	if label == "" && len(parsed.UpdatedState) > 0 {
+		label = "state_updated"
+	}
+	if label == "" && strings.TrimSpace(parsed.FinalOutcome) != "" {
+		label = strings.TrimSpace(parsed.FinalOutcome)
+	}
+	confidence := parsed.Confidence
+	if confidence == 0 && (len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != "") {
+		confidence = 1
+	}
 	return StageClassification{
-		Label:             strings.TrimSpace(parsed.Label),
-		Confidence:        parsed.Confidence,
+		Label:             label,
+		Confidence:        confidence,
 		RawResponse:       strings.TrimSpace(rawText),
 		RequestRef:        endpoint,
 		ResponseRef:       strconv.Itoa(resp.StatusCode),
 		TokensIn:          payload.UsageMetadata.PromptTokenCount,
 		TokensOut:         payload.UsageMetadata.CandidatesTokenCount,
 		Latency:           time.Since(started),
-		NormalizedOutcome: strings.TrimSpace(parsed.Label),
+		NormalizedOutcome: firstNonEmpty(strings.TrimSpace(parsed.FinalOutcome), label),
+		UpdatedStateJSON:  marshalRawMessage(parsed.UpdatedState),
+		EvidenceDeltaJSON: marshalRawMessage(parsed.Delta),
+		NextEvidenceJSON:  marshalRawMessage(parsed.NextNeededEvidence),
+		ConflictsJSON:     marshalRawMessage(parsed.HardConflicts),
+		FinalOutcome:      strings.TrimSpace(parsed.FinalOutcome),
 	}, nil
 }
 
 func buildGeminiInstruction(input StageRequest) string {
-	return strings.TrimSpace(fmt.Sprintf(`You analyze a livestream chunk for FunPot.
+	base := `You analyze a livestream chunk for FunPot.
 Stage: %s
+Use this stage prompt as the source of truth:
+%s`
+	if strings.TrimSpace(input.PreviousState) == "" {
+		return strings.TrimSpace(fmt.Sprintf(base+`
 Return ONLY valid JSON with keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
-- summary: short rationale.
-Use this stage prompt as the source of truth:
-%s`, input.Stage, strings.TrimSpace(input.Prompt.Template)))
+- summary: short rationale.`, input.Stage, strings.TrimSpace(input.Prompt.Template)))
+	}
+	return strings.TrimSpace(fmt.Sprintf(base+`
+Previous persisted tracker state JSON:
+%s
+Return ONLY valid JSON. Update the tracker state using previous_state + new_chunk.
+Required keys:
+- updated_state: object
+- delta: array or object describing evidence changes
+- next_needed_evidence: array
+Optional keys:
+- hard_conflicts: array
+- final_outcome: win | loss | draw | unknown
+Do not return commentary outside JSON.`, input.Stage, strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.PreviousState)))
 }
 
 func loadGeminiChunk(path string, maxBytes int64) ([]byte, string, error) {
@@ -326,4 +362,12 @@ func validateGeminiMIMEType(mimeType string) error {
 	default:
 		return fmt.Errorf("%w: %s (convert Streamlink .ts chunks to a supported format such as video/mp4 before calling Gemini)", ErrGeminiUnsupportedMIME, mimeType)
 	}
+}
+
+func marshalRawMessage(value json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(value))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	return trimmed
 }
