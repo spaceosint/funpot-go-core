@@ -53,6 +53,40 @@ Payload schema:
 ```
 Sent when the event timer expires or the event is manually closed.
 
+
+### LLM_MATCH_STATE_UPDATED
+Payload schema:
+```json
+{
+  "streamerId": "uuid",
+  "matchSessionId": "uuid",
+  "gameKey": "cs2",
+  "status": "in_progress",
+  "stateSummary": {
+    "mode": "competitive",
+    "playerOutcome": "unknown",
+    "score": { "ct": 7, "t": 5 }
+  },
+  "confidence": 0.88,
+  "ts": "ISO-8601"
+}
+```
+Sent when the LLM state tracker persists a new match-state snapshot for a streamer.
+
+### LLM_MATCH_FINALIZED
+Payload schema:
+```json
+{
+  "streamerId": "uuid",
+  "matchSessionId": "uuid",
+  "outcome": "win",
+  "finalScore": { "ct": 13, "t": 10 },
+  "confidence": 0.97,
+  "ts": "ISO-8601"
+}
+```
+Sent when the backend finalizes a match-session outcome from accumulated evidence.
+
 ### BALANCE_UPDATED
 Payload schema:
 ```json
@@ -73,7 +107,7 @@ Payload schema:
 Used for rate-limit warnings, maintenance messages, or feature flag updates.
 
 ## Subscriptions
-- `streamer:{streamerId}` — receives EVENT_* updates.
+- `streamer:{streamerId}` — receives EVENT_* updates plus LLM match-state updates.
 - `game:{gameId}` — narrower scope for specific games.
 - `user:{userId}` — balance updates and personal notices.
 

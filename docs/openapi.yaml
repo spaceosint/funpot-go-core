@@ -175,7 +175,7 @@ paths:
           $ref: '#/components/responses/Error'
   /api/streamers/{streamerId}/status:
     get:
-      summary: Get aggregated LLM status for streamer
+      summary: Get aggregated LLM match-tracker status for streamer
       security:
         - bearerAuth: []
       parameters:
@@ -186,7 +186,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Aggregated detector/scenario status
+          description: Aggregated match-session / state-tracker status
           content:
             application/json:
               schema:
@@ -215,7 +215,7 @@ paths:
           $ref: '#/components/responses/Error'
   /api/streamers/{streamerId}/llm-decisions:
     get:
-      summary: List latest LLM stage decisions for streamer
+      summary: List latest LLM state updates/finalizations for streamer
       security:
         - bearerAuth: []
       parameters:
@@ -231,7 +231,7 @@ paths:
             minimum: 1
       responses:
         '200':
-          description: Decision history ordered by latest first
+          description: Match-tracker history ordered by latest first
           content:
             application/json:
               schema:
@@ -241,7 +241,7 @@ paths:
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Record LLM stage decision for streamer (admin)
+      summary: Record LLM tracker update/finalization for streamer (admin)
       security:
         - bearerAuth: []
       parameters:
@@ -258,7 +258,7 @@ paths:
               $ref: '#/components/schemas/LLMDecisionRecordRequest'
       responses:
         '201':
-          description: Recorded LLM decision
+          description: Recorded LLM tracker entry
           content:
             application/json:
               schema:
@@ -395,24 +395,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptVersion'
-  /api/admin/global-detectors:
+  /api/admin/llm/state-schemas:
     get:
-      summary: List global detector prompts (admin)
+      summary: List LLM state schemas (admin)
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Global detector prompts
+          description: LLM state schemas
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/PromptTemplate'
+                  $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Create global detector prompt (admin)
+      summary: Create LLM state schema (admin)
       security:
         - bearerAuth: []
       requestBody:
@@ -423,40 +423,40 @@ paths:
               $ref: '#/components/schemas/PromptCreateRequest'
       responses:
         '201':
-          description: Created global detector prompt
+          description: Created LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptTemplate'
+                $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/global-detectors/{detectorId}:
+  /api/admin/llm/state-schemas/{stateSchemaId}:
     get:
-      summary: Get global detector prompt (admin)
+      summary: Get LLM state schema (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: detectorId
+          name: stateSchemaId
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Global detector prompt
+          description: LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptTemplate'
+                $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
     put:
-      summary: Update global detector prompt (admin)
+      summary: Update LLM state schema (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: detectorId
+          name: stateSchemaId
           required: true
           schema:
             type: string
@@ -468,66 +468,66 @@ paths:
               $ref: '#/components/schemas/PromptCreateRequest'
       responses:
         '200':
-          description: Updated global detector prompt
+          description: Updated LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptTemplate'
+                $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
     delete:
-      summary: Delete global detector prompt (admin)
+      summary: Delete LLM state schema (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: detectorId
+          name: stateSchemaId
           required: true
           schema:
             type: string
       responses:
         '204':
-          description: Global detector deleted
+          description: LLM state schema deleted
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/global-detectors/{detectorId}/activate:
+  /api/admin/llm/state-schemas/{stateSchemaId}/activate:
     post:
-      summary: Activate global detector prompt (admin)
+      summary: Activate LLM state schema (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: detectorId
+          name: stateSchemaId
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Activated global detector prompt
+          description: Activated LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptTemplate'
+                $ref: '#/components/schemas/PromptVersion'
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/scenarios:
+  /api/admin/llm/rule-sets:
     get:
-      summary: List scenarios (admin)
+      summary: List LLM rule sets (admin)
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Scenario versions
+          description: LLM rule-set versions
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ScenarioVersion'
+                  $ref: '#/components/schemas/RuleSetVersion'
         default:
           $ref: '#/components/responses/Error'
     post:
-      summary: Create scenario (admin)
+      summary: Create LLM rule set (admin)
       security:
         - bearerAuth: []
       requestBody:
@@ -535,43 +535,43 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ScenarioCreateRequest'
+              $ref: '#/components/schemas/RuleSetCreateRequest'
       responses:
         '201':
-          description: Created scenario
+          description: Created LLM rule set
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScenarioVersion'
+                $ref: '#/components/schemas/RuleSetVersion'
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/scenarios/{scenarioId}:
+  /api/admin/llm/rule-sets/{ruleSetId}:
     get:
-      summary: Get scenario (admin)
+      summary: Get LLM rule set (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: scenarioId
+          name: ruleSetId
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Scenario version
+          description: LLM rule-set version
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScenarioVersion'
+                $ref: '#/components/schemas/RuleSetVersion'
         default:
           $ref: '#/components/responses/Error'
     put:
-      summary: Update scenario (admin)
+      summary: Update LLM rule set (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: scenarioId
+          name: ruleSetId
           required: true
           schema:
             type: string
@@ -580,49 +580,49 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ScenarioCreateRequest'
+              $ref: '#/components/schemas/RuleSetCreateRequest'
       responses:
         '200':
-          description: Updated scenario
+          description: Updated LLM rule set
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScenarioVersion'
+                $ref: '#/components/schemas/RuleSetVersion'
         default:
           $ref: '#/components/responses/Error'
     delete:
-      summary: Delete scenario (admin)
+      summary: Delete LLM rule set (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: scenarioId
+          name: ruleSetId
           required: true
           schema:
             type: string
       responses:
         '204':
-          description: Scenario deleted
+          description: LLM rule set deleted
         default:
           $ref: '#/components/responses/Error'
-  /api/admin/scenarios/{scenarioId}/activate:
+  /api/admin/llm/rule-sets/{ruleSetId}/activate:
     post:
-      summary: Activate scenario (admin)
+      summary: Activate LLM rule set (admin)
       security:
         - bearerAuth: []
       parameters:
         - in: path
-          name: scenarioId
+          name: ruleSetId
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Activated scenario
+          description: Activated LLM rule set
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ScenarioVersion'
+                $ref: '#/components/schemas/RuleSetVersion'
         default:
           $ref: '#/components/responses/Error'
   /api/events/live:
@@ -1127,41 +1127,41 @@ components:
 
     LLMStatus:
       type: object
-      required: [streamerId, state, latestByStage]
+      required: [streamerId, state, latestEntries]
       properties:
         streamerId:
           type: string
         state:
           type: string
           enum: [idle, active]
-        currentRunId:
+        currentMatchSessionId:
           type: string
-        currentStage:
+        currentMode:
           type: string
-        currentLabel:
+        currentOutcome:
           type: string
         currentConfidence:
           type: number
           format: double
-        detectedGameKey:
+        currentGameKey:
           type: string
         updatedAt:
           type: string
           format: date-time
-        latestByStage:
+        latestEntries:
           type: array
           items:
             $ref: '#/components/schemas/LLMDecision'
 
     LLMDecisionRecordRequest:
       type: object
-      required: [runId, stage, label, confidence]
+      required: [matchSessionId, entryType, label, confidence]
       properties:
-        runId:
+        matchSessionId:
           type: string
-        stage:
+        entryType:
           type: string
-          description: Admin-defined stage key.
+          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
         label:
           type: string
         confidence:
@@ -1197,24 +1197,24 @@ components:
           type: integer
         latencyMs:
           type: integer
-        transitionOutcome:
+        stateDelta:
           type: string
-        transitionToStep:
+        nextNeededEvidence:
           type: string
-        transitionTerminal:
+        finalized:
           type: boolean
     LLMDecision:
       type: object
       properties:
         id:
           type: string
-        runId:
+        matchSessionId:
           type: string
         streamerId:
           type: string
-        stage:
+        entryType:
           type: string
-          description: Admin-defined stage key.
+          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
         label:
           type: string
         confidence:
@@ -1248,11 +1248,11 @@ components:
           type: integer
         latencyMs:
           type: integer
-        transitionOutcome:
+        stateDelta:
           type: string
-        transitionToStep:
+        nextNeededEvidence:
           type: string
-        transitionTerminal:
+        finalized:
           type: boolean
         createdAt:
           type: string
@@ -1300,11 +1300,11 @@ components:
           nullable: true
     PromptCreateRequest:
       type: object
-      required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      required: [entryType, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
       properties:
-        stage:
+        entryType:
           type: string
-          description: Admin-defined stage key.
+          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
         position:
           type: integer
           minimum: 1
@@ -1388,47 +1388,40 @@ components:
               type: string
               format: date-time
               nullable: true
-    ScenarioStepRequest:
+    RuleItemRequest:
       type: object
-      required: [code, title, promptTemplate, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      required: [fieldKey, operation, confidenceMode]
       properties:
-        code:
+        fieldKey:
           type: string
-        title:
+        operation:
           type: string
-        promptTemplate:
+          description: Update behavior for the field, e.g. set/append/merge/keep_unknown.
+        evidenceKinds:
+          type: array
+          items:
+            type: string
+        confidenceMode:
           type: string
-        model:
-          type: string
-        temperature:
-          type: number
-        maxTokens:
-          type: integer
-        timeoutMs:
-          type: integer
-        retryCount:
-          type: integer
-        backoffMs:
-          type: integer
-        cooldownMs:
-          type: integer
-        minConfidence:
-          type: number
-    ScenarioTransitionRequest:
-      type: object
-      required: [fromStepCode, outcome]
-      properties:
-        fromStepCode:
-          type: string
-        outcome:
-          type: string
-        toStepCode:
-          type: string
-        terminal:
+          description: How confidence should be interpreted for this rule item.
+        finalOnly:
           type: boolean
-    ScenarioCreateRequest:
+    RuleConditionRequest:
       type: object
-      required: [gameSlug, name, steps, transitions]
+      required: [priority, condition, action]
+      properties:
+        priority:
+          type: integer
+        condition:
+          type: string
+        action:
+          type: string
+        targetField:
+          type: string
+          nullable: true
+    RuleSetCreateRequest:
+      type: object
+      required: [gameSlug, name, ruleItems, finalizationRules]
       properties:
         gameSlug:
           type: string
@@ -1436,43 +1429,44 @@ components:
           type: string
         description:
           type: string
-        steps:
+        ruleItems:
           type: array
           items:
-            $ref: '#/components/schemas/ScenarioStepRequest'
-        transitions:
+            $ref: '#/components/schemas/RuleItemRequest'
+        finalizationRules:
           type: array
           items:
-            $ref: '#/components/schemas/ScenarioTransitionRequest'
-    ScenarioStep:
+            $ref: '#/components/schemas/RuleConditionRequest'
+    RuleItem:
       type: object
       properties:
         id:
           type: string
-        code:
+        fieldKey:
           type: string
-        title:
+        operation:
           type: string
-        position:
-          type: integer
-        prompt:
-          $ref: '#/components/schemas/PromptTemplate'
-    ScenarioTransition:
-      type: object
-      properties:
-        id:
+        confidenceMode:
           type: string
-        fromStepCode:
-          type: string
-        outcome:
-          type: string
-        toStepCode:
-          type: string
-        terminal:
+        finalOnly:
           type: boolean
-    ScenarioVersion:
+    RuleCondition:
+      type: object
+      properties:
+        id:
+          type: string
+        priority:
+          type: integer
+        condition:
+          type: string
+        action:
+          type: string
+        targetField:
+          type: string
+          nullable: true
+    RuleSetVersion:
       allOf:
-        - $ref: '#/components/schemas/ScenarioCreateRequest'
+        - $ref: '#/components/schemas/RuleSetCreateRequest'
         - type: object
           properties:
             id:
@@ -1493,14 +1487,14 @@ components:
               type: string
               format: date-time
               nullable: true
-            steps:
+            ruleItems:
               type: array
               items:
-                $ref: '#/components/schemas/ScenarioStep'
-            transitions:
+                $ref: '#/components/schemas/RuleItem'
+            finalizationRules:
               type: array
               items:
-                $ref: '#/components/schemas/ScenarioTransition'
+                $ref: '#/components/schemas/RuleCondition'
     LiveEvent:
       type: object
       properties:
