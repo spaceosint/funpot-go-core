@@ -60,6 +60,7 @@ func (r execStreamlinkRunner) Run(ctx context.Context, stdout io.Writer, stderr 
 
 type StreamlinkCaptureConfig struct {
 	BinaryPath     string
+	FFmpegBinary   string
 	Quality        string
 	CaptureTimeout time.Duration
 	OutputDir      string
@@ -69,16 +70,20 @@ type StreamlinkCaptureConfig struct {
 // StreamlinkCaptureAdapter captures live stream bytes via streamlink and stores each
 // polling cycle into a local chunk file reference.
 type StreamlinkCaptureAdapter struct {
-	logger   *zap.Logger
-	cfg      StreamlinkCaptureConfig
-	resolver StreamlinkChannelResolver
-	runner   StreamlinkCommandRunner
-	nowFn    func() time.Time
+	logger     *zap.Logger
+	cfg        StreamlinkCaptureConfig
+	resolver   StreamlinkChannelResolver
+	runner     StreamlinkCommandRunner
+	normalizer ChunkNormalizer
+	nowFn      func() time.Time
 }
 
 func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver StreamlinkChannelResolver, runner StreamlinkCommandRunner) *StreamlinkCaptureAdapter {
 	if strings.TrimSpace(cfg.BinaryPath) == "" {
 		cfg.BinaryPath = "streamlink"
+	}
+	if strings.TrimSpace(cfg.FFmpegBinary) == "" {
+		cfg.FFmpegBinary = "ffmpeg"
 	}
 	cfg.Quality = normalizeStreamlinkQuality(cfg.Quality)
 	if cfg.CaptureTimeout <= 0 || cfg.CaptureTimeout < minimumStreamlinkCaptureTimeout {
@@ -93,7 +98,14 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 	if runner == nil {
 		runner = execStreamlinkRunner{}
 	}
-	return &StreamlinkCaptureAdapter{logger: zap.NewNop(), cfg: cfg, resolver: resolver, runner: runner, nowFn: time.Now}
+	return &StreamlinkCaptureAdapter{
+		logger:     zap.NewNop(),
+		cfg:        cfg,
+		resolver:   resolver,
+		runner:     runner,
+		normalizer: NewFFmpegChunkNormalizer(cfg.FFmpegBinary, runner),
+		nowFn:      time.Now,
+	}
 }
 
 func (a *StreamlinkCaptureAdapter) SetLogger(logger *zap.Logger) {
@@ -191,7 +203,19 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	}
 
 	logger.Info("stream capture completed", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int64("bytes", stat.Size()))
-	return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
+	chunk := ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}
+	if a.normalizer == nil {
+		return chunk, nil
+	}
+	normalized, err := a.normalizer.Normalize(ctx, chunk)
+	if err != nil {
+		logger.Error("stream chunk normalization failed", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Error(err))
+		return ChunkRef{}, err
+	}
+	if normalized.Reference != chunk.Reference {
+		logger.Info("stream chunk normalized", zap.String("streamerID", id), zap.String("sourceChunkPath", chunk.Reference), zap.String("normalizedChunkPath", normalized.Reference))
+	}
+	return normalized, nil
 }
 
 func sanitizeToken(value string) string {
