@@ -1,7 +1,7 @@
 # FunPot Modular Monolith Architecture
 
 ## Overview
-The FunPot backend is a modular Go monolith that exposes REST and WebSocket APIs for the Telegram Mini App and coordinates with an external worker responsible for media processing and LLM-driven event generation. The service is horizontally scalable and stateless, relying on PostgreSQL and Redis for durable state and fast coordination.
+The FunPot backend is a modular Go monolith that exposes REST and WebSocket APIs for the Telegram Mini App and coordinates with an external worker responsible for media processing and LLM-driven state tracking. The service is horizontally scalable and stateless, relying on PostgreSQL and Redis for durable state and fast coordination.
 
 ## Non-Functional Goals & SLOs
 - Support 100–200 concurrent streamers and 1,000–100,000 concurrent users.
@@ -21,13 +21,13 @@ Each domain lives in a dedicated package under `internal/`:
 | payments | Telegram Stars invoices, webhook handling, status lifecycle |
 | referrals | Referral code issuance, invitation tracking, reward calculation |
 | streamers | Twitch catalog, eligibility checks (>100 viewers), moderation, status lifecycle |
-| games | Streamer game definitions, rules, state transitions |
-| events | Event creation from worker payloads, lifecycle, prompt version tracking |
+| games | Streamer game definitions, match-tracker templates, outcome taxonomies |
+| events | Event creation from worker payloads, lifecycle, tracker version tracking |
 | votes | Vote ingestion, balance debits, totals aggregation, deduplication |
-| media | Clip metadata ingestion, association with games/events |
-| prompts | Prompt versioning (session/game/per-clip), rollout management |
+| media | Clip metadata ingestion, association with games/events and match sessions |
+| prompts | Prompt versioning for match updates/finalization, rollout management |
 | realtime | WebSocket gateway, Redis pub/sub fan-out, backpressure |
-| admin | Admin CRUD for streamers/games/prompts, feature flags, manual replays |
+| admin | Admin CRUD for streamers/games/tracker schemas/rules/prompts, feature flags, manual replays |
 | integrations | Telegram webhook, worker callbacks, Twitch viewer validator |
 | config | Feature flags, rate limits, cached configuration delivery |
 
@@ -41,7 +41,7 @@ Cross-cutting packages such as logging, tracing, rate limiting, and configuratio
 ## Request Flow Summary
 1. **Authentication**: Telegram WebApp `initData` is validated per request. On success, the backend returns a signed JWT (5–10 minutes TTL) used for REST/WSS authentication. Admin users rely on role claims.
 2. **Realtime**: Clients connect to `/realtime` with the JWT. Subscriptions are organized per streamer/game/user. Fan-out uses Redis Pub/Sub to guarantee all nodes can broadcast state changes (EVENT_CREATED/UPDATED/CLOSED, BALANCE_UPDATED, SYSTEM_NOTICE).
-3. **Worker Integration**: The external worker calls signed internal endpoints (`/internal/worker/*`). The backend validates HMAC signatures, enforces idempotency, persists events/media, and triggers realtime notifications.
+3. **Worker Integration**: The external worker calls signed internal endpoints (`/internal/worker/*`). The backend validates HMAC signatures, enforces idempotency, persists match sessions/state snapshots/evidence/media, and triggers realtime notifications.
 4. **Financial Operations**: Idempotent ledger transactions enforce double-entry accounting for Stars top-ups, voting costs, rewards, withdrawals, and referral bonuses.
 
 ## Scaling & Performance

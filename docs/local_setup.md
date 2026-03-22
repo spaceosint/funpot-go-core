@@ -160,15 +160,18 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
 - `POST /api/streamers` – submits a Twitch streamer nickname for moderation/validation, then immediately starts the per-streamer Streamlink analysis scheduler when background orchestration is configured.
 - When Streamlink reports that a Twitch URL has no playable streams (for example, the stream ended or is offline), the scheduler treats that cycle as a graceful skip instead of a hard worker failure and retries on the next 10-second window.
-- `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM detector/scenario status for a streamer.
+- `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM match-session / state-tracker status for a streamer.
 - `DELETE /api/streamers/{streamerId}/tracking` – stops the active Streamlink/LLM tracking loop for a streamer and returns the updated `stopped` status so the client can disable the tracking button immediately.
-- When PostgreSQL is enabled, detailed LLM decision history (`chunkRef`, prompt/runtime params, request/response refs, transition outcome) is persisted in `streamer_llm_decisions` so `/api/streamers/{streamerId}/llm-decisions` and `/status` survive service restarts. The API now bootstraps this table/index set on first access if migrations were missed, but versioned migrations remain the canonical deployment path.
-- `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent detector/scenario decision history for a streamer.
+- When PostgreSQL is enabled, detailed LLM tracker history (`chunkRef`, prompt/runtime params, request/response refs, updated state snapshot, evidence delta, conflict data, finalization outcome) is persisted so `/api/streamers/{streamerId}/llm-decisions` and `/status` survive service restarts. Versioned migrations remain the canonical deployment path.
+- `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent state-update/finalization history for a streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
 - `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
+- `GET /api/admin/llm/state-schemas` / `POST /api/admin/llm/state-schemas` – admin CRUD for versioned match state schemas.
+- `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for update/finalization rules used by the tracker.
+- `GET /api/admin/llm/prompts` / `POST /api/admin/llm/prompts` – admin CRUD for match update/finalization prompt templates.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
@@ -191,9 +194,10 @@ local smoke tests.
 - Disable Prometheus scraping locally by setting `FUNPOT_TELEMETRY_METRICS_ENABLED=false`.
 - Adjust the log level (`debug`, `info`, `warn`, `error`) via `FUNPOT_LOG_LEVEL`.
 - Stream-analysis metrics now expose worker health signals on `/metrics`, including
-  `funpot_stream_chunk_lag_seconds`, `funpot_stream_stage_latency_ms`,
-  `funpot_stream_stage_results_total`, `funpot_stream_stage_tokens_total`, and
-  `funpot_stream_streamer_failures_total` for M2.1 orchestration monitoring.
+  `funpot_stream_chunk_lag_seconds`, `funpot_stream_update_latency_ms`,
+  `funpot_stream_finalize_latency_ms`, `funpot_stream_state_conflicts_total`,
+  `funpot_stream_unknown_outcomes_total`, and `funpot_stream_streamer_failures_total`
+  for M2.1 tracker monitoring.
 - When Sentry is enabled, the shutdown process flushes pending events with a
   2-second timeout.
 - Telegram authentication requires a bot token; for local development you can

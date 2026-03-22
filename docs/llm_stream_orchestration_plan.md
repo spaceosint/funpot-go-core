@@ -1,296 +1,441 @@
-# LLM Stream Orchestration Plan (Gemini + Streamlink)
+# LLM Stream Orchestration Plan (State Tracker + Streamlink)
 
 ## Goal
-Design and implement an MVP where:
-1. Admin configures a global game-detection prompt plus per-game scenario prompts and runtime limits.
-2. Background workers read livestream fragments via Streamlink.
-3. Workers first detect the game, then execute the active per-game scenario step-by-step and store normalized decisions/transitions.
-4. Users open streamer page and observe live LLM status updates.
+Design and implement the M2.1 stream-analysis flow around a **single-match state tracker** instead of a long prompt-chain narrative.
+
+The target behavior is:
+1. Admin configures the **state schema**, **update rules**, **finalization rules**, and runtime limits used by the LLM.
+2. Background workers read livestream fragments via Streamlink every 10 seconds.
+3. Each active match session is treated as **one chat / one match**.
+4. For every fragment, the worker sends:
+   - the previous compact state JSON,
+   - the new chunk observations,
+   - the active admin-managed update prompt/rules.
+5. The LLM returns **updated state JSON only**.
+6. When the match is finished or the video ends, the worker sends the accumulated state to a finalization prompt and stores the final outcome (`win | loss | draw | unknown`).
+7. State changes and final decisions are persisted and published to websocket consumers.
 
 ## Scope of this iteration
-- Planning and target architecture for M2.1.
-- Security model for admin access (Telegram-based identity).
-- Redis usage model for orchestration and realtime delivery.
+- Replace the older "scenario graph / multi-step prompt chain" plan with a **state-machine style** design.
+- Make admin CRUD for state fields and rules the primary product requirement.
+- Keep the MVP focused on Counter-Strike match outcome tracking.
 
 ## Priority implementation target
-- Treat the following as the top-priority slice for immediate delivery:
-  - streamer added -> analysis job starts automatically;
-  - Streamlink captures/reads fragment each 10 seconds;
-  - each fragment is sent first to the active global game-detection prompt, then to the active game-scenario step prompt when applicable;
-  - decisions and step transitions are persisted and published to websocket consumers.
+Treat the following as the top-priority slice for immediate delivery:
+- streamer added -> analysis job starts automatically;
+- Streamlink captures/reads a fragment every 10 seconds;
+- one active match session is tracked as one chat/session;
+- each chunk updates a compact persisted state via LLM;
+- admin can CRUD state fields, evidence fields, and rule sets used by the tracker;
+- legacy detector/scenario-chain codepaths are removed or refactored so only one orchestration model remains;
+- final outcome is derived from accumulated evidence only;
+- decisions and state updates are persisted and published to websocket consumers.
 
 ## Product flow (high level)
-1. User (regular user or admin) adds streamer via `POST /api/streamers`.
-2. Worker scheduler picks active streamers and starts analysis cycle (or an immediate bootstrap job right after streamer creation).
-3. Every fragment first goes through the active global game-detection prompt.
-4. If a supported game is detected, the worker resolves the active admin-managed scenario for that game.
-5. The scenario runs step-by-step, and each next step is chosen from the previous normalized LLM answer / transition rule.
-6. Step outputs are persisted and broadcast to clients.
-7. UI shows timeline + current game/scenario state for each streamer.
+1. User adds streamer via `POST /api/streamers`.
+2. Worker scheduler starts analysis for the streamer immediately after onboarding.
+3. The worker samples the stream every 10 seconds via Streamlink.
+4. The system opens or resumes the active **match session** for that streamer/game.
+5. For each chunk, the worker calls the LLM with:
+   - `previous_state`,
+   - `new_chunk`,
+   - the active admin-managed update prompt,
+   - the active admin-managed rule set.
+6. The LLM returns `updated_state`, `delta`, and `next_needed_evidence` in strict JSON.
+7. The backend persists the state snapshot, evidence log entries, and derived status.
+8. When end-of-match evidence appears (or the stream/video ends), the worker calls the finalization prompt with the current state.
+9. The backend persists the final decision and resets the streamer back to match discovery mode.
 
-## Scenario model
+## Core modeling decision: one chat = one match
+The LLM must behave as a **finite match state tracker**, not as a commentator.
 
-### Global detector (always-on entrypoint)
-Question: What game is currently on the stream?
-- Output enum should map into known games, e.g. `counter_strike | dota2 | valorant | unknown`.
-- If output is `unknown`, pipeline stays on the global detector and retries on the next capture window.
-- If output matches a configured game scenario, the worker loads that scenario and enters its first step.
+### Required operating rules
+- One chat/session contains exactly one match.
+- Every update call must include `previous_state` explicitly.
+- The LLM must always return valid JSON only.
+- The model must not guess the outcome from gameplay quality or vague impressions.
+- Outcome changes are allowed only when the state contains direct or strongly-supported evidence.
+- If player team/side is not confirmed, or the ending is not visible, the result remains `unknown`.
 
-### Per-game scenarios
-- Each game can have one active scenario at a time.
-- A scenario contains ordered or graph-based steps.
-- Step count is admin-defined: some games may have 2 stages, others 4+ stages.
-- Each step references an active admin-managed prompt version plus runtime config.
-- Each step declares transition rules: which normalized answer(s) move to which next step, pause state, terminal state, or fallback.
-- Admin must be able to create, edit, activate, deactivate, and delete scenarios/steps/transitions.
+## State model
 
-## Counter-Strike scenario (initial target)
+### Canonical session state
+```json
+{
+  "session_type": "single_match",
+  "game": "cs2",
+  "mode": "competitive | faceit | wingman | unknown",
+  "match_status": "in_progress | finished | interrupted | unknown",
+  "focus_player": {
+    "name": null,
+    "team_side": "CT | T | unknown",
+    "team_label": "team_1 | team_2 | unknown",
+    "confidence": 0.0
+  },
+  "score_state": {
+    "ct_score": null,
+    "t_score": null,
+    "last_confirmed_from": "hud | scoreboard | endscreen | inferred | unknown",
+    "confidence": 0.0
+  },
+  "round_tracking": {
+    "observed_round_wins_ct": 0,
+    "observed_round_wins_t": 0,
+    "observed_round_history": [],
+    "round_history_confidence": 0.0
+  },
+  "final_evidence": {
+    "final_banner_seen": false,
+    "final_banner_text": null,
+    "final_scoreboard_seen": false,
+    "final_scoreboard_text": null,
+    "winner_side_confirmed": "CT | T | draw | unknown",
+    "winner_team_label": "team_1 | team_2 | unknown",
+    "confidence": 0.0
+  },
+  "player_result": {
+    "outcome": "win | loss | draw | unknown",
+    "reason": null,
+    "confidence": 0.0
+  },
+  "supporting_evidence": [],
+  "open_uncertainties": [],
+  "hard_conflicts": [],
+  "next_needed_evidence": [
+    "final scoreboard",
+    "final banner",
+    "clear player team identification"
+  ]
+}
+```
 
-### CS Step 1 — Match entry / queue type detection
-Question: Is a new ranked Counter-Strike match starting, and if so is it competitive, faceit, premier, or other?
-- Output enum: `competitive | faceit | premier | other | no_ranked_match | uncertain`
-- If `no_ranked_match`: scenario waits and retries on the next capture window.
-- If `faceit` / `competitive` / `premier`: transition into the corresponding active branch.
+### Practical runtime shape
+```json
+{
+  "match_id": "chat_session_match_001",
+  "game": "cs2",
+  "mode": "competitive",
+  "status": "in_progress",
+  "player": {
+    "name": "unknown",
+    "team_side": "CT",
+    "team_label": "team_1",
+    "team_confidence": 0.82
+  },
+  "score": {
+    "ct": 7,
+    "t": 5,
+    "source": "hud",
+    "confidence": 0.88
+  },
+  "winner": {
+    "side": "unknown",
+    "team_label": "unknown",
+    "source": "unknown",
+    "confidence": 0.0
+  },
+  "player_outcome": {
+    "value": "unknown",
+    "confidence": 0.0
+  },
+  "evidence_log": [],
+  "uncertainties": [
+    "final result not visible yet"
+  ],
+  "hard_conflicts": []
+}
+```
 
-### CS Step 2 — Match progress / completion wait
-Question: Has the tracked match finished yet?
-- Output enum: `in_progress | finished | uncertain`
-- If `in_progress`: stay on the same step and keep polling.
-- If `finished`: transition to result detection.
+## Update/finalize protocol
 
-### CS Step 3 — Match result detection
-Question: Did the streamer win the tracked match?
-- Output enum: `win | loss | draw | unknown`
-- Stores final decision and confidence, then returns control to the global detector for the next cycle.
+### Update step
+Each 10-second chunk produces one update request containing:
+- `previous_state`
+- `new_chunk.time_range`
+- structured observations (`observations`, `visible_hud_text`, `scoreboard_text`, `round_result_signals`, `team_identity_signals`, `final_screen_signals`)
+- active admin-managed rules and prompt version metadata
 
-## Transition rules
-- Every scenario step must define normalized outputs and the next action for each output.
-- Transitions may point to another step, remain on the current step, pause with cooldown, or end the scenario run.
-- The worker should never infer a next step outside admin-configured transition rules.
-- Admin changes must be versioned/auditable so historical decisions keep prompt linkage.
+Expected response shape:
+```json
+{
+  "updated_state": {},
+  "delta": [
+    "score updated from 7-5 to 8-5"
+  ],
+  "next_needed_evidence": [
+    "final scoreboard",
+    "final banner"
+  ]
+}
+```
+
+### Final step
+When the match ends or the stream segment is exhausted, the backend sends the accumulated state to a finalization prompt.
+
+Expected response shape:
+```json
+{
+  "final_outcome": "win",
+  "final_score": {
+    "ct": 13,
+    "t": 10
+  },
+  "player_team": {
+    "team_side": "CT",
+    "team_label": "team_1"
+  },
+  "winner_team": {
+    "team_side": "CT",
+    "team_label": "team_1"
+  },
+  "confidence": 0.97,
+  "evidence": [
+    "Final scoreboard shows CT 13 - T 10",
+    "Focus player had been consistently identified as CT"
+  ],
+  "unresolved_issues": []
+}
+```
+
+## Evidence-first decision rules
+The finalizer must use a strict priority cascade:
+1. Final banner / end screen.
+2. Final scoreboard.
+3. Clear late-match scoreboard.
+4. Accumulated round outcomes with high confidence.
+5. Otherwise `unknown`.
+
+Additional hard rules:
+- Never infer `win` because the player "looked stronger".
+- If player side/team is not confirmed, keep `unknown`.
+- If the ending is cut off or interrupted, keep `unknown` unless final evidence was already captured.
+- Contradictions must be stored in `hard_conflicts`, not silently overwritten.
 
 ## Admin capabilities (backend requirements)
-Admin scope in MVP is focused on LLM prompt/config management; broader admin tools are expected in later milestones.
-- Manage the always-on global game-detection prompt (`versioned`, `is_active`).
-- Manage per-game scenarios, their steps, and transition rules.
-- Attach an active prompt template/version to each scenario step.
-- Configure model/runtime params (`model`, `temperature`, `max_tokens`, `timeout_ms`).
-- Configure orchestration controls (`retry_count`, `backoff_ms`, `cooldown_ms`, `min_confidence`).
-- Enable/disable a whole scenario, a branch, or an individual step per game.
-- View audit trail: who changed prompt/version/scenario/transition and when.
+Admin scope changes in this design. The primary object is no longer a prompt-chain scenario, but a **state/rules configuration package**.
 
-## Security: should admin rely only on Telegram ID?
-Short answer: **Telegram ID alone is not enough**.
+Admins must be able to:
+- CRUD **state schemas** for supported games/modes.
+- CRUD **state fields** and field metadata:
+  - field key,
+  - label/description,
+  - enum constraints,
+  - confidence requirements,
+  - whether the field is evidence-bearing, inferred, or final-only.
+- CRUD **update rules** that define how the LLM should treat new chunks.
+- CRUD **finalization rules** that define how the final outcome is derived from accumulated state.
+- CRUD **evidence categories** such as `team_identification`, `score_update`, `round_result`, `final_screen`, `scoreboard`, `side_switch`, `inference`.
+- Configure active prompt templates for:
+  - match update,
+  - match finalization,
+  - optional match-start detection.
+- Configure runtime limits (`model`, `temperature`, `max_tokens`, `timeout_ms`, `retry_count`, `backoff_ms`).
+- Activate/deactivate a versioned state/rules package.
+- View audit trail for all schema/rule/prompt changes.
 
-Recommended approach:
-1. Authenticate via Telegram `initData` signature verification.
-2. Map `telegram_id` to internal user record.
-3. Authorize admin using role/permissions in DB (`users.role = admin/superadmin`).
-4. Enforce admin access with middleware + token claims (`role`, `permissions`, `token_version`).
-5. Add optional hardening for sensitive endpoints:
-   - allowlist of admin Telegram IDs in env for bootstrap,
-   - short JWT TTL + refresh rotation,
-   - IP/device anomaly alerts,
-   - action audit logs.
+## Data model (draft)
 
-
-## Redis and sessions strategy
-For this backend we should **use Redis for server-side session state**, not only for queues/realtime.
-
-Recommended split:
-1. **Access token (JWT)** remains short-lived and stateless for normal API checks.
-2. **Refresh session** is stored in Redis (`session:{id}` with TTL) so we can:
-   - revoke sessions instantly (logout / suspicious activity),
-   - limit concurrent sessions per admin/user,
-   - rotate refresh tokens safely,
-   - invalidate all sessions by `token_version` bump.
-3. Keep PostgreSQL as source of truth for users/roles, Redis as fast volatile session store.
-
-Why this matters for admin security:
-- admin actions are sensitive; quick session revocation is required,
-- Redis TTL gives automatic expiry and reduces DB writes,
-- multi-instance API nodes share the same session view without sticky sessions.
-
-## Why Redis is useful here
-Redis should be introduced before full orchestration rollout because it reduces load and enables near-real-time behavior.
-
-Primary usage:
-1. **Job queue / stream analysis scheduling**
-   - pending jobs by streamer and stage,
-   - delayed retries/backoff,
-   - dead-letter queue.
-2. **Distributed locks**
-   - prevent duplicate processing for same streamer/stage/window.
-3. **Realtime pub/sub**
-   - broadcast stage updates to websocket nodes.
-4. **Hot cache**
-   - last known stage/status for fast streamer page rendering.
-5. **Rate limiting**
-   - protect admin update endpoints and worker-triggered LLM calls.
-6. **Idempotency keys with TTL**
-   - deduplicate repeated events/chunks.
-
-## Data contracts (draft)
-
-### Stream analysis run
-- `run_id`
+### Match sessions
+- `match_session_id`
 - `streamer_id`
-- `started_at`, `finished_at`
-- `source` (`streamlink`)
-- `status` (`running|completed|failed|partial`)
-
-### Scenario step decision
-- `id`, `run_id`, `scenario_id`, `step_id`
 - `game_key`
-- `prompt_version_id`
-- `input_ref` (clip/chunk reference)
-- `raw_response` (json/text)
-- `normalized_label`
-- `transition_key`, `next_step_id`
-- `confidence`
-- `latency_ms`, `tokens_in`, `tokens_out`
-- `error_code`, `error_message`
+- `status` (`discovering|in_progress|finished|interrupted|failed`)
+- `started_at`, `finished_at`
+- `state_schema_version_id`
+- `update_prompt_version_id`
+- `finalize_prompt_version_id`
+
+### Match state snapshots
+- `id`
+- `match_session_id`
+- `chunk_id`
+- `state_json`
+- `delta_json`
+- `next_needed_evidence_json`
+- `confidence_summary`
 - `created_at`
 
+### Match evidence log
+- `id`
+- `match_session_id`
+- `chunk_id`
+- `time_range`
+- `kind`
+- `text`
+- `confidence`
+- `source_type` (`observed|inferred`)
+- `created_at`
+
+### Match final decisions
+- `id`
+- `match_session_id`
+- `final_outcome`
+- `final_score_json`
+- `player_team_json`
+- `winner_team_json`
+- `confidence`
+- `evidence_json`
+- `unresolved_issues_json`
+- `created_at`
+
+### Admin-managed tracker configs
+- `state_schema_versions`
+- `state_schema_fields`
+- `tracker_rule_versions`
+- `tracker_rule_items`
+- `tracker_prompt_versions`
+- `tracker_config_audit_log`
+
 ## API/WSS plan (MVP)
-- `POST /api/streamers` — add streamer (available to authenticated users, not admin-only).
-- `GET /api/streamers/:id/status` — current aggregated game/scenario status.
-- `GET /api/streamers/:id/llm-decisions?limit=` — detector + scenario step decision history.
-- `GET /api/admin/prompts` / `POST /api/admin/prompts` / `POST /api/admin/prompts/:id/activate`.
-- `GET /api/admin/scenarios` / `POST /api/admin/scenarios` / scenario step/transition management endpoints.
-- `WS /ws` event `LLM_STAGE_UPDATED` with payload `{streamerId, gameKey, scenarioId, stepId, label, confidence, ts}`.
+
+### Streamer / tracker read APIs
+- `POST /api/streamers` — add streamer and auto-start analysis.
+- `GET /api/streamers/:id/status` — current aggregated match-tracker status.
+- `GET /api/streamers/:id/llm-decisions?limit=` — recent state-update/finalize history.
+- `GET /api/streamers/:id/match-sessions` — recent match sessions with latest state summary.
+
+### Admin CRUD APIs
+- `GET /api/admin/llm/state-schemas`
+- `POST /api/admin/llm/state-schemas`
+- `PUT /api/admin/llm/state-schemas/:id`
+- `POST /api/admin/llm/state-schemas/:id/activate`
+- `GET /api/admin/llm/rule-sets`
+- `POST /api/admin/llm/rule-sets`
+- `PUT /api/admin/llm/rule-sets/:id`
+- `POST /api/admin/llm/rule-sets/:id/activate`
+- `GET /api/admin/llm/prompts`
+- `POST /api/admin/llm/prompts`
+- `POST /api/admin/llm/prompts/:id/activate`
+
+### WebSocket events
+- `LLM_MATCH_STATE_UPDATED` with payload:
+  `{streamerId, matchSessionId, gameKey, status, stateSummary, confidence, ts}`
+- `LLM_MATCH_FINALIZED` with payload:
+  `{streamerId, matchSessionId, outcome, finalScore, confidence, ts}`
 
 ## Phased implementation
 
-### Phase 1 — Admin + prompt management
-- Add admin authorization middleware and role checks.
-- Add global detector prompt CRUD + activation.
-- Add per-game scenario/step/transition CRUD + activation.
-- Add audit logging for prompt/scenario changes.
+### Phase 1 — Legacy removal + admin CRUD for tracker configuration
+- Delete or refactor legacy detector/scenario-chain runtime codepaths before enabling the tracker in production.
+- Add DB-backed CRUD for state schemas, state fields, rule sets, and prompt versions.
+- Add activation/versioning and audit logging.
+- Remove in-memory-only scenario-chain configuration from the roadmap and services.
 
-### Phase 2 — Worker orchestration skeleton
+### Phase 2 — Worker state tracker loop
 - Scheduler selects active streamers.
 - Streamlink chunk fetch + storage reference.
-- Gemini client wrapper + normalized parser for detector and scenario steps.
+- Match session discovery/open/resume.
+- LLM update call with `previous_state + new_chunk`.
+- Persist updated state/evidence/conflicts.
 
-### Phase 3 — Realtime delivery
-- Persist detector + scenario step decisions.
-- Publish WS events and expose REST status/history.
-- Add reconnect/backfill logic for client timeline.
+### Phase 3 — Finalization and delivery
+- Detect terminal evidence / session end.
+- LLM finalization call from accumulated state.
+- Persist final decision and publish websocket notifications.
+- Expose REST history and state backfill.
 
 ### Phase 4 — Reliability & observability
 - Retries/backoff, DLQ, idempotency guards.
-- Metrics: detector/scenario-step latency, success/fail ratio, token usage.
-- Alerts on model drift / error spikes.
+- Metrics for chunk lag, update latency, finalization latency, state conflicts, and unknown-rate.
+- Alerting on drift in final-outcome confidence and conflict frequency.
 
 ## Risks and mitigations
-- Ambiguous visual/audio context -> use confidence threshold + `unknown` path.
-- LLM cost spikes -> rate limits, batching windows, token budgets.
-- Duplicate pipeline executions -> Redis lock + idempotency keys.
-- Prompt regressions -> versioning, canary activation, rollback to previous prompt.
+- **Narrative drift**: force strict JSON-only responses and always provide `previous_state`.
+- **Prompt sprawl**: version state schemas/rules separately from prompt text so admins can change logic without rewriting everything.
+- **Conflicting evidence**: keep `hard_conflicts` instead of overwriting prior facts.
+- **False certainty**: outcome remains `unknown` unless evidence passes admin-defined thresholds.
 
 ## Open questions before coding
-1. Which non-CS games must the global detector recognize in MVP versus return as `unknown`?
-2. Fixed for current priority scope: Streamlink chunks must be sampled every 10 seconds (revisit only after baseline stability).
-3. Should result determination rely only on LLM, or also optional external match APIs later?
-4. What freshness SLA do we target on streamer page (e.g., update every <=10 seconds)?
+1. Do we need a lightweight admin-managed match-start detector, or is manual/heuristic session opening enough for the first slice?
+2. Which game modes beyond CS2 competitive/faceit should receive first-class state schemas in MVP?
+3. Should admins be able to define rule ordering/priority explicitly per rule item?
+4. Which fields must be editable in UI versus stored as advanced JSON config only?
 
 ## Execution backlog (next two iterations)
 
 This backlog continues implementation according to `docs/implementation_plan.md` (M2.1)
 and is ordered to ship a vertical slice before hardening.
 
-### Iteration A — End-to-end pipeline baseline
+### Iteration A — State tracker baseline
 
-Goal: produce and persist global game-detector decisions for active streamers from real worker cycles, then enter the first configured game scenario step when a supported game is found.
+Goal: produce and persist match-session state snapshots for active streamers from real worker cycles.
 
-#### A1. Worker pipeline skeleton
-- [ ] Introduce `internal/media/stream_capture_worker.go` (or equivalent module package)
-  with cycle orchestration:
-  - acquire streamer lock,
-  - fetch fragment via streamlink adapter every 10 seconds,
-  - resolve the active global detector prompt and call Gemini,
-  - if a supported game is detected, resolve the active scenario + current step prompt,
-  - persist normalized detector/step decision and transition outcome.
-- [ ] Add streamlink adapter interface to isolate process execution and allow tests.
-- [ ] Add DB model/repository for `stream_analysis_runs` and link to stage decisions.
+#### A1. Legacy removal + admin CRUD + persistence
+- [ ] Delete or refactor legacy detector/scenario-chain runtime codepaths and feature flags.
+- [ ] Add DB model/repository for state schema versions, fields, rule sets, and prompt versions.
+- [ ] Add activation + audit history for tracker configs.
+- [ ] Remove references to deprecated scenario-chain storage from active implementation docs and services.
 
 Definition of done:
-- one worker pass creates `run` + global detector record for a test streamer;
+- old prompt-chain runtime entrypoints are no longer reachable in normal execution;
+- admin can create/update/activate a tracker config package;
+- workers resolve active config from DB only.
+
+#### A2. Worker update loop
+- [ ] Introduce/update stream capture worker orchestration to:
+  - acquire streamer lock,
+  - fetch fragment via Streamlink every 10 seconds,
+  - resolve active tracker config,
+  - call the LLM with `previous_state + new_chunk`,
+  - persist state snapshot and evidence log.
+- [ ] Add match session repository and link state snapshots to chunk windows.
+- [ ] Add normalized parser/validator for strict update JSON.
+
+Definition of done:
+- one worker pass creates or updates a match session state snapshot for a test streamer;
 - duplicate cycle for the same lock window is rejected.
 
-#### A2. Global detector normalization and storage
-- [ ] Implement global detector parser mapping model output to supported game keys
-  plus `unknown`.
-- [ ] Add confidence threshold and cooldown handling for `unknown` branch.
-- [ ] Persist `raw_response`, `normalized_label`, `confidence`, `latency_ms`,
-  `tokens_in`, `tokens_out`, and chosen scenario transition.
+#### A3. Baseline telemetry
+- [ ] Add metrics for chunk lag, update latency, finalize latency, unknown-rate, and conflict-rate.
+- [ ] Add structured logs with `match_session_id`, `streamer_id`, `game_key`, and `chunk_window`.
 
 Definition of done:
-- parser is covered by table-driven tests for valid/invalid responses;
-- confidence fallback path stores `unknown` and does not crash the cycle.
+- metrics are visible in local `/metrics` output;
+- failure logs are correlated by `match_session_id`.
 
-#### A3. Baseline telemetry for pipeline
-- [ ] Add metrics for detector/scenario-step latency and success/fail counters.
-- [ ] Add structured logs with `run_id`, `streamer_id`, `game_key`, `scenario_id`, `step_id`, and `attempt`.
+### Iteration B — Final decision flow + reliability
 
-Definition of done:
-- metrics are visible in local `/metrics` output and include stage labels;
-- failure logs are correlated by `run_id`.
+Goal: complete M2.1 exit criteria with finalization, websocket updates, and resilient orchestration.
 
-### Iteration B — Full staged flow + reliability
-
-Goal: complete M2.1 exit criteria with staged flow, WS updates, and resilient
-orchestration.
-
-#### B1. Scenario workflow + transitions
-- [ ] Implement admin-defined transition engine:
-  - load active scenario for the detected game,
-  - execute the current step,
-  - choose next step strictly from normalized output + transition config.
-- [ ] Implement the initial Counter-Strike scenario normalization enums:
-  - Step 1: `competitive | faceit | premier | other | no_ranked_match | uncertain`
-  - Step 2: `in_progress | finished | uncertain`
-  - Step 3: `win | loss | draw | unknown`
-- [ ] Support branch-specific behavior, e.g. Faceit branch waits for completion then asks for result.
+#### B1. Finalization flow
+- [ ] Implement end-of-match detection / terminal-state trigger.
+- [ ] Implement finalization prompt execution from accumulated state.
+- [ ] Persist final outcome (`win | loss | draw | unknown`) with evidence bundle.
 
 Definition of done:
-- deterministic transition unit tests pass;
-- each detector/scenario step emits decision records with prompt version linkage.
+- finalized matches produce durable outcome records and state summaries;
+- unknown remains the default when final evidence is insufficient.
 
 #### B2. Retry, idempotency, dead-letter
-- [ ] Add per-detector/per-step retry policy with exponential backoff.
-- [ ] Add idempotency keys (`streamer_id + scenario_or_detector + step + window`) with Redis TTL.
+- [ ] Add retry policy with exponential backoff for Streamlink and LLM failures.
+- [ ] Add idempotency keys (`streamer_id + match_session_id + chunk_window + request_kind`) with Redis TTL.
 - [ ] Add DLQ payload format and reprocessing admin command.
 
 Definition of done:
 - transient failures are retried and eventually either succeed or move to DLQ;
-- duplicate job delivery does not create duplicate terminal decisions.
+- duplicate job delivery does not create duplicate state snapshots or final decisions.
 
 #### B3. Realtime and session integration
-- [ ] Publish `LLM_STAGE_UPDATED` from worker path to WS hub.
-- [ ] Add reconnect backfill flow (`GET status` + `GET llm-decisions`).
-- [ ] Integrate Redis refresh session store in auth login/refresh/logout endpoints:
-  - token pair issuance,
-  - rotate on refresh,
-  - revoke-by-device,
-  - revoke-all sessions.
+- [ ] Publish `LLM_MATCH_STATE_UPDATED` and `LLM_MATCH_FINALIZED` from the worker path.
+- [ ] Add reconnect backfill flow (`GET status` + `GET llm-decisions` + match session history).
+- [ ] Integrate Redis refresh session store in auth login/refresh/logout endpoints.
 
 Definition of done:
-- websocket clients receive near-real-time detector/scenario-step updates;
+- websocket clients receive near-real-time tracker updates;
 - refresh token replay is rejected after rotation;
 - revoke-all immediately invalidates prior refresh sessions.
 
 ## Delivery checklist mapped to `docs/implementation_plan.md`
 
 ### M2.1 completion checklist
-- [x] Implement stream capture worker pipeline with global detector + per-game scenario routing.
-- [ ] Build staged CS game flow (A/B/C/D).
+- [ ] Delete or refactor legacy detector/scenario-chain runtime codepaths.
+- [ ] Implement DB-backed admin CRUD for state schemas, rules, and prompt versions.
+- [ ] Implement stream capture worker pipeline with `previous_state + new_chunk -> updated_state` flow.
+- [ ] Persist match sessions, state snapshots, evidence, and final outcomes.
+- [ ] Publish live match-state/finalization updates via WebSocket.
 - [ ] Add retries, idempotency, and dead-letter handling.
-- [ ] Publish live LLM status updates via WebSocket.
 - [ ] Integrate refresh session store into auth flows.
-- [ ] Add observability (latency, success ratio, token usage, drift alerts).
+- [ ] Add observability (latency, unknown-rate, conflict-rate, token usage).
 
 ### Next milestone preview (M3)
-- [ ] Start `/internal/worker/events` ingestion only after M2.1 checklist is
-  completed.
+- [ ] Start `/internal/worker/events` ingestion only after the M2.1 tracker checklist is completed.

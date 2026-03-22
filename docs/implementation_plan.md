@@ -18,30 +18,32 @@ stream analysis immediately after a streamer is added:
 
 - Trigger background orchestration when a streamer is created/activated.
 - Capture stream fragments every **10 seconds** via Streamlink.
-- For each fragment, first call the **active global game-detection prompt**
-  managed by admins.
-- Persist prompts/scenarios in the database so agents and services never rely on
-  in-memory-only prompt configuration.
-- Model each game scenario as a **sequence of linked prompts** where every next
-  step is chosen only after the previous LLM response matches an expected
-  normalized outcome/transition rule.
-- When a game is detected, resolve the **active admin-managed scenario** for that
-  game and execute its stage prompts/transition rules step-by-step.
-- Persist run/stage outputs and broadcast state updates to clients.
+- For each fragment, resolve the **active admin-managed state schema, rule set,
+  and prompt package** from the database.
+- Treat each detected match as **one chat / one match session** with an explicit,
+  compact persisted state JSON passed back to the model on every update.
+- Replace narrative prompt chains with a **state-tracker loop**:
+  `previous_state + new_chunk -> updated_state`.
+- Let admins CRUD the tracked state fields, evidence fields, and finalization
+  rules so outcome logic is data-driven and auditable.
+- Explicitly delete or refactor the old detector/scenario-chain orchestration
+  codepaths so the runtime has a single tracker-based source of truth.
+- Persist state snapshots, evidence logs, final outcomes, and broadcast live
+  state updates to clients.
 
 ### Priority checklist (must be tracked in status updates)
 - [x] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [x] Provide a stop-tracking control path so clients can end per-streamer monitoring without restarting the service.
 - [x] Fixed 10-second capture cadence with lock/idempotency protections.
-- [ ] Persist the active global game-detection prompt in the database with audit/version history.
-- [ ] Persist active per-game scenarios in the database, including linked steps and expected transitions.
-- [x] Resolve the active global game-detection prompt from admin configuration.
-- [x] Resolve the active per-game scenario and the active prompt for its current step.
-- [x] Worker payload includes prompt text + runtime params (model, temperature, token limits) for the resolved step.
-- [x] Persist chunk metadata, LLM request/response refs, normalized stage decision, confidence, and transition outcome.
-- [ ] Publish realtime `LLM_STAGE_UPDATED` events and provide REST backfill/history.
+- [ ] Delete or refactor legacy detector/scenario-chain codepaths before enabling the new tracker flow in production.
+- [ ] Persist the active state schema, rule set, and prompt package in the database with audit/version history.
+- [ ] Provide admin CRUD for tracked state fields, evidence categories, and finalization rules.
+- [ ] Resolve the active tracker configuration (schema + rules + prompts) from admin configuration.
+- [ ] Worker payload includes `previous_state`, prompt text, runtime params, and the new chunk payload for each 10-second window.
+- [ ] Persist chunk metadata, LLM request/response refs, updated state snapshot, evidence delta, conflicts, and finalization outcome when available.
+- [ ] Publish realtime `LLM_MATCH_STATE_UPDATED` / `LLM_MATCH_FINALIZED` events and provide REST backfill/history.
 - [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
-- [ ] Add observability for chunk lag, stage latency, and per-streamer failure rate.
+- [ ] Add observability for chunk lag, state-update/finalization latency, conflict rate, unknown-outcome rate, and per-streamer failure rate.
 
 ## Milestones
 
@@ -75,38 +77,33 @@ stream analysis immediately after a streamer is added:
 - Exit Criteria: authenticated users can register streamers, while admins can
   configure games ready for live events.
 
-### M2.1 – LLM Stream Orchestration (Gemini) for Streamers
-- [x] Deliver admin panel backend contracts for managing LLM request templates,
-  stage transitions, and safety limits (temperature, max tokens, timeout,
-  fallback strategy).
-- [ ] Move prompt/scenario storage from in-memory services to database-backed
-  repositories with audit-ready versioning for the global detector and per-game
-  step chains.
+### M2.1 – LLM Stream Orchestration (State Tracker) for Streamers
+- [ ] Delete or refactor legacy detector/scenario-chain codepaths so only the new tracker model remains active.
+- [ ] Deliver admin panel backend contracts for managing state schemas, tracked
+  fields, evidence categories, update/finalization rules, and safety limits
+  (temperature, max tokens, timeout, fallback strategy).
+- [ ] Move tracker configuration storage from in-memory services to
+  database-backed repositories with audit-ready versioning for schemas, rules,
+  and prompt packages.
 - [ ] Implement stream capture worker pipeline:
-  `streamlink -> media chunking -> Gemini request -> normalized stage result`.
-- [x] Implement global game detection prompt execution before game-specific flows.
-- [x] Build admin-managed per-game scenario flows (initially Counter-Strike),
-  where each next step is selected from the previous LLM answer / normalized
-  transition outcome.
-- [ ] Ship the initial Counter-Strike scenario:
-  scenario entry after global detector returns Counter-Strike;
-  Step 1 identifies whether a new ranked match is starting and whether it is
-  competitive / faceit / other;
-  Step 2 waits for match completion when the scenario branch requires it;
-  Step 3 determines match result (win / loss / unknown) for the active branch.
+  `streamlink -> media chunking -> previous_state + new_chunk -> updated_state`.
+- [ ] Implement match-session lifecycle so one detected match is tracked as one
+  chat/session with explicit persisted state JSON.
+- [ ] Ship the initial Counter-Strike tracker flow:
+  match discovery/opening;
+  iterative state updates for player side, score, evidence, and uncertainties;
+  finalization into `win | loss | draw | unknown` only from accumulated
+  evidence.
 - [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
   handling for failed LLM jobs.
-- [ ] Publish live LLM status updates to clients via WebSocket channel.
-- [x] Provide REST history endpoint for latest LLM stage decisions.
+- [ ] Publish live match-state/finalization updates to clients via WebSocket.
+- [ ] Provide REST history endpoints for latest LLM state updates and final decisions.
 - [x] Introduce Redis-backed refresh session store for admin/user session
   revocation, rotation, and concurrent session controls.
 - [x] Integrate refresh session store into auth refresh/login/logout flows
   (token pair issuance, rotation endpoint, and revoke-all/user-device controls).
-- [ ] Add observability: per-stage latency, success ratio, token usage, and
-  drift alerts for prompt regressions.
-- Exit Criteria: admin can tune the global detector plus per-game scenario
-  prompts/transitions, worker pipeline produces scenario step results for active
-  streamers, and users observe near-real-time status updates on streamer pages.
+- [ ] Add observability: update/finalization latency, success ratio, token usage, conflict/unknown rates, and drift alerts for prompt regressions.
+- Exit Criteria: admin can tune the active tracker schema/rules/prompts, the worker pipeline produces persisted match state updates/final decisions for active streamers, and users observe near-real-time status updates on streamer pages.
 
 ### M3 – Events Lifecycle & Realtime Delivery
 - [ ] Implement `/internal/worker/events` ingestion with validation, dedupe, and
