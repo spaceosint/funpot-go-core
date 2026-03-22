@@ -89,7 +89,7 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	if !strings.Contains(gotBody, `"mimeType":"video/mp4"`) {
 		t.Fatalf("expected transport stream mime type in request body: %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"mediaResolution":"LOW"`) {
+	if !strings.Contains(gotBody, `"mediaResolution":"MEDIA_RESOLUTION_LOW"`) {
 		t.Fatalf("expected low media resolution in generation config: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, "Detect the game being played") {

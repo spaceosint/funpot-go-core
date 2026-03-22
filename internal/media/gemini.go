@@ -147,7 +147,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 			Temperature:      input.Prompt.Temperature,
 			MaxOutputTokens:  input.Prompt.MaxTokens,
 			ResponseMIMEType: "application/json",
-			MediaResolution:  "LOW",
+			MediaResolution:  "MEDIA_RESOLUTION_LOW",
 		},
 	}
 
