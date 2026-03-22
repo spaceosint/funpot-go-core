@@ -33,6 +33,12 @@ type StageRequest struct {
 	PreviousState string
 }
 
+const (
+	trackerStageDiscovery = "match_discovery"
+	trackerStageUpdate    = "match_update"
+	trackerStageFinalize  = "match_finalize"
+)
+
 type StageClassification struct {
 	Label             string
 	Confidence        float64
@@ -217,7 +223,7 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		logger = zap.NewNop()
 	}
 
-	activePrompts := w.prompts.ListActive(ctx)
+	activePrompts := filterTrackerPrompts(w.prompts.ListActive(ctx))
 	if len(activePrompts) == 0 {
 		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", streamerID))
 		return streamers.LLMDecision{}, prompts.ErrNotFound
@@ -236,6 +242,35 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		lastDecision = decision
 	}
 	return lastDecision, nil
+}
+
+func filterTrackerPrompts(items []prompts.PromptVersion) []prompts.PromptVersion {
+	if len(items) == 0 {
+		return nil
+	}
+	trackerOnly := make([]prompts.PromptVersion, 0, len(items))
+	for _, item := range items {
+		if isTrackerStage(item.Stage) {
+			trackerOnly = append(trackerOnly, item)
+		}
+	}
+	if len(trackerOnly) > 0 {
+		return trackerOnly
+	}
+	return items
+}
+
+func isTrackerStage(stage string) bool {
+	switch strings.TrimSpace(strings.ToLower(stage)) {
+	case trackerStageDiscovery, trackerStageUpdate, trackerStageFinalize:
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultTrackerState() string {
+	return `{"session_type":"single_match","status":"discovering","player_outcome":{"value":"unknown","confidence":0},"evidence_log":[],"uncertainties":[],"hard_conflicts":[]}`
 }
 
 func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {
@@ -319,7 +354,7 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 
 func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) string {
 	if w == nil || w.decisions == nil {
-		return ""
+		return defaultTrackerState()
 	}
 	items := w.decisions.ListAllLLMDecisions(ctx, streamerID)
 	for i := len(items) - 1; i >= 0; i-- {
@@ -327,7 +362,7 @@ func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) st
 			return state
 		}
 	}
-	return ""
+	return defaultTrackerState()
 }
 
 func firstNonEmpty(values ...string) string {

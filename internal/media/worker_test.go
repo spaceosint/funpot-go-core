@@ -135,6 +135,46 @@ func (s *countingRunStore) CreateRun(_ context.Context, streamerID string) (stri
 	return streamerID + "-run", nil
 }
 
+func TestWorkerProcessStreamerPrefersTrackerPromptsOverLegacyStages(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		fakeClassifier{results: map[string]StageClassification{
+			"detector":       {Label: "cs_detected", Confidence: 0.99},
+			"match_update":   {Label: "state_updated", Confidence: 0.97, UpdatedStateJSON: `{"match_status":"in_progress"}`, EvidenceDeltaJSON: `["opened session"]`, NextEvidenceJSON: `["final scoreboard"]`},
+			"match_finalize": {Label: "finalized", Confidence: 0.95, UpdatedStateJSON: `{"match_status":"finished"}`, EvidenceDeltaJSON: `["final scoreboard seen"]`, NextEvidenceJSON: `[]`, FinalOutcome: "win"},
+		}},
+		fakePromptResolver{prompts: []prompts.PromptVersion{
+			{ID: "legacy-1", Stage: "detector", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "legacy detector", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000},
+			{ID: "tracker-1", Stage: "match_update", Position: 2, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000},
+			{ID: "tracker-2", Stage: "match_finalize", Position: 3, IsActive: true, MinConfidence: 0.5, Template: "finalize tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000},
+		}},
+		nil,
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-1")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got.Stage != "match_finalize" || got.FinalOutcome != "" {
+		t.Fatalf("final decision = %#v", got)
+	}
+	if len(decisions.items) != 2 {
+		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
+	}
+	if decisions.items[0].Stage != "match_update" || decisions.items[1].Stage != "match_finalize" {
+		t.Fatalf("unexpected stage order: %#v", decisions.items)
+	}
+}
+
+func TestWorkerResolvePreviousStateDefaultsToTrackerBootstrap(t *testing.T) {
+	worker := NewWorker(fakeCapture{}, fakeClassifier{}, fakePromptResolver{}, nil, &InMemoryRunStore{}, nil, NewInMemoryLocker(), WorkerConfig{})
+	if got := worker.resolvePreviousState(context.Background(), "str-1"); got != defaultTrackerState() {
+		t.Fatalf("resolvePreviousState() = %q", got)
+	}
+}
+
 func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(

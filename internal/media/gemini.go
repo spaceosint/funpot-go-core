@@ -211,6 +211,9 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	if parsed.Confidence < 0 || parsed.Confidence > 1 {
 		return StageClassification{}, ErrGeminiInvalidConfidence
 	}
+	if err := validateGeminiTrackerResponse(input.Stage, parsed); err != nil {
+		return StageClassification{}, err
+	}
 
 	label := strings.TrimSpace(parsed.Label)
 	if label == "" && len(parsed.UpdatedState) > 0 {
@@ -244,27 +247,42 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 func buildGeminiInstruction(input StageRequest) string {
 	base := `You analyze a livestream chunk for FunPot.
 Stage: %s
-Use this stage prompt as the source of truth:
+Streamer ID: %s
+Chunk captured at: %s
+Chunk reference: %s
+Use this admin-managed tracker prompt as the source of truth:
 %s`
-	if strings.TrimSpace(input.PreviousState) == "" {
+	previousState := strings.TrimSpace(input.PreviousState)
+	if previousState == "" {
+		previousState = defaultTrackerState()
+	}
+	if !isTrackerStage(input.Stage) {
 		return strings.TrimSpace(fmt.Sprintf(base+`
 Return ONLY valid JSON with keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
-- summary: short rationale.`, input.Stage, strings.TrimSpace(input.Prompt.Template)))
+- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
 %s
-Return ONLY valid JSON. Update the tracker state using previous_state + new_chunk.
-Required keys:
-- updated_state: object
-- delta: array or object describing evidence changes
-- next_needed_evidence: array
-Optional keys:
-- hard_conflicts: array
-- final_outcome: win | loss | draw | unknown
-Do not return commentary outside JSON.`, input.Stage, strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.PreviousState)))
+Update the tracker using previous_state + new_chunk for this 10-second window.
+Return ONLY valid JSON with this exact shape:
+{
+  "label": "state_updated | finalized | unknown",
+  "confidence": 0.0,
+  "updated_state": {},
+  "delta": [],
+  "next_needed_evidence": [],
+  "hard_conflicts": [],
+  "final_outcome": "win | loss | draw | unknown"
+}
+Rules:
+- Treat one chat/session as one match.
+- Always update and return compact state JSON in updated_state.
+- Never emit narrative commentary outside JSON.
+- Keep final_outcome as unknown until direct evidence exists.
+- Store contradictions in hard_conflicts instead of overwriting prior facts.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), previousState))
 }
 
 func loadGeminiChunk(path string, maxBytes int64) ([]byte, string, error) {
@@ -370,4 +388,27 @@ func marshalRawMessage(value json.RawMessage) string {
 		return ""
 	}
 	return trimmed
+}
+
+func validateGeminiTrackerResponse(stage string, parsed geminiStageResponse) error {
+	if !isTrackerStage(stage) {
+		return nil
+	}
+	if len(parsed.UpdatedState) == 0 || strings.TrimSpace(string(parsed.UpdatedState)) == "null" {
+		return fmt.Errorf("gemini tracker response for %s must include updated_state", strings.TrimSpace(stage))
+	}
+	if len(parsed.Delta) == 0 || strings.TrimSpace(string(parsed.Delta)) == "null" {
+		return fmt.Errorf("gemini tracker response for %s must include delta", strings.TrimSpace(stage))
+	}
+	if len(parsed.NextNeededEvidence) == 0 || strings.TrimSpace(string(parsed.NextNeededEvidence)) == "null" {
+		return fmt.Errorf("gemini tracker response for %s must include next_needed_evidence", strings.TrimSpace(stage))
+	}
+	if strings.TrimSpace(parsed.FinalOutcome) != "" {
+		switch strings.TrimSpace(parsed.FinalOutcome) {
+		case "win", "loss", "draw", "unknown":
+		default:
+			return fmt.Errorf("gemini tracker response for %s has invalid final_outcome %q", strings.TrimSpace(stage), parsed.FinalOutcome)
+		}
+	}
+	return nil
 }
