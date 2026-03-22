@@ -41,6 +41,7 @@ FUNPOT_REDIS_DB=0
 FUNPOT_REDIS_CONNECT_TIMEOUT=2s
 FUNPOT_STREAMLINK_ENABLED=false
 FUNPOT_STREAMLINK_BINARY=streamlink
+FUNPOT_STREAMLINK_FFMPEG_BINARY=ffmpeg
 FUNPOT_STREAMLINK_QUALITY=1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best
 FUNPOT_STREAMLINK_CAPTURE_TIMEOUT=25s
 FUNPOT_STREAMLINK_OUTPUT_DIR=tmp/stream_chunks
@@ -76,6 +77,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 
 > `FUNPOT_STREAMLINK_ENABLED=true` requires the `streamlink` binary to be
 > available in PATH (or pointed to by `FUNPOT_STREAMLINK_BINARY`).
+
+> Live Gemini analysis also remuxes Streamlink `.ts` chunks into `.mp4`, so
+> `FUNPOT_STREAMLINK_FFMPEG_BINARY` must point to a working `ffmpeg` binary
+> when Streamlink capture is enabled.
 
 > Set `FUNPOT_GEMINI_API_KEY` to enable real Gemini stage classification. When
 > it is unset, the server falls back to the deterministic placeholder

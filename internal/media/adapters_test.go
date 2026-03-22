@@ -29,11 +29,34 @@ type fakeCommandRunner struct {
 	stderrOutput string
 	lastName     string
 	lastArgs     []string
+	names        []string
+	argsHistory  [][]string
+	runFn        func(name string, args ...string) error
 }
 
 func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) error {
 	f.lastName = name
 	f.lastArgs = append([]string(nil), args...)
+	f.names = append(f.names, name)
+	f.argsHistory = append(f.argsHistory, append([]string(nil), args...))
+	if f.runFn != nil {
+		return f.runFn(name, args...)
+	}
+	if strings.Contains(name, "ffmpeg") && len(args) > 0 {
+		outputPath := args[len(args)-1]
+		inputPath := ""
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "-i" && i+1 < len(args) {
+				inputPath = args[i+1]
+				break
+			}
+		}
+		data, err := os.ReadFile(inputPath)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(outputPath, data, 0o644)
+	}
 	if len(f.writeData) > 0 {
 		_, _ = stdout.Write(f.writeData)
 	}
@@ -61,13 +84,13 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	if chunk.Reference == "" {
 		t.Fatal("expected chunk reference")
 	}
-	if runner.lastName != "streamlink-bin" {
-		t.Fatalf("runner binary = %q", runner.lastName)
+	if len(runner.names) < 2 || runner.names[0] != "streamlink-bin" {
+		t.Fatalf("runner binaries = %#v", runner.names)
 	}
-	if got := runner.lastArgs[len(runner.lastArgs)-1]; got != defaultPreferredStreamQuality {
+	if got := runner.argsHistory[0][len(runner.argsHistory[0])-1]; got != defaultPreferredStreamQuality {
 		t.Fatalf("runner quality = %q, want %q", got, defaultPreferredStreamQuality)
 	}
-	joined := strings.Join(runner.lastArgs, " ")
+	joined := strings.Join(runner.argsHistory[0], " ")
 	if !strings.Contains(joined, "https://twitch.tv/shroud") {
 		t.Fatalf("expected resolved channel in args, got %q", joined)
 	}
@@ -81,6 +104,9 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	}
 	if !strings.HasPrefix(chunk.Reference, filepath.Join(outDir, "str_1")) {
 		t.Fatalf("unexpected chunk path: %q", chunk.Reference)
+	}
+	if filepath.Ext(chunk.Reference) != ".mp4" {
+		t.Fatalf("expected normalized mp4 chunk, got %q", chunk.Reference)
 	}
 }
 
@@ -161,6 +187,41 @@ func TestStreamlinkCaptureAdapterReturnsStreamEndedErrorWhenNoPlayableStreamsRem
 	}
 	if len(files) != 0 {
 		t.Fatalf("expected offline empty chunk to be removed, found %d files", len(files))
+	}
+}
+
+func TestFFmpegChunkNormalizerRemuxesTSChunksToMP4(t *testing.T) {
+	dir := t.TempDir()
+	inputPath := filepath.Join(dir, "chunk.ts")
+	if err := os.WriteFile(inputPath, []byte("transport-stream"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	runner := &fakeCommandRunner{
+		runFn: func(name string, args ...string) error {
+			if name != "ffmpeg-bin" {
+				t.Fatalf("runner binary = %q, want ffmpeg-bin", name)
+			}
+			if got := args[len(args)-1]; got != filepath.Join(dir, "chunk.mp4") {
+				t.Fatalf("output path = %q", got)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "chunk.mp4"), []byte("mp4-bytes"), 0o644); err != nil {
+				t.Fatalf("WriteFile(normalized) error = %v", err)
+			}
+			return nil
+		},
+	}
+
+	normalizer := NewFFmpegChunkNormalizer("ffmpeg-bin", runner)
+	normalized, err := normalizer.Normalize(context.Background(), ChunkRef{Reference: inputPath})
+	if err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if normalized.Reference != filepath.Join(dir, "chunk.mp4") {
+		t.Fatalf("normalized reference = %q", normalized.Reference)
+	}
+	if _, err := os.Stat(inputPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected source ts file removal, err=%v", err)
 	}
 }
 

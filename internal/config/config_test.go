@@ -39,6 +39,7 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_REDIS_HEALTHCHECK_TIMEOUT", "7s")
 	t.Setenv("FUNPOT_STREAMLINK_ENABLED", "true")
 	t.Setenv("FUNPOT_STREAMLINK_BINARY", "/usr/local/bin/streamlink")
+	t.Setenv("FUNPOT_STREAMLINK_FFMPEG_BINARY", "/usr/local/bin/ffmpeg")
 	t.Setenv("FUNPOT_STREAMLINK_QUALITY", "best")
 	t.Setenv("FUNPOT_STREAMLINK_CAPTURE_TIMEOUT", "14s")
 	t.Setenv("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/chunks")
@@ -132,6 +133,9 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	}
 	if cfg.Streamlink.BinaryPath != "/usr/local/bin/streamlink" {
 		t.Fatalf("expected streamlink binary to be set")
+	}
+	if cfg.Streamlink.FFmpegBinary != "/usr/local/bin/ffmpeg" {
+		t.Fatalf("expected streamlink ffmpeg binary to be set")
 	}
 	if cfg.Streamlink.CaptureTimeout != 14*time.Second {
 		t.Fatalf("expected streamlink capture timeout 14s, got %s", cfg.Streamlink.CaptureTimeout)

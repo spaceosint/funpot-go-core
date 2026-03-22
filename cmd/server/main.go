@@ -219,6 +219,7 @@ func buildStreamCapture(cfg config.Config, streamersService *streamers.Service) 
 
 	return media.NewStreamlinkCaptureAdapter(media.StreamlinkCaptureConfig{
 		BinaryPath:     cfg.Streamlink.BinaryPath,
+		FFmpegBinary:   cfg.Streamlink.FFmpegBinary,
 		Quality:        cfg.Streamlink.Quality,
 		CaptureTimeout: cfg.Streamlink.CaptureTimeout,
 		OutputDir:      cfg.Streamlink.OutputDir,

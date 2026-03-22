@@ -32,6 +32,7 @@ type Config struct {
 type StreamlinkConfig struct {
 	Enabled        bool
 	BinaryPath     string
+	FFmpegBinary   string
 	Quality        string
 	CaptureTimeout time.Duration
 	OutputDir      string
@@ -420,6 +421,7 @@ func Load() (Config, error) {
 		Streamlink: StreamlinkConfig{
 			Enabled:        streamlinkEnabled,
 			BinaryPath:     getString("FUNPOT_STREAMLINK_BINARY", "streamlink"),
+			FFmpegBinary:   getString("FUNPOT_STREAMLINK_FFMPEG_BINARY", "ffmpeg"),
 			Quality:        getString("FUNPOT_STREAMLINK_QUALITY", defaultStreamlinkQuality()),
 			CaptureTimeout: streamlinkCaptureTimeout,
 			OutputDir:      getString("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/stream_chunks"),
@@ -469,6 +471,9 @@ func Load() (Config, error) {
 	if cfg.Streamlink.Enabled {
 		if strings.TrimSpace(cfg.Streamlink.BinaryPath) == "" {
 			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_BINARY must be set when FUNPOT_STREAMLINK_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.Streamlink.FFmpegBinary) == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_FFMPEG_BINARY must be set when FUNPOT_STREAMLINK_ENABLED=true")
 		}
 		if strings.TrimSpace(cfg.Streamlink.Quality) == "" {
 			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_QUALITY must be set when FUNPOT_STREAMLINK_ENABLED=true")
