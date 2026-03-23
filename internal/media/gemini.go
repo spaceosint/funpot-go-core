@@ -94,7 +94,14 @@ type geminiGenerateContentResponse struct {
 }
 
 type geminiPromptFeedback struct {
-	BlockReason string `json:"blockReason"`
+	BlockReason   string               `json:"blockReason"`
+	SafetyRatings []geminiSafetyRating `json:"safetyRatings"`
+}
+
+type geminiSafetyRating struct {
+	Category    string `json:"category"`
+	Probability string `json:"probability"`
+	Blocked     bool   `json:"blocked"`
 }
 
 type geminiCandidate struct {
@@ -198,10 +205,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	}
 	rawText := extractGeminiResponseText(payload)
 	if rawText == "" {
-		if payload.PromptFeedback.BlockReason != "" {
-			return StageClassification{}, fmt.Errorf("gemini blocked prompt: %s", payload.PromptFeedback.BlockReason)
-		}
-		return StageClassification{}, ErrGeminiEmptyResponse
+		return StageClassification{}, describeGeminiEmptyResponse(payload, responseBody)
 	}
 
 	parsed, err := parseGeminiStageResponse(rawText)
@@ -331,6 +335,71 @@ func extractGeminiResponseText(payload geminiGenerateContentResponse) string {
 		}
 	}
 	return ""
+}
+
+func describeGeminiEmptyResponse(payload geminiGenerateContentResponse, responseBody []byte) error {
+	parts := []string{ErrGeminiEmptyResponse.Error()}
+	if len(payload.Candidates) == 0 {
+		parts = append(parts, "candidates=0")
+	}
+	if reasons := geminiFinishReasons(payload.Candidates); len(reasons) > 0 {
+		parts = append(parts, "finish_reasons="+strings.Join(reasons, ","))
+	}
+	if reason := strings.TrimSpace(payload.PromptFeedback.BlockReason); reason != "" {
+		parts = append(parts, "block_reason="+reason)
+	}
+	if ratings := geminiBlockedSafetyCategories(payload.PromptFeedback.SafetyRatings); len(ratings) > 0 {
+		parts = append(parts, "blocked_safety_categories="+strings.Join(ratings, ","))
+	}
+	if body := strings.TrimSpace(string(responseBody)); body != "" {
+		if len(body) > 512 {
+			body = body[:512] + "..."
+		}
+		parts = append(parts, "body="+strconv.Quote(body))
+	}
+	return errors.New(strings.Join(parts, "; "))
+}
+
+func geminiFinishReasons(candidates []geminiCandidate) []string {
+	if len(candidates) == 0 {
+		return nil
+	}
+	reasons := make([]string, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		reason := strings.TrimSpace(candidate.FinishReason)
+		if reason == "" {
+			continue
+		}
+		if _, ok := seen[reason]; ok {
+			continue
+		}
+		seen[reason] = struct{}{}
+		reasons = append(reasons, reason)
+	}
+	return reasons
+}
+
+func geminiBlockedSafetyCategories(ratings []geminiSafetyRating) []string {
+	if len(ratings) == 0 {
+		return nil
+	}
+	categories := make([]string, 0, len(ratings))
+	for _, rating := range ratings {
+		if !rating.Blocked {
+			continue
+		}
+		category := strings.TrimSpace(rating.Category)
+		if category == "" {
+			category = "unknown"
+		}
+		probability := strings.TrimSpace(rating.Probability)
+		if probability != "" {
+			category += ":" + probability
+		}
+		categories = append(categories, category)
+	}
+	return categories
 }
 
 func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {

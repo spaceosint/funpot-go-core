@@ -277,3 +277,83 @@ func TestGeminiStageClassifierRejectsTrackerResponseWithoutStatePayload(t *testi
 		t.Fatalf("expected missing updated_state error, got %v", err)
 	}
 }
+
+func TestGeminiStageClassifierReportsEmptyResponseDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+	                    "candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": []}}],
+	                    "promptFeedback": {"blockReason": "SAFETY", "safetyRatings": [{"category": "HARM_CATEGORY_HATE_SPEECH", "probability": "HIGH", "blocked": true}]}
+	                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	_, err = classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err == nil {
+		t.Fatal("expected empty response diagnostics error")
+	}
+	for _, fragment := range []string{
+		ErrGeminiEmptyResponse.Error(),
+		"finish_reasons=MAX_TOKENS",
+		"block_reason=SAFETY",
+		"blocked_safety_categories=HARM_CATEGORY_HATE_SPEECH:HIGH",
+		`body="{`,
+	} {
+		if !strings.Contains(err.Error(), fragment) {
+			t.Fatalf("expected error to contain %q, got %v", fragment, err)
+		}
+	}
+}
+
+func TestGeminiStageClassifierReportsNoCandidatesInEmptyResponse(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"candidates": []}`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	_, err = classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "detector",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "detector", Template: "Detect the game", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidates=0") {
+		t.Fatalf("expected candidates=0 diagnostic, got %v", err)
+	}
+}
