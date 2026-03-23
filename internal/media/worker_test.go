@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -342,7 +343,69 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	if len(decisions.items) != 2 {
 		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
 	}
-	if decisions.items[1].PreviousStateJSON != `{"score":{"ct":8,"t":5}}` {
+	if !strings.Contains(decisions.items[1].PreviousStateJSON, `"score":{"ct":8,"t":5}`) {
 		t.Fatalf("previous state = %q", decisions.items[1].PreviousStateJSON)
+	}
+}
+
+func TestWorkerProcessStreamerNormalizesLegacyStatePayloads(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		fakeClassifier{results: map[string]StageClassification{
+			"start": {
+				Confidence: 0.91,
+				RawResponse: `{
+					"state": {
+						"mode": {"value": "competitive", "confidence": 0.9},
+						"ct_score": {"value": 8, "confidence": 0.9},
+						"t_score": {"value": 5, "confidence": 0.9}
+					},
+					"final_outcome": "unknown"
+				}`,
+			},
+		}},
+		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "start", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+	got, err := worker.ProcessStreamer(context.Background(), "str-1")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got.Label != "state_updated" {
+		t.Fatalf("label = %q, want state_updated", got.Label)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
+	}
+	if got := decisions.items[0].UpdatedStateJSON; !strings.Contains(got, `"state":{"ct_score":8,"mode":"competitive","t_score":5}`) || !strings.Contains(got, `"final_outcome":"unknown"`) {
+		t.Fatalf("updated state = %q", decisions.items[0].UpdatedStateJSON)
+	}
+}
+
+func TestWorkerProcessStreamerPreservesKnownScoreWhenModelReturnsUnknownPlaceholders(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	classifier := &flakyClassifier{
+		result: StageClassification{
+			Label:            "state_updated",
+			Confidence:       0.95,
+			UpdatedStateJSON: `{"state":{"ct_score":0,"t_score":0,"mode":"unknown"},"final_outcome":"unknown"}`,
+		},
+	}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		classifier,
+		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("first ProcessStreamer() error = %v", err)
+	}
+	decisions.items[0].UpdatedStateJSON = `{"state":{"ct_score":8,"t_score":5,"mode":"competitive"},"final_outcome":"unknown"}`
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("second ProcessStreamer() error = %v", err)
+	}
+	if got := decisions.items[1].UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":8,"mode":"competitive","t_score":5}}` {
+		t.Fatalf("updated state = %q", got)
 	}
 }
