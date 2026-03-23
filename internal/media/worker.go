@@ -258,7 +258,7 @@ func filterTrackerPrompts(items []prompts.PromptVersion) []prompts.PromptVersion
 
 func isTrackerStage(stage string) bool {
 	switch strings.TrimSpace(strings.ToLower(stage)) {
-	case trackerStageDiscovery, trackerStageUpdate, trackerStageFinalize:
+	case trackerStageDiscovery, trackerStageUpdate, trackerStageFinalize, "start", "update", "finalize", "finish", "end":
 		return true
 	default:
 		return false
@@ -304,7 +304,8 @@ func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chu
 }
 
 func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID, previousState string) (streamers.LLMDecision, error) {
-	label := strings.TrimSpace(result.Label)
+	updatedStateJSON := normalizeStateSnapshot(previousState, result)
+	label := normalizeDecisionLabel(result, updatedStateJSON)
 	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
 		label = "uncertain"
 	}
@@ -336,7 +337,7 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		LatencyMS:         result.Latency.Milliseconds(),
 		TransitionOutcome: transitionOutcome,
 		PreviousStateJSON: previousState,
-		UpdatedStateJSON:  firstNonEmpty(strings.TrimSpace(result.UpdatedStateJSON), strings.TrimSpace(result.RawResponse)),
+		UpdatedStateJSON:  updatedStateJSON,
 		EvidenceDeltaJSON: firstNonEmpty(strings.TrimSpace(result.EvidenceDeltaJSON), strings.TrimSpace(result.NextEvidenceJSON)),
 		ConflictsJSON:     strings.TrimSpace(result.ConflictsJSON),
 		FinalOutcome:      strings.TrimSpace(result.FinalOutcome),
@@ -360,6 +361,200 @@ func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) st
 		}
 	}
 	return defaultTrackerState()
+}
+
+func normalizeDecisionLabel(result StageClassification, updatedStateJSON string) string {
+	label := strings.TrimSpace(result.Label)
+	if label != "" {
+		return label
+	}
+	if strings.TrimSpace(result.FinalOutcome) != "" && !strings.EqualFold(strings.TrimSpace(result.FinalOutcome), "unknown") {
+		return "finalized"
+	}
+	if strings.TrimSpace(updatedStateJSON) != "" {
+		return "state_updated"
+	}
+	return ""
+}
+
+func normalizeStateSnapshot(previousState string, result StageClassification) string {
+	current := firstNonEmpty(strings.TrimSpace(result.UpdatedStateJSON), strings.TrimSpace(result.RawResponse))
+	if current == "" {
+		return strings.TrimSpace(previousState)
+	}
+	normalizedCurrent := normalizeStateJSON(current)
+	if normalizedCurrent == "" {
+		return strings.TrimSpace(previousState)
+	}
+	normalizedPrevious := normalizeStateJSON(previousState)
+	if normalizedPrevious == "" {
+		return normalizedCurrent
+	}
+	merged, ok := mergeStateSnapshots(normalizedPrevious, normalizedCurrent)
+	if !ok {
+		return normalizedCurrent
+	}
+	return merged
+}
+
+func normalizeStateJSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return trimmed
+	}
+	normalized := normalizeStateValue(decoded)
+	body, err := json.Marshal(normalized)
+	if err != nil {
+		return trimmed
+	}
+	return string(body)
+}
+
+func normalizeStateValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		if state, ok := typed["updated_state"]; ok {
+			finalOutcome := strings.TrimSpace(stringValue(valueFromMap(typed, "final_outcome")))
+			typed = map[string]any{
+				"state": state,
+			}
+			if finalOutcome != "" {
+				typed["final_outcome"] = finalOutcome
+			}
+		}
+		if state, ok := typed["state"]; ok {
+			if stateMap, ok := state.(map[string]any); ok {
+				typed["state"] = normalizeStateFields(stateMap)
+			}
+		}
+		for key, item := range typed {
+			if key == "state" {
+				continue
+			}
+			typed[key] = normalizeStateValue(item)
+		}
+		return typed
+	case []any:
+		for idx, item := range typed {
+			typed[idx] = normalizeStateValue(item)
+		}
+		return typed
+	default:
+		return typed
+	}
+}
+
+func normalizeStateFields(fields map[string]any) map[string]any {
+	normalized := make(map[string]any, len(fields))
+	for key, item := range fields {
+		switch typed := item.(type) {
+		case map[string]any:
+			if rawValue, ok := typed["value"]; ok {
+				normalized[key] = normalizeStateValue(rawValue)
+				continue
+			}
+			normalized[key] = normalizeStateValue(typed)
+		default:
+			normalized[key] = normalizeStateValue(item)
+		}
+	}
+	return normalized
+}
+
+func mergeStateSnapshots(previousState, currentState string) (string, bool) {
+	var previous any
+	if err := json.Unmarshal([]byte(previousState), &previous); err != nil {
+		return "", false
+	}
+	var current any
+	if err := json.Unmarshal([]byte(currentState), &current); err != nil {
+		return "", false
+	}
+	merged := mergeStateValue(previous, current)
+	body, err := json.Marshal(merged)
+	if err != nil {
+		return "", false
+	}
+	return string(body), true
+}
+
+func mergeStateValue(previous, current any) any {
+	switch currentTyped := current.(type) {
+	case map[string]any:
+		previousTyped, _ := previous.(map[string]any)
+		merged := make(map[string]any, len(previousTyped)+len(currentTyped))
+		for key, item := range previousTyped {
+			merged[key] = item
+		}
+		for key, item := range currentTyped {
+			merged[key] = mergeStateValue(previousTyped[key], item)
+		}
+		return merged
+	case []any:
+		if len(currentTyped) == 0 {
+			if previousTyped, ok := previous.([]any); ok && len(previousTyped) > 0 {
+				return previousTyped
+			}
+		}
+		return currentTyped
+	case string:
+		if isPlaceholderString(currentTyped) {
+			if previousTyped, ok := previous.(string); ok && strings.TrimSpace(previousTyped) != "" {
+				return previousTyped
+			}
+		}
+		return currentTyped
+	case float64:
+		if currentTyped == 0 {
+			if previousTyped, ok := previous.(float64); ok && previousTyped != 0 {
+				return previousTyped
+			}
+		}
+		return currentTyped
+	case bool:
+		if !currentTyped {
+			if previousTyped, ok := previous.(bool); ok && previousTyped {
+				return previousTyped
+			}
+		}
+		return currentTyped
+	case nil:
+		if previous != nil {
+			return previous
+		}
+		return nil
+	default:
+		return currentTyped
+	}
+}
+
+func isPlaceholderString(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "unknown", "null", "nil", "n/a", "none", "unset":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func valueFromMap(values map[string]any, key string) any {
+	if values == nil {
+		return nil
+	}
+	return values[key]
 }
 
 func firstNonEmpty(values ...string) string {
