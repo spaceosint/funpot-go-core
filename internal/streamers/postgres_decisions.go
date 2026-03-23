@@ -62,6 +62,14 @@ CREATE INDEX IF NOT EXISTS idx_streamer_llm_decisions_streamer_stage_created_at
     ON streamer_llm_decisions (streamer_id, stage, created_at DESC, id DESC);
 `
 
+const streamerLLMDecisionsBackfillDDL = `
+ALTER TABLE streamer_llm_decisions ADD COLUMN IF NOT EXISTS previous_state_json TEXT;
+ALTER TABLE streamer_llm_decisions ADD COLUMN IF NOT EXISTS updated_state_json TEXT;
+ALTER TABLE streamer_llm_decisions ADD COLUMN IF NOT EXISTS evidence_delta_json TEXT;
+ALTER TABLE streamer_llm_decisions ADD COLUMN IF NOT EXISTS conflicts_json TEXT;
+ALTER TABLE streamer_llm_decisions ADD COLUMN IF NOT EXISTS final_outcome TEXT;
+`
+
 // PostgresDecisionRepository persists LLM decisions in PostgreSQL for audit/history APIs.
 type PostgresDecisionRepository struct {
 	db *sql.DB
@@ -84,6 +92,10 @@ func (r *PostgresDecisionRepository) ensureSchema(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, streamerLLMDecisionsDDL); err != nil {
 		r.schemaEnsureErr = fmt.Errorf("ensure streamer llm decisions schema: %w", err)
+		return r.schemaEnsureErr
+	}
+	if _, err := r.db.ExecContext(ctx, streamerLLMDecisionsBackfillDDL); err != nil {
+		r.schemaEnsureErr = fmt.Errorf("backfill streamer llm decisions schema: %w", err)
 		return r.schemaEnsureErr
 	}
 	r.schemaEnsured = true
@@ -261,20 +273,20 @@ func scanDecision(row decisionScanner) (LLMDecision, error) {
 		return LLMDecision{}, fmt.Errorf("scan streamer llm decision: %w", err)
 	}
 	item.ChunkCapturedAt = formatNullTime(chunkCapturedAt)
-	item.PromptVersionID = promptVersionID.String
+	item.PromptVersionID = strings.TrimSpace(promptVersionID.String)
 	item.PromptText = promptText.String
-	item.Model = model.String
-	item.ChunkRef = chunkRef.String
-	item.RequestRef = requestRef.String
-	item.ResponseRef = responseRef.String
+	item.Model = strings.TrimSpace(model.String)
+	item.ChunkRef = strings.TrimSpace(chunkRef.String)
+	item.RequestRef = strings.TrimSpace(requestRef.String)
+	item.ResponseRef = strings.TrimSpace(responseRef.String)
 	item.RawResponse = rawResponse.String
-	item.TransitionOutcome = transitionOutcome.String
-	item.TransitionToStep = transitionToStep.String
+	item.TransitionOutcome = strings.TrimSpace(transitionOutcome.String)
+	item.TransitionToStep = strings.TrimSpace(transitionToStep.String)
 	item.PreviousStateJSON = previousState.String
 	item.UpdatedStateJSON = updatedState.String
 	item.EvidenceDeltaJSON = evidenceDelta.String
 	item.ConflictsJSON = conflicts.String
-	item.FinalOutcome = finalOutcome.String
+	item.FinalOutcome = strings.TrimSpace(finalOutcome.String)
 	item.CreatedAt = createdAt.UTC().Format(time.RFC3339Nano)
 	return item, nil
 }
