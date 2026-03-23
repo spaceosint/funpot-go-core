@@ -19,6 +19,7 @@ func TestPostgresDecisionRepositoryRecordLLMDecision(t *testing.T) {
 
 	repo := NewPostgresDecisionRepository(db)
 	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsBackfillDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	capturedAt := createdAt.Add(-10 * time.Second)
 	item := LLMDecision{
@@ -117,6 +118,7 @@ func TestPostgresDecisionRepositoryListLLMDecisions(t *testing.T) {
 
 	repo := NewPostgresDecisionRepository(db)
 	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsBackfillDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	createdAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	capturedAt := createdAt.Add(-10 * time.Second)
 	rows := sqlmock.NewRows([]string{
@@ -185,6 +187,7 @@ func TestPostgresDecisionRepositoryEnsuresSchemaOnce(t *testing.T) {
 
 	repo := NewPostgresDecisionRepository(db)
 	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(streamerLLMDecisionsBackfillDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	rows := sqlmock.NewRows([]string{
 		"id", "run_id", "streamer_id", "stage", "label", "confidence", "chunk_captured_at",
