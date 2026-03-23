@@ -342,7 +342,7 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 
 	var parsed geminiStageResponse
 	if err := json.Unmarshal([]byte(cleaned), &parsed); err == nil {
-		if strings.TrimSpace(parsed.Label) != "" {
+		if hasGeminiResponsePayload(parsed) {
 			return parsed, nil
 		}
 	}
@@ -351,8 +351,8 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 	if err := json.Unmarshal([]byte(cleaned), &generic); err != nil {
 		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: %w", err)
 	}
-	parsed.Label = strings.TrimSpace(fmt.Sprint(generic["label"]))
-	parsed.Summary = strings.TrimSpace(fmt.Sprint(generic["summary"]))
+	parsed.Label = strings.TrimSpace(stringValue(generic["label"]))
+	parsed.Summary = strings.TrimSpace(stringValue(generic["summary"]))
 	switch value := generic["confidence"].(type) {
 	case float64:
 		parsed.Confidence = value
@@ -363,10 +363,30 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 		}
 		parsed.Confidence = confidence
 	}
-	if parsed.Label == "" {
+	parsed.UpdatedState = rawMessageFromGenericValue(generic["updated_state"])
+	parsed.Delta = rawMessageFromGenericValue(generic["delta"])
+	parsed.NextNeededEvidence = rawMessageFromGenericValue(generic["next_needed_evidence"])
+	parsed.HardConflicts = rawMessageFromGenericValue(generic["hard_conflicts"])
+	parsed.FinalOutcome = strings.TrimSpace(stringValue(generic["final_outcome"]))
+	if !hasGeminiResponsePayload(parsed) {
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
+}
+
+func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
+	return strings.TrimSpace(parsed.Label) != "" || len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != ""
+}
+
+func rawMessageFromGenericValue(value any) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(body)
 }
 
 func normalizeGeminiModel(model string) string {

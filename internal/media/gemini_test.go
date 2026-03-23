@@ -193,6 +193,53 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	}
 }
 
+func TestGeminiStageClassifierAcceptsTrackerResponseWithoutLabel(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	result, err := classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if result.Label != "state_updated" {
+		t.Fatalf("expected synthesized label state_updated, got %q", result.Label)
+	}
+	if result.UpdatedStateJSON != `{"status":"live"}` {
+		t.Fatalf("expected updated state payload, got %s", result.UpdatedStateJSON)
+	}
+	if result.FinalOutcome != "unknown" {
+		t.Fatalf("expected final outcome unknown, got %q", result.FinalOutcome)
+	}
+}
+
 func TestGeminiStageClassifierRejectsTrackerResponseWithoutStatePayload(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
