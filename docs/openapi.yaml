@@ -408,7 +408,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/PromptVersion'
+                  $ref: '#/components/schemas/StateSchemaVersion'
         default:
           $ref: '#/components/responses/Error'
     post:
@@ -420,14 +420,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PromptCreateRequest'
+              $ref: '#/components/schemas/StateSchemaCreateRequest'
       responses:
         '201':
           description: Created LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptVersion'
+                $ref: '#/components/schemas/StateSchemaVersion'
         default:
           $ref: '#/components/responses/Error'
   /api/admin/llm/state-schemas/{stateSchemaId}:
@@ -447,7 +447,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptVersion'
+                $ref: '#/components/schemas/StateSchemaVersion'
         default:
           $ref: '#/components/responses/Error'
     put:
@@ -465,14 +465,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PromptCreateRequest'
+              $ref: '#/components/schemas/StateSchemaCreateRequest'
       responses:
         '200':
           description: Updated LLM state schema
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptVersion'
+                $ref: '#/components/schemas/StateSchemaVersion'
         default:
           $ref: '#/components/responses/Error'
     delete:
@@ -507,7 +507,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PromptVersion'
+                $ref: '#/components/schemas/StateSchemaVersion'
         default:
           $ref: '#/components/responses/Error'
   /api/admin/llm/rule-sets:
@@ -1127,41 +1127,41 @@ components:
 
     LLMStatus:
       type: object
-      required: [streamerId, state, latestEntries]
+      required: [streamerId, state, latestByStage]
       properties:
         streamerId:
           type: string
         state:
           type: string
-          enum: [idle, active]
-        currentMatchSessionId:
+          enum: [idle, active, stopped]
+        currentRunId:
           type: string
-        currentMode:
+        currentStage:
           type: string
-        currentOutcome:
+        currentLabel:
           type: string
         currentConfidence:
           type: number
           format: double
-        currentGameKey:
+        detectedGameKey:
           type: string
         updatedAt:
           type: string
           format: date-time
-        latestEntries:
+        latestByStage:
           type: array
           items:
             $ref: '#/components/schemas/LLMDecision'
 
     LLMDecisionRecordRequest:
       type: object
-      required: [matchSessionId, entryType, label, confidence]
+      required: [runId, stage, label, confidence]
       properties:
-        matchSessionId:
+        runId:
           type: string
-        entryType:
+        stage:
           type: string
-          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
+          description: Tracker stage, for example `match_update`, `match_finalize`, or `match_discovery`.
         label:
           type: string
         confidence:
@@ -1197,24 +1197,24 @@ components:
           type: integer
         latencyMs:
           type: integer
-        stateDelta:
+        transitionOutcome:
           type: string
-        nextNeededEvidence:
+        transitionToStep:
           type: string
-        finalized:
+        transitionTerminal:
           type: boolean
     LLMDecision:
       type: object
       properties:
         id:
           type: string
-        matchSessionId:
+        runId:
           type: string
         streamerId:
           type: string
-        entryType:
+        stage:
           type: string
-          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
+          description: Tracker stage, for example `match_update`, `match_finalize`, or `match_discovery`.
         label:
           type: string
         confidence:
@@ -1248,12 +1248,22 @@ components:
           type: integer
         latencyMs:
           type: integer
-        stateDelta:
+        transitionOutcome:
           type: string
-        nextNeededEvidence:
+        transitionToStep:
           type: string
-        finalized:
+        transitionTerminal:
           type: boolean
+        previousStateJson:
+          type: string
+        updatedStateJson:
+          type: string
+        evidenceDeltaJson:
+          type: string
+        conflictsJson:
+          type: string
+        finalOutcome:
+          type: string
         createdAt:
           type: string
           format: date-time
@@ -1300,11 +1310,11 @@ components:
           nullable: true
     PromptCreateRequest:
       type: object
-      required: [entryType, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      required: [stage, template, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
       properties:
-        entryType:
+        stage:
           type: string
-          description: Tracker prompt purpose, for example `match_update`, `match_finalize`, or `match_discovery`.
+          description: Tracker stage, for example `match_update`, `match_finalize`, or `match_discovery`.
         position:
           type: integer
           minimum: 1
@@ -1344,6 +1354,8 @@ components:
           properties:
             id:
               type: string
+            position:
+              type: integer
             version:
               type: integer
             isActive:
@@ -1360,18 +1372,51 @@ components:
               type: string
               format: date-time
               nullable: true
-    PromptTemplate:
+    StateFieldDefinition:
+      type: object
+      required: [key, label, type, confidenceRequired, evidenceBearing, inferred, finalOnly]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        enumValues:
+          type: array
+          items:
+            type: string
+        confidenceRequired:
+          type: boolean
+        evidenceBearing:
+          type: boolean
+        inferred:
+          type: boolean
+        finalOnly:
+          type: boolean
+    StateSchemaCreateRequest:
+      type: object
+      required: [gameSlug, name, fields]
+      properties:
+        gameSlug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/StateFieldDefinition'
+    StateSchemaVersion:
       allOf:
-        - $ref: '#/components/schemas/PromptCreateRequest'
+        - $ref: '#/components/schemas/StateSchemaCreateRequest'
         - type: object
           properties:
             id:
               type: string
-            kind:
-              type: string
-            gameSlug:
-              type: string
-              nullable: true
             version:
               type: integer
             isActive:
