@@ -35,8 +35,8 @@ stream analysis immediately after a streamer is added:
 - [x] Auto-start Streamlink analysis job after `POST /api/streamers` success.
 - [x] Provide a stop-tracking control path so clients can end per-streamer monitoring without restarting the service.
 - [x] Fixed 10-second capture cadence with lock/idempotency protections.
-- [ ] Delete or refactor legacy detector/scenario-chain codepaths before enabling the new tracker flow in production.
-- [ ] Persist the active state schema, rule set, and prompt package in the database with audit/version history.
+- [x] Delete or refactor legacy detector/scenario-chain codepaths before enabling the new tracker flow in production.
+- [x] Persist the active state schema, rule set, and prompt package in the database with audit/version history.
 - [ ] Provide admin CRUD for tracked state fields, evidence categories, and finalization rules.
 - [ ] Resolve the active tracker configuration (schema + rules + prompts) from admin configuration.
 - [ ] Worker payload includes `previous_state`, prompt text, runtime params, and the new chunk payload for each 10-second window.
@@ -78,11 +78,11 @@ stream analysis immediately after a streamer is added:
   configure games ready for live events.
 
 ### M2.1 – LLM Stream Orchestration (State Tracker) for Streamers
-- [ ] Delete or refactor legacy detector/scenario-chain codepaths so only the new tracker model remains active.
+- [x] Delete or refactor legacy detector/scenario-chain codepaths so only the new tracker model remains active.
 - [ ] Deliver admin panel backend contracts for managing state schemas, tracked
   fields, evidence categories, update/finalization rules, and safety limits
   (temperature, max tokens, timeout, fallback strategy).
-- [ ] Move tracker configuration storage from in-memory services to
+- [x] Move tracker configuration storage from in-memory services to
   database-backed repositories with audit-ready versioning for schemas, rules,
   and prompt packages.
 - [ ] Implement stream capture worker pipeline:

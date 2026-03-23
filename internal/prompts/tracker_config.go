@@ -11,6 +11,7 @@ import (
 )
 
 var (
+	ErrInvalidGameSlug           = errors.New("gameSlug must not be empty")
 	ErrInvalidStateSchemaName    = errors.New("state schema name must not be empty")
 	ErrInvalidStateFieldKey      = errors.New("state field key must not be empty")
 	ErrInvalidStateFieldType     = errors.New("state field type must not be empty")
@@ -170,7 +171,14 @@ func (s *Service) initTrackerConfigMaps() {
 	}
 }
 
-func (s *Service) ListStateSchemas(_ context.Context) []StateSchemaVersion {
+func (s *Service) ListStateSchemas(ctx context.Context) []StateSchemaVersion {
+	if s.db != nil {
+		items, err := s.listStateSchemasDB(ctx)
+		if err == nil {
+			return items
+		}
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]StateSchemaVersion, 0)
@@ -186,7 +194,10 @@ func (s *Service) ListStateSchemas(_ context.Context) []StateSchemaVersion {
 	return items
 }
 
-func (s *Service) CreateStateSchema(_ context.Context, req StateSchemaCreateRequest) (StateSchemaVersion, error) {
+func (s *Service) CreateStateSchema(ctx context.Context, req StateSchemaCreateRequest) (StateSchemaVersion, error) {
+	if s.db != nil {
+		return s.createStateSchemaDB(ctx, req)
+	}
 	if err := ValidateStateSchemaCreateRequest(req); err != nil {
 		return StateSchemaVersion{}, err
 	}
@@ -206,7 +217,10 @@ func (s *Service) CreateStateSchema(_ context.Context, req StateSchemaCreateRequ
 	return item, nil
 }
 
-func (s *Service) GetStateSchema(_ context.Context, id string) (StateSchemaVersion, error) {
+func (s *Service) GetStateSchema(ctx context.Context, id string) (StateSchemaVersion, error) {
+	if s.db != nil {
+		return s.getStateSchemaDB(ctx, id)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, versions := range s.stateSchemas {
@@ -219,7 +233,10 @@ func (s *Service) GetStateSchema(_ context.Context, id string) (StateSchemaVersi
 	return StateSchemaVersion{}, ErrStateSchemaNotFound
 }
 
-func (s *Service) UpdateStateSchema(_ context.Context, id string, req StateSchemaCreateRequest) (StateSchemaVersion, error) {
+func (s *Service) UpdateStateSchema(ctx context.Context, id string, req StateSchemaCreateRequest) (StateSchemaVersion, error) {
+	if s.db != nil {
+		return s.updateStateSchemaDB(ctx, id, req)
+	}
 	if err := ValidateStateSchemaCreateRequest(req); err != nil {
 		return StateSchemaVersion{}, err
 	}
@@ -250,7 +267,10 @@ func (s *Service) UpdateStateSchema(_ context.Context, id string, req StateSchem
 	return StateSchemaVersion{}, ErrStateSchemaNotFound
 }
 
-func (s *Service) DeleteStateSchema(_ context.Context, id string) error {
+func (s *Service) DeleteStateSchema(ctx context.Context, id string) error {
+	if s.db != nil {
+		return s.deleteStateSchemaDB(ctx, id)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initTrackerConfigMaps()
@@ -270,7 +290,10 @@ func (s *Service) DeleteStateSchema(_ context.Context, id string) error {
 	return ErrStateSchemaNotFound
 }
 
-func (s *Service) ActivateStateSchema(_ context.Context, id, actorID string) (StateSchemaVersion, error) {
+func (s *Service) ActivateStateSchema(ctx context.Context, id, actorID string) (StateSchemaVersion, error) {
+	if s.db != nil {
+		return s.activateStateSchemaDB(ctx, id, actorID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initTrackerConfigMaps()
@@ -300,7 +323,10 @@ func (s *Service) ActivateStateSchema(_ context.Context, id, actorID string) (St
 	return StateSchemaVersion{}, ErrStateSchemaNotFound
 }
 
-func (s *Service) GetActiveStateSchema(_ context.Context, gameSlug string) (StateSchemaVersion, error) {
+func (s *Service) GetActiveStateSchema(ctx context.Context, gameSlug string) (StateSchemaVersion, error) {
+	if s.db != nil {
+		return s.getActiveStateSchemaDB(ctx, gameSlug)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, item := range s.stateSchemas[strings.TrimSpace(gameSlug)] {
@@ -311,7 +337,14 @@ func (s *Service) GetActiveStateSchema(_ context.Context, gameSlug string) (Stat
 	return StateSchemaVersion{}, ErrStateSchemaNotFound
 }
 
-func (s *Service) ListRuleSets(_ context.Context) []RuleSetVersion {
+func (s *Service) ListRuleSets(ctx context.Context) []RuleSetVersion {
+	if s.db != nil {
+		items, err := s.listRuleSetsDB(ctx)
+		if err == nil {
+			return items
+		}
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]RuleSetVersion, 0)
@@ -327,7 +360,10 @@ func (s *Service) ListRuleSets(_ context.Context) []RuleSetVersion {
 	return items
 }
 
-func (s *Service) CreateRuleSet(_ context.Context, req RuleSetCreateRequest) (RuleSetVersion, error) {
+func (s *Service) CreateRuleSet(ctx context.Context, req RuleSetCreateRequest) (RuleSetVersion, error) {
+	if s.db != nil {
+		return s.createRuleSetDB(ctx, req)
+	}
 	if err := ValidateRuleSetCreateRequest(req); err != nil {
 		return RuleSetVersion{}, err
 	}
@@ -347,7 +383,10 @@ func (s *Service) CreateRuleSet(_ context.Context, req RuleSetCreateRequest) (Ru
 	return item, nil
 }
 
-func (s *Service) GetRuleSet(_ context.Context, id string) (RuleSetVersion, error) {
+func (s *Service) GetRuleSet(ctx context.Context, id string) (RuleSetVersion, error) {
+	if s.db != nil {
+		return s.getRuleSetDB(ctx, id)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, versions := range s.ruleSets {
@@ -360,7 +399,10 @@ func (s *Service) GetRuleSet(_ context.Context, id string) (RuleSetVersion, erro
 	return RuleSetVersion{}, ErrRuleSetNotFound
 }
 
-func (s *Service) UpdateRuleSet(_ context.Context, id string, req RuleSetCreateRequest) (RuleSetVersion, error) {
+func (s *Service) UpdateRuleSet(ctx context.Context, id string, req RuleSetCreateRequest) (RuleSetVersion, error) {
+	if s.db != nil {
+		return s.updateRuleSetDB(ctx, id, req)
+	}
 	if err := ValidateRuleSetCreateRequest(req); err != nil {
 		return RuleSetVersion{}, err
 	}
@@ -392,7 +434,10 @@ func (s *Service) UpdateRuleSet(_ context.Context, id string, req RuleSetCreateR
 	return RuleSetVersion{}, ErrRuleSetNotFound
 }
 
-func (s *Service) DeleteRuleSet(_ context.Context, id string) error {
+func (s *Service) DeleteRuleSet(ctx context.Context, id string) error {
+	if s.db != nil {
+		return s.deleteRuleSetDB(ctx, id)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initTrackerConfigMaps()
@@ -412,7 +457,10 @@ func (s *Service) DeleteRuleSet(_ context.Context, id string) error {
 	return ErrRuleSetNotFound
 }
 
-func (s *Service) ActivateRuleSet(_ context.Context, id, actorID string) (RuleSetVersion, error) {
+func (s *Service) ActivateRuleSet(ctx context.Context, id, actorID string) (RuleSetVersion, error) {
+	if s.db != nil {
+		return s.activateRuleSetDB(ctx, id, actorID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initTrackerConfigMaps()
@@ -442,7 +490,10 @@ func (s *Service) ActivateRuleSet(_ context.Context, id, actorID string) (RuleSe
 	return RuleSetVersion{}, ErrRuleSetNotFound
 }
 
-func (s *Service) GetActiveRuleSet(_ context.Context, gameSlug string) (RuleSetVersion, error) {
+func (s *Service) GetActiveRuleSet(ctx context.Context, gameSlug string) (RuleSetVersion, error) {
+	if s.db != nil {
+		return s.getActiveRuleSetDB(ctx, gameSlug)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, item := range s.ruleSets[strings.TrimSpace(gameSlug)] {
