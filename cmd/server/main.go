@@ -111,9 +111,8 @@ func main() {
 	}
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()
-	scenariosService := prompts.NewScenarioService()
 	if db != nil {
-		scenariosService = prompts.NewPostgresScenarioService(db)
+		promptsService = prompts.NewPostgresService(db)
 	}
 	eventsService := events.NewService(nil)
 
@@ -126,7 +125,6 @@ func main() {
 		streamCapture,
 		buildStageClassifier(logger, cfg),
 		promptsService,
-		scenariosService,
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
@@ -197,7 +195,7 @@ func main() {
 		streamersService,
 		gamesService,
 		promptsService,
-		scenariosService,
+		nil,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
 	)

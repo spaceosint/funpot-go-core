@@ -172,6 +172,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/llm/state-schemas` / `POST /api/admin/llm/state-schemas` – admin CRUD for versioned match state schemas.
 - `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for update/finalization rules used by the tracker.
 - `GET /api/admin/llm/prompts` / `POST /api/admin/llm/prompts` – admin CRUD for match update/finalization prompt templates.
+- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/llm/rule-sets`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

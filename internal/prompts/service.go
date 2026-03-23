@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,6 +17,9 @@ type Service struct {
 	versions     map[string][]PromptVersion
 	stateSchemas map[string][]StateSchemaVersion
 	ruleSets     map[string][]RuleSetVersion
+	db           *sql.DB
+	schemaMu     sync.Mutex
+	schemaReady  bool
 }
 
 func NewService() *Service {
@@ -26,7 +30,23 @@ func NewService() *Service {
 	}
 }
 
-func (s *Service) List(_ context.Context) []PromptVersion {
+func NewPostgresService(db *sql.DB) *Service {
+	return &Service{
+		versions:     map[string][]PromptVersion{},
+		stateSchemas: map[string][]StateSchemaVersion{},
+		ruleSets:     map[string][]RuleSetVersion{},
+		db:           db,
+	}
+}
+
+func (s *Service) List(ctx context.Context) []PromptVersion {
+	if s.db != nil {
+		items, err := s.listPromptsDB(ctx)
+		if err == nil {
+			return items
+		}
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -38,7 +58,14 @@ func (s *Service) List(_ context.Context) []PromptVersion {
 	return items
 }
 
-func (s *Service) ListActive(_ context.Context) []PromptVersion {
+func (s *Service) ListActive(ctx context.Context) []PromptVersion {
+	if s.db != nil {
+		items, err := s.listActivePromptsDB(ctx)
+		if err == nil {
+			return items
+		}
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -67,7 +94,10 @@ func sortPromptVersions(items []PromptVersion) {
 	})
 }
 
-func (s *Service) GetActiveByStage(_ context.Context, stage string) (PromptVersion, error) {
+func (s *Service) GetActiveByStage(ctx context.Context, stage string) (PromptVersion, error) {
+	if s.db != nil {
+		return s.getActivePromptByStageDB(ctx, stage)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -81,7 +111,10 @@ func (s *Service) GetActiveByStage(_ context.Context, stage string) (PromptVersi
 	return PromptVersion{}, ErrNotFound
 }
 
-func (s *Service) Create(_ context.Context, req CreateRequest) (PromptVersion, error) {
+func (s *Service) Create(ctx context.Context, req CreateRequest) (PromptVersion, error) {
+	if s.db != nil {
+		return s.createPromptDB(ctx, req)
+	}
 	if err := ValidateCreateRequest(req); err != nil {
 		return PromptVersion{}, err
 	}
@@ -135,7 +168,10 @@ func (s *Service) nextPositionLocked() int {
 	return maxPosition + 1
 }
 
-func (s *Service) Activate(_ context.Context, id, actorID string) (PromptVersion, error) {
+func (s *Service) Activate(ctx context.Context, id, actorID string) (PromptVersion, error) {
+	if s.db != nil {
+		return s.activatePromptDB(ctx, id, actorID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

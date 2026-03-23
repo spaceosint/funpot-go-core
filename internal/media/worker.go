@@ -71,11 +71,6 @@ type PromptResolver interface {
 	ListActive(ctx context.Context) []prompts.PromptVersion
 }
 
-type ScenarioResolver interface {
-	GetActiveGlobalDetector(ctx context.Context) (prompts.PromptTemplate, error)
-	GetActiveScenarioByGame(ctx context.Context, gameSlug string) (prompts.ScenarioVersion, error)
-}
-
 type RunStore interface {
 	CreateRun(ctx context.Context, streamerID string) (string, error)
 }
@@ -96,7 +91,6 @@ type Worker struct {
 	capture             StreamCapture
 	classifier          StageClassifier
 	prompts             PromptResolver
-	scenarios           ScenarioResolver
 	runs                RunStore
 	decisions           DecisionStore
 	locker              Locker
@@ -114,7 +108,7 @@ type WorkerConfig struct {
 	CaptureRetryBackoff time.Duration
 }
 
-func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, scenarioResolver ScenarioResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
+func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
 	if cfg.LockTTL <= 0 {
 		cfg.LockTTL = 30 * time.Second
 	}
@@ -133,7 +127,6 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 		capture:             capture,
 		classifier:          classifier,
 		prompts:             promptResolver,
-		scenarios:           scenarioResolver,
 		runs:                runs,
 		decisions:           decisions,
 		locker:              locker,
