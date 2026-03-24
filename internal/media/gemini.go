@@ -228,7 +228,7 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s force_bootstrap=%t", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), forceBootstrap)
 	}
 
-	parsed, err := parseGeminiStageResponse(rawText)
+	parsed, err := parseGeminiStageResponse(rawText, input.Stage)
 	if err != nil {
 		if errors.Is(err, ErrGeminiEmptyResponse) {
 			return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s raw_text=%s", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), strconv.Quote(trimForLog(rawText, 512)))
@@ -499,7 +499,7 @@ func geminiBlockedSafetyCategories(ratings []geminiSafetyRating) []string {
 	return categories
 }
 
-func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
+func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, error) {
 	cleaned := strings.TrimSpace(raw)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
@@ -535,6 +535,9 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 	parsed.HardConflicts = rawMessageFromGenericValue(generic["hard_conflicts"])
 	parsed.FinalOutcome = strings.TrimSpace(stringValue(generic["final_outcome"]))
 	if !hasGeminiResponsePayload(parsed) {
+		if coerced, ok := coerceTrackerStateObjectResponse(stage, generic); ok {
+			return coerced, nil
+		}
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
@@ -550,6 +553,63 @@ func trimForLog(value string, max int) string {
 
 func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
 	return strings.TrimSpace(parsed.Label) != "" || len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != ""
+}
+
+func coerceTrackerStateObjectResponse(stage string, payload map[string]any) (geminiStageResponse, bool) {
+	if !isTrackerStage(stage) || len(payload) == 0 {
+		return geminiStageResponse{}, false
+	}
+	if !looksLikeTrackerStatePayload(payload) {
+		return geminiStageResponse{}, false
+	}
+	confidence := confidenceFromGeneric(payload["confidence"])
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return geminiStageResponse{}, false
+	}
+	return geminiStageResponse{
+		Label:              "state_updated",
+		Confidence:         confidence,
+		UpdatedState:       json.RawMessage(body),
+		Delta:              json.RawMessage("[]"),
+		NextNeededEvidence: json.RawMessage("[]"),
+		HardConflicts:      json.RawMessage("[]"),
+		FinalOutcome:       "unknown",
+	}, true
+}
+
+func confidenceFromGeneric(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func looksLikeTrackerStatePayload(payload map[string]any) bool {
+	for _, key := range []string{
+		"session_type",
+		"status",
+		"ct_score",
+		"t_score",
+		"mode",
+		"player_outcome",
+		"team_side",
+		"evidence_log",
+		"uncertainties",
+		"final_banner_seen",
+		"state",
+	} {
+		if _, ok := payload[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func rawMessageFromGenericValue(value any) json.RawMessage {
