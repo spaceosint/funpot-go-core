@@ -183,8 +183,15 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		}
 		if errors.Is(err, ErrStreamlinkStreamEnded) {
 			logger.Info("stream chunk capture skipped because stream has ended or is unavailable", zap.String("streamerID", id), zap.Error(err))
+			decision, closeErr := w.processCloseCurrentSession(ctx, id)
+			if closeErr != nil {
+				logger.Error("close_current_session processing failed", zap.String("streamerID", id), zap.Error(closeErr))
+				w.metrics.recordFailure(ctx, id, trackerStageClose)
+				w.metrics.recordCycle(ctx, id, "failed")
+				return streamers.LLMDecision{}, closeErr
+			}
 			w.metrics.recordCycle(ctx, id, "stream_unavailable")
-			return streamers.LLMDecision{}, nil
+			return decision, nil
 		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "capture")
@@ -212,6 +219,25 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	w.metrics.recordCycle(ctx, id, "completed")
 	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
 	return lastDecision, nil
+}
+
+func (w *Worker) processCloseCurrentSession(ctx context.Context, streamerID string) (streamers.LLMDecision, error) {
+	activePrompts := filterTrackerPrompts(w.prompts.ListActive(ctx))
+	var closePrompt prompts.PromptVersion
+	for _, item := range activePrompts {
+		if strings.EqualFold(strings.TrimSpace(item.Stage), trackerStageClose) {
+			closePrompt = item
+			break
+		}
+	}
+	if strings.TrimSpace(closePrompt.Stage) == "" {
+		return streamers.LLMDecision{}, nil
+	}
+	runID, err := w.runs.CreateRun(ctx, streamerID)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	return w.processStage(ctx, runID, streamerID, ChunkRef{CapturedAt: time.Now().UTC()}, closePrompt)
 }
 
 func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID string, chunk ChunkRef) (streamers.LLMDecision, error) {
@@ -361,7 +387,22 @@ func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) st
 			return state
 		}
 	}
+	if initial := strings.TrimSpace(w.resolveInitialTrackerState(ctx)); initial != "" {
+		return initial
+	}
 	return defaultTrackerState()
+}
+
+func (w *Worker) resolveInitialTrackerState(ctx context.Context) string {
+	const gameSlug = "cs2"
+	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
+		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
+			if state := strings.TrimSpace(item.InitialStateJSON); state != "" && state != "{}" {
+				return state
+			}
+		}
+	}
+	return ""
 }
 
 func normalizeDecisionLabel(result StageClassification, updatedStateJSON string) string {

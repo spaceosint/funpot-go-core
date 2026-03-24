@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -37,6 +38,28 @@ func TestServiceStateSchemaLifecycle(t *testing.T) {
 	}
 	if active.ID != created.ID {
 		t.Fatalf("active id = %q, want %q", active.ID, created.ID)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestAllowsInitialStateJSONWithoutFields(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug:         "cs2",
+		Name:             "CS2 full state",
+		InitialStateJSON: `{"session_status":{"value":"unknown"}}`,
+	})
+	if err != nil {
+		t.Fatalf("ValidateStateSchemaCreateRequest() error = %v", err)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestRejectsInvalidInitialStateJSON(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug:         "cs2",
+		Name:             "CS2 full state",
+		InitialStateJSON: `[]`,
+	})
+	if !errors.Is(err, ErrInvalidInitialStateJSON) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidInitialStateJSON)
 	}
 }
 

@@ -1398,7 +1398,10 @@ components:
           type: boolean
     StateSchemaCreateRequest:
       type: object
-      required: [gameSlug, name, fields]
+      required: [gameSlug, name]
+      description: >
+        Admin-managed tracker schema definition. At least one of `fields` or
+        `initialStateJson` must be provided.
       properties:
         gameSlug:
           type: string
@@ -1410,6 +1413,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StateFieldDefinition'
+        initialStateJson:
+          type: string
+          description: >
+            Full JSON object (stringified) used as bootstrap state for tracker
+            sessions when no persisted previous state exists.
+      anyOf:
+        - required: [fields]
+        - required: [initialStateJson]
     StateSchemaVersion:
       allOf:
         - $ref: '#/components/schemas/StateSchemaCreateRequest'

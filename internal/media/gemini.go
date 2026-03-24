@@ -156,21 +156,27 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 
 func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest, forceBootstrap bool) (StageClassification, error) {
 	chunkRef := strings.TrimSpace(input.Chunk.Reference)
-	if chunkRef == "" {
+	hasChunk := chunkRef != ""
+	var (
+		data     []byte
+		mimeType string
+		err      error
+	)
+	if hasChunk {
+		data, mimeType, err = loadGeminiChunk(chunkRef, c.maxInlineBytes)
+		if err != nil {
+			return StageClassification{}, err
+		}
+		if err := validateGeminiMIMEType(mimeType); err != nil {
+			return StageClassification{}, err
+		}
+	} else if !allowsEmptyChunk(input.Stage) {
 		return StageClassification{}, ErrGeminiChunkRequired
-	}
-	data, mimeType, err := loadGeminiChunk(chunkRef, c.maxInlineBytes)
-	if err != nil {
-		return StageClassification{}, err
-	}
-
-	if err := validateGeminiMIMEType(mimeType); err != nil {
-		return StageClassification{}, err
 	}
 
 	sessionKey := geminiSessionKey(input)
 	promptFingerprint := geminiPromptFingerprint(input)
-	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data, forceBootstrap)
+	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data, forceBootstrap, hasChunk)
 
 	requestBody := geminiGenerateContentRequest{
 		Contents: contents,
@@ -290,12 +296,10 @@ func geminiPromptFingerprint(input StageRequest) string {
 	}, "|")
 }
 
-func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerprint string, input StageRequest, mimeType string, chunk []byte, forceBootstrap bool) []geminiContent {
-	userTurn := geminiContent{
-		Role: "user",
-		Parts: []geminiPart{
-			{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(chunk)}},
-		},
+func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerprint string, input StageRequest, mimeType string, chunk []byte, forceBootstrap bool, hasChunk bool) []geminiContent {
+	userTurn := geminiContent{Role: "user"}
+	if hasChunk {
+		userTurn.Parts = append(userTurn.Parts, geminiPart{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(chunk)}})
 	}
 	c.sessionsMu.Lock()
 	session, hasSession := c.sessions[sessionKey]
@@ -351,7 +355,7 @@ Active rule set:
 Return ONLY valid JSON with keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
-- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet)))
+- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
@@ -389,7 +393,7 @@ Mandatory rules:
 5. If chunk stream appears cut during active gameplay, prefer session_status=likely_truncated.
 6. Preserve previously confirmed evidence unless clearly contradicted.
 7. Store contradictions in hard_conflicts instead of silently overwriting facts.
-8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
+8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
 }
 
 func buildGeminiContinuationInstruction(input StageRequest) string {
@@ -404,7 +408,30 @@ Chunk captured at: %s
 Chunk reference: %s
 Previous persisted tracker state JSON:
 %s
-Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), previousState))
+Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), previousState))
+}
+
+func allowsEmptyChunk(stage string) bool {
+	switch strings.TrimSpace(strings.ToLower(stage)) {
+	case trackerStageClose, trackerStageFinalize:
+		return true
+	default:
+		return false
+	}
+}
+
+func formatChunkReference(ref string) string {
+	if strings.TrimSpace(ref) == "" {
+		return "n/a"
+	}
+	return strings.TrimSpace(ref)
+}
+
+func formatChunkCapturedAt(ts time.Time) string {
+	if ts.IsZero() {
+		return "n/a"
+	}
+	return ts.UTC().Format(time.RFC3339Nano)
 }
 
 func loadGeminiChunk(path string, maxBytes int64) ([]byte, string, error) {
