@@ -1414,10 +1414,13 @@ components:
           items:
             $ref: '#/components/schemas/StateFieldDefinition'
         initialStateJson:
-          type: string
           description: >
-            Full JSON object (stringified) used as bootstrap state for tracker
-            sessions when no persisted previous state exists.
+            Bootstrap state for tracker sessions when no persisted previous
+            state exists. Can be passed either as a JSON object or as a
+            stringified JSON object.
+          oneOf:
+            - type: string
+            - type: object
       anyOf:
         - required: [fields]
         - required: [initialStateJson]

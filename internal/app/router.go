@@ -70,7 +70,22 @@ func stateSchemaRequestToCreateRequest(req stateSchemaCreateRequest, actorID str
 			FinalOnly:          field.FinalOnly,
 		})
 	}
-	return prompts.StateSchemaCreateRequest{GameSlug: req.GameSlug, Name: req.Name, Description: req.Description, Fields: fields, InitialStateJSON: strings.TrimSpace(req.InitialStateJSON), ActorID: actorID}
+	return prompts.StateSchemaCreateRequest{GameSlug: req.GameSlug, Name: req.Name, Description: req.Description, Fields: fields, InitialStateJSON: normalizeInitialStateJSON(req.InitialStateJSON), ActorID: actorID}
+}
+
+func normalizeInitialStateJSON(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "\"") {
+		var decoded string
+		if err := json.Unmarshal(raw, &decoded); err == nil {
+			return strings.TrimSpace(decoded)
+		}
+		return ""
+	}
+	return trimmed
 }
 
 func ruleSetRequestToCreateRequest(req ruleSetCreateRequest, actorID string) prompts.RuleSetCreateRequest {
@@ -157,7 +172,7 @@ type stateSchemaCreateRequest struct {
 	Name             string              `json:"name"`
 	Description      string              `json:"description"`
 	Fields           []stateFieldRequest `json:"fields"`
-	InitialStateJSON string              `json:"initialStateJson"`
+	InitialStateJSON json.RawMessage     `json:"initialStateJson"`
 }
 
 type ruleItemRequest struct {
