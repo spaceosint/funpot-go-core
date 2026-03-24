@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type GeminiClassifierConfig struct {
 	APIKey         string
 	BaseURL        string
 	MaxInlineBytes int64
+	ChatMaxTokens  int
 	HTTPClient     *http.Client
 }
 
@@ -37,7 +39,15 @@ type GeminiStageClassifier struct {
 	apiKey         string
 	baseURL        string
 	maxInlineBytes int64
+	maxChatTokens  int
 	httpClient     *http.Client
+	sessionsMu     sync.Mutex
+	sessions       map[string]geminiChatSession
+}
+
+type geminiChatSession struct {
+	TokenCount        int
+	PromptFingerprint string
 }
 
 func NewGeminiStageClassifier(cfg GeminiClassifierConfig) (*GeminiStageClassifier, error) {
@@ -50,6 +60,9 @@ func NewGeminiStageClassifier(cfg GeminiClassifierConfig) (*GeminiStageClassifie
 	if cfg.MaxInlineBytes <= 0 {
 		cfg.MaxInlineBytes = 19 * 1024 * 1024
 	}
+	if cfg.ChatMaxTokens <= 0 {
+		cfg.ChatMaxTokens = 900000
+	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -57,7 +70,9 @@ func NewGeminiStageClassifier(cfg GeminiClassifierConfig) (*GeminiStageClassifie
 		apiKey:         strings.TrimSpace(cfg.APIKey),
 		baseURL:        strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		maxInlineBytes: cfg.MaxInlineBytes,
+		maxChatTokens:  cfg.ChatMaxTokens,
 		httpClient:     cfg.HTTPClient,
+		sessions:       make(map[string]geminiChatSession),
 	}, nil
 }
 
@@ -67,6 +82,7 @@ type geminiGenerateContentRequest struct {
 }
 
 type geminiContent struct {
+	Role  string       `json:"role,omitempty"`
 	Parts []geminiPart `json:"parts"`
 }
 
@@ -148,13 +164,12 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		return StageClassification{}, err
 	}
 
+	sessionKey := geminiSessionKey(input)
+	promptFingerprint := geminiPromptFingerprint(input)
+	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data)
+
 	requestBody := geminiGenerateContentRequest{
-		Contents: []geminiContent{{
-			Parts: []geminiPart{
-				{Text: buildGeminiInstruction(input)},
-				{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(data)}},
-			},
-		}},
+		Contents: contents,
 		GenerationConfig: geminiGenerationConfig{
 			Temperature:      input.Prompt.Temperature,
 			MaxOutputTokens:  input.Prompt.MaxTokens,
@@ -218,6 +233,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	if err := validateGeminiTrackerResponse(input.Stage, parsed); err != nil {
 		return StageClassification{}, err
 	}
+	c.storeSessionResponse(sessionKey, promptFingerprint, contents, payload, rawText)
 
 	label := strings.TrimSpace(parsed.Label)
 	if label == "" && len(parsed.UpdatedState) > 0 {
@@ -246,6 +262,63 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 		ConflictsJSON:     marshalRawMessage(parsed.HardConflicts),
 		FinalOutcome:      strings.TrimSpace(parsed.FinalOutcome),
 	}, nil
+}
+
+func geminiSessionKey(input StageRequest) string {
+	key := strings.TrimSpace(input.StreamerID)
+	if key == "" {
+		key = "global"
+	}
+	return strings.ToLower(key)
+}
+
+func geminiPromptFingerprint(input StageRequest) string {
+	return strings.Join([]string{
+		strings.TrimSpace(input.Prompt.ID),
+		strings.TrimSpace(input.Prompt.Template),
+		strings.TrimSpace(input.StateSchema),
+		strings.TrimSpace(input.RuleSet),
+	}, "|")
+}
+
+func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerprint string, input StageRequest, mimeType string, chunk []byte) []geminiContent {
+	userTurn := geminiContent{
+		Role: "user",
+		Parts: []geminiPart{
+			{InlineData: &geminiInlineData{MimeType: mimeType, Data: base64.StdEncoding.EncodeToString(chunk)}},
+		},
+	}
+	c.sessionsMu.Lock()
+	session, hasSession := c.sessions[sessionKey]
+	shouldRotate := !hasSession || session.TokenCount >= c.maxChatTokens || session.PromptFingerprint != promptFingerprint
+	if shouldRotate {
+		userTurn.Parts = append([]geminiPart{{Text: buildGeminiInstruction(input)}}, userTurn.Parts...)
+		c.sessions[sessionKey] = geminiChatSession{
+			TokenCount:        0,
+			PromptFingerprint: promptFingerprint,
+		}
+		c.sessionsMu.Unlock()
+		return []geminiContent{userTurn}
+	}
+	userTurn.Parts = append([]geminiPart{{Text: buildGeminiContinuationInstruction(input)}}, userTurn.Parts...)
+	c.sessionsMu.Unlock()
+	return []geminiContent{userTurn}
+}
+
+func (c *GeminiStageClassifier) storeSessionResponse(sessionKey, promptFingerprint string, requestContents []geminiContent, payload geminiGenerateContentResponse, rawText string) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+	session, ok := c.sessions[sessionKey]
+	if !ok || session.PromptFingerprint != promptFingerprint {
+		return
+	}
+	updated := geminiChatSession{
+		PromptFingerprint: promptFingerprint,
+	}
+	_ = requestContents
+	_ = rawText
+	updated.TokenCount = session.TokenCount + payload.UsageMetadata.PromptTokenCount + payload.UsageMetadata.CandidatesTokenCount
+	c.sessions[sessionKey] = updated
 }
 
 func buildGeminiInstruction(input StageRequest) string {
@@ -291,6 +364,21 @@ Rules:
 - Never emit narrative commentary outside JSON.
 - Keep final_outcome as unknown until direct evidence exists.
 - Store contradictions in hard_conflicts instead of overwriting prior facts.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
+}
+
+func buildGeminiContinuationInstruction(input StageRequest) string {
+	previousState := strings.TrimSpace(input.PreviousState)
+	if previousState == "" {
+		previousState = defaultTrackerState()
+	}
+	return strings.TrimSpace(fmt.Sprintf(`Continue the existing match chat session.
+Stage: %s
+Streamer ID: %s
+Chunk captured at: %s
+Chunk reference: %s
+Previous persisted tracker state JSON:
+%s
+Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), previousState))
 }
 
 func loadGeminiChunk(path string, maxBytes int64) ([]byte, string, error) {

@@ -98,6 +98,136 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	}
 }
 
+func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	requestBodies := make([]string, 0, 2)
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			requestBodies = append(requestBodies, string(body))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	req := StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath, CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+		Prompt: prompts.PromptVersion{
+			ID:       "prompt-1",
+			Stage:    "match_update",
+			Template: "Update the game state",
+			Model:    "gemini",
+		},
+		PreviousState: `{"status":"discovering"}`,
+	}
+	if _, err := classifier.Classify(context.Background(), req); err != nil {
+		t.Fatalf("first Classify() error = %v", err)
+	}
+	req.Chunk.CapturedAt = req.Chunk.CapturedAt.Add(10 * time.Second)
+	if _, err := classifier.Classify(context.Background(), req); err != nil {
+		t.Fatalf("second Classify() error = %v", err)
+	}
+	if len(requestBodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(requestBodies))
+	}
+	if !strings.Contains(requestBodies[0], "Use this admin-managed tracker prompt as the source of truth") {
+		t.Fatalf("expected first request to include full prompt bootstrap, got %s", requestBodies[0])
+	}
+	if strings.Contains(requestBodies[1], "Use this admin-managed tracker prompt as the source of truth") {
+		t.Fatalf("expected second request to reuse existing chat context without prompt bootstrap, got %s", requestBodies[1])
+	}
+	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
+		t.Fatalf("expected second request to include continuation marker, got %s", requestBodies[1])
+	}
+}
+
+func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	requestBodies := make([]string, 0, 2)
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:        "gemini-key",
+		BaseURL:       "https://gemini.test",
+		ChatMaxTokens: 100,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			requestBodies = append(requestBodies, string(body))
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	req := StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath, CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+		Prompt: prompts.PromptVersion{
+			ID:       "prompt-1",
+			Stage:    "match_update",
+			Template: "Update the game state",
+			Model:    "gemini",
+		},
+		PreviousState: `{"status":"discovering"}`,
+	}
+	if _, err := classifier.Classify(context.Background(), req); err != nil {
+		t.Fatalf("first Classify() error = %v", err)
+	}
+	req.Chunk.CapturedAt = req.Chunk.CapturedAt.Add(10 * time.Second)
+	if _, err := classifier.Classify(context.Background(), req); err != nil {
+		t.Fatalf("second Classify() error = %v", err)
+	}
+	if len(requestBodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(requestBodies))
+	}
+	if !strings.Contains(requestBodies[0], "Use this admin-managed tracker prompt as the source of truth") {
+		t.Fatalf("expected first request to include full prompt bootstrap, got %s", requestBodies[0])
+	}
+	if !strings.Contains(requestBodies[1], "Use this admin-managed tracker prompt as the source of truth") {
+		t.Fatalf("expected second request to rotate chat and include bootstrap prompt again, got %s", requestBodies[1])
+	}
+}
+
 func TestGeminiStageClassifierRejectsLargeChunk(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.ts")

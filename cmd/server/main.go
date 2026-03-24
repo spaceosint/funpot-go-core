@@ -235,6 +235,7 @@ func buildStageClassifier(logger *zap.Logger, cfg config.Config) media.StageClas
 		APIKey:         cfg.Gemini.APIKey,
 		BaseURL:        cfg.Gemini.BaseURL,
 		MaxInlineBytes: cfg.Gemini.MaxInlineBytes,
+		ChatMaxTokens:  cfg.Gemini.ChatMaxTokens,
 	})
 	if err != nil {
 		logger.Warn("failed to configure gemini classifier; using deterministic fallback classifier", zap.Error(err))
