@@ -151,15 +151,7 @@ type geminiStageResponse struct {
 }
 
 func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest) (StageClassification, error) {
-	result, err := c.classify(ctx, input, false)
-	if err == nil {
-		return result, nil
-	}
-	if !isGeminiSessionRecoveryError(err) {
-		return StageClassification{}, err
-	}
-	c.resetSession(geminiSessionKey(input))
-	return c.classify(ctx, input, true)
+	return c.classify(ctx, input, false)
 }
 
 func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest, forceBootstrap bool) (StageClassification, error) {
@@ -232,7 +224,8 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 	}
 	rawText := extractGeminiResponseText(payload)
 	if rawText == "" {
-		return StageClassification{}, describeGeminiEmptyResponse(payload, responseBody)
+		err := describeGeminiEmptyResponse(payload, responseBody)
+		return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s force_bootstrap=%t", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), forceBootstrap)
 	}
 
 	parsed, err := parseGeminiStageResponse(rawText)
@@ -277,16 +270,6 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 	}, nil
 }
 
-func isGeminiSessionRecoveryError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, ErrGeminiEmptyResponse) {
-		return true
-	}
-	return strings.Contains(err.Error(), ErrGeminiEmptyResponse.Error())
-}
-
 func geminiSessionKey(input StageRequest) string {
 	key := strings.TrimSpace(input.StreamerID)
 	if key == "" {
@@ -326,12 +309,6 @@ func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerp
 	userTurn.Parts = append([]geminiPart{{Text: buildGeminiContinuationInstruction(input)}}, userTurn.Parts...)
 	c.sessionsMu.Unlock()
 	return []geminiContent{userTurn}
-}
-
-func (c *GeminiStageClassifier) resetSession(sessionKey string) {
-	c.sessionsMu.Lock()
-	defer c.sessionsMu.Unlock()
-	delete(c.sessions, strings.ToLower(strings.TrimSpace(sessionKey)))
 }
 
 func (c *GeminiStageClassifier) storeSessionResponse(sessionKey, promptFingerprint string, requestContents []geminiContent, payload geminiGenerateContentResponse, rawText string) {
