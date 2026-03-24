@@ -458,6 +458,47 @@ func TestGeminiStageClassifierBackfillsTrackerStartPayload(t *testing.T) {
 	}
 }
 
+func TestGeminiStageClassifierBackfillsTrackerStartPayloadWithNullFinalOutcome(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[],\"next_needed_evidence\":[],\"final_outcome\":null}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	result, err := classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "Start",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err != nil {
+		t.Fatalf("expected null final_outcome to be normalized, got error %v", err)
+	}
+	if strings.TrimSpace(result.FinalOutcome) != "unknown" {
+		t.Fatalf("expected unknown final_outcome fallback, got %q", result.FinalOutcome)
+	}
+}
+
 func TestGeminiStageClassifierReportsEmptyResponseDiagnostics(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
