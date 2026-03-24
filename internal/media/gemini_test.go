@@ -228,6 +228,100 @@ func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
 	}
 }
 
+func TestGeminiStageClassifierRecoversFromEmptyContinuationResponse(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	requestBodies := make([]string, 0, 2)
+	requestCount := 0
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			requestCount++
+			requestBodies = append(requestBodies, string(body))
+			if requestCount == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
+                }`)),
+				}, nil
+			}
+			if requestCount == 2 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": []},
+                        "finishReason": "STOP"
+                    }],
+                    "usageMetadata": {"promptTokenCount": 90, "candidatesTokenCount": 0, "totalTokenCount": 90}
+                }`)),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.88,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"winner_seen\"],\"next_needed_evidence\":[],\"final_outcome\":\"win\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 140, "candidatesTokenCount": 25, "totalTokenCount": 165}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	req := StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath, CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+		Prompt: prompts.PromptVersion{
+			ID:       "prompt-1",
+			Stage:    "match_update",
+			Template: "Update the game state",
+			Model:    "gemini",
+		},
+		PreviousState: `{"status":"discovering"}`,
+	}
+	if _, err := classifier.Classify(context.Background(), req); err != nil {
+		t.Fatalf("first Classify() error = %v", err)
+	}
+	req.Chunk.CapturedAt = req.Chunk.CapturedAt.Add(10 * time.Second)
+	result, err := classifier.Classify(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second Classify() error = %v", err)
+	}
+	if result.FinalOutcome != "win" {
+		t.Fatalf("expected recovered outcome win, got %q", result.FinalOutcome)
+	}
+	if len(requestBodies) != 3 {
+		t.Fatalf("expected 3 requests, got %d", len(requestBodies))
+	}
+	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
+		t.Fatalf("expected second request to be continuation, got %s", requestBodies[1])
+	}
+	if !strings.Contains(requestBodies[2], "Use this admin-managed tracker prompt as the source of truth") {
+		t.Fatalf("expected third request to reset session and bootstrap prompt, got %s", requestBodies[2])
+	}
+}
+
 func TestGeminiStageClassifierRejectsLargeChunk(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.ts")
