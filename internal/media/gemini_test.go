@@ -228,14 +228,14 @@ func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
 	}
 }
 
-func TestGeminiStageClassifierRecoversFromEmptyContinuationResponse(t *testing.T) {
+func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
 	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
 		t.Fatalf("write chunk: %v", err)
 	}
 
-	requestBodies := make([]string, 0, 2)
+	requestBodies := make([]string, 0, 4)
 	requestCount := 0
 	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
 		APIKey:  "gemini-key",
@@ -304,9 +304,17 @@ func TestGeminiStageClassifierRecoversFromEmptyContinuationResponse(t *testing.T
 		t.Fatalf("first Classify() error = %v", err)
 	}
 	req.Chunk.CapturedAt = req.Chunk.CapturedAt.Add(10 * time.Second)
+	if _, err := classifier.Classify(context.Background(), req); err == nil {
+		t.Fatal("expected second Classify() to fail with empty response")
+	} else {
+		if !strings.Contains(err.Error(), ErrGeminiEmptyResponse.Error()) {
+			t.Fatalf("expected empty response error, got %v", err)
+		}
+	}
+	req.Chunk.CapturedAt = req.Chunk.CapturedAt.Add(10 * time.Second)
 	result, err := classifier.Classify(context.Background(), req)
 	if err != nil {
-		t.Fatalf("second Classify() error = %v", err)
+		t.Fatalf("third Classify() error = %v", err)
 	}
 	if result.FinalOutcome != "win" {
 		t.Fatalf("expected recovered outcome win, got %q", result.FinalOutcome)
@@ -317,8 +325,8 @@ func TestGeminiStageClassifierRecoversFromEmptyContinuationResponse(t *testing.T
 	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
 		t.Fatalf("expected second request to be continuation, got %s", requestBodies[1])
 	}
-	if !strings.Contains(requestBodies[2], "Use this admin-managed tracker prompt as the source of truth") {
-		t.Fatalf("expected third request to reset session and bootstrap prompt, got %s", requestBodies[2])
+	if !strings.Contains(requestBodies[2], "Continue the existing match chat session.") {
+		t.Fatalf("expected third request to keep existing chat session after empty response, got %s", requestBodies[2])
 	}
 }
 
