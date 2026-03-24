@@ -356,10 +356,23 @@ Return ONLY valid JSON with keys: label, confidence, summary.
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
 %s
-Update the tracker using previous_state + new_chunk for this 10-second window.
+
+You are a match state tracker for a single game session.
+
+Critical rule:
+The end of available video data is NOT the same as confirmed end of the match.
+
+Track two independent fields:
+- player_result.outcome = win | loss | draw | unknown
+- session_status.value = in_progress | likely_finished | confirmed_finished | likely_truncated | unknown
+
+Stage-specific behavior:
+- For match_update: update cumulative state using previous_state + new_chunk.
+- For close_current_session or match_finalize: no more chunks are currently available; do NOT assume the match finished and choose closure status only from accumulated evidence.
+
 Return ONLY valid JSON with this exact shape:
 {
-  "label": "state_updated | finalized | unknown",
+  "label": "state_updated | closure_evaluated | unknown",
   "confidence": 0.0,
   "updated_state": {},
   "delta": [],
@@ -367,12 +380,16 @@ Return ONLY valid JSON with this exact shape:
   "hard_conflicts": [],
   "final_outcome": "win | loss | draw | unknown"
 }
-Rules:
-- Treat one chat/session as one match.
-- Always update and return compact state JSON in updated_state.
-- Never emit narrative commentary outside JSON.
-- Keep final_outcome as unknown until direct evidence exists.
-- Store contradictions in hard_conflicts instead of overwriting prior facts.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
+
+Mandatory rules:
+1. Never infer match completion only because no more chunks are currently available.
+2. Never infer player victory/defeat from gameplay quality.
+3. Treat final outcome as validated ONLY when strong terminal evidence exists (final banner, final scoreboard, explicit post-match UI, or repeated strong terminal signals).
+4. If completion is not confirmed, keep player_result.is_final=false and final_outcome=unknown.
+5. If chunk stream appears cut during active gameplay, prefer session_status=likely_truncated.
+6. Preserve previously confirmed evidence unless clearly contradicted.
+7. Store contradictions in hard_conflicts instead of silently overwriting facts.
+8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), input.Chunk.CapturedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet), previousState))
 }
 
 func buildGeminiContinuationInstruction(input StageRequest) string {
@@ -595,10 +612,12 @@ func looksLikeTrackerStatePayload(payload map[string]any) bool {
 	for _, key := range []string{
 		"session_type",
 		"status",
+		"session_status",
 		"ct_score",
 		"t_score",
 		"mode",
 		"player_outcome",
+		"player_result",
 		"team_side",
 		"evidence_log",
 		"uncertainties",
@@ -696,7 +715,7 @@ func normalizeGeminiTrackerResponse(input StageRequest, parsed geminiStageRespon
 
 func isTrackerStartStage(stage string) bool {
 	switch strings.TrimSpace(strings.ToLower(stage)) {
-	case trackerStageDiscovery, "start", "discovery":
+	case trackerStageDiscovery, "start", "discovery", "bootstrap", "initialize":
 		return true
 	default:
 		return false

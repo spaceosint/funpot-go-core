@@ -62,10 +62,14 @@ The LLM must behave as a **finite match state tracker**, not as a commentator.
 ### Canonical session state
 ```json
 {
-  "session_type": "single_match",
+  "session_type": "single_match_single_chat",
   "game": "cs2",
   "mode": "competitive | faceit | wingman | unknown",
-  "match_status": "in_progress | finished | interrupted | unknown",
+  "session_status": {
+    "value": "in_progress | likely_finished | confirmed_finished | likely_truncated | unknown",
+    "confidence": 0.0,
+    "reason": null
+  },
   "focus_player": {
     "name": null,
     "team_side": "CT | T | unknown",
@@ -75,39 +79,48 @@ The LLM must behave as a **finite match state tracker**, not as a commentator.
   "score_state": {
     "ct_score": null,
     "t_score": null,
-    "last_confirmed_from": "hud | scoreboard | endscreen | inferred | unknown",
+    "source": "hud | scoreboard | endscreen | inferred | unknown",
     "confidence": 0.0
   },
   "round_tracking": {
     "observed_round_wins_ct": 0,
     "observed_round_wins_t": 0,
     "observed_round_history": [],
-    "round_history_confidence": 0.0
+    "confidence": 0.0
   },
-  "final_evidence": {
-    "final_banner_seen": false,
-    "final_banner_text": null,
-    "final_scoreboard_seen": false,
-    "final_scoreboard_text": null,
-    "winner_side_confirmed": "CT | T | draw | unknown",
+  "winner_state": {
+    "winner_side": "CT | T | draw | unknown",
     "winner_team_label": "team_1 | team_2 | unknown",
+    "source": "final_banner | final_scoreboard | round_accumulation | unknown",
     "confidence": 0.0
   },
   "player_result": {
     "outcome": "win | loss | draw | unknown",
+    "confidence": 0.0,
     "reason": null,
-    "confidence": 0.0
+    "is_final": false
+  },
+  "terminal_evidence": {
+    "final_banner_seen": false,
+    "final_banner_text": null,
+    "final_scoreboard_seen": false,
+    "final_scoreboard_text": null,
+    "post_match_ui_seen": false,
+    "return_to_lobby_seen": false,
+    "strong_terminal_signals": [],
+    "weak_terminal_signals": []
   },
   "supporting_evidence": [],
   "open_uncertainties": [],
   "hard_conflicts": [],
   "next_needed_evidence": [
-    "final scoreboard",
-    "final banner",
-    "clear player team identification"
+    "clear final screen",
+    "clear final scoreboard",
+    "clear player team confirmation"
   ]
 }
 ```
+
 
 ### Practical runtime shape
 ```json
@@ -146,13 +159,13 @@ The LLM must behave as a **finite match state tracker**, not as a commentator.
 }
 ```
 
-## Update/finalize protocol
+## Update/close protocol
 
-### Update step
+### Update step (`match_update`)
 Each 10-second chunk produces one update request containing:
 - `previous_state`
 - `new_chunk.time_range`
-- structured observations (`observations`, `visible_hud_text`, `scoreboard_text`, `round_result_signals`, `team_identity_signals`, `final_screen_signals`)
+- structured observations (`observations`, `visible_hud_text`, `scoreboard_text`, `round_result_signals`, `team_identity_signals`, `final_screen_signals`, `post_match_signals`, `truncation_signals`)
 - active admin-managed rules and prompt version metadata
 
 Expected response shape:
@@ -163,52 +176,55 @@ Expected response shape:
     "score updated from 7-5 to 8-5"
   ],
   "next_needed_evidence": [
-    "final scoreboard",
-    "final banner"
+    "clear final scoreboard"
   ]
 }
 ```
 
-### Final step
-When the match ends or the stream segment is exhausted, the backend sends the accumulated state to a finalization prompt.
+### Session close step (`close_current_session`)
+When no more chunks are currently available and the reason is unknown, backend triggers `close_current_session`.
 
 Expected response shape:
 ```json
 {
-  "final_outcome": "win",
-  "final_score": {
-    "ct": 13,
-    "t": 10
+  "updated_state": {
+    "session_status": {
+      "value": "likely_truncated",
+      "confidence": 0.86,
+      "reason": "last chunk showed active gameplay without terminal UI"
+    },
+    "player_result": {
+      "outcome": "unknown",
+      "confidence": 0.0,
+      "reason": "match ending not confirmed",
+      "is_final": false
+    }
   },
-  "player_team": {
-    "team_side": "CT",
-    "team_label": "team_1"
-  },
-  "winner_team": {
-    "team_side": "CT",
-    "team_label": "team_1"
-  },
-  "confidence": 0.97,
-  "evidence": [
-    "Final scoreboard shows CT 13 - T 10",
-    "Focus player had been consistently identified as CT"
-  ],
-  "unresolved_issues": []
+  "final_outcome": "unknown"
 }
 ```
 
 ## Evidence-first decision rules
-The finalizer must use a strict priority cascade:
-1. Final banner / end screen.
-2. Final scoreboard.
-3. Clear late-match scoreboard.
-4. Accumulated round outcomes with high confidence.
-5. Otherwise `unknown`.
+Strong terminal signals can set `session_status=confirmed_finished`:
+1. explicit final banner / match end screen;
+2. explicit final scoreboard;
+3. explicit post-match UI / return to lobby after results;
+4. repeated strong terminal indicators across chunks.
+
+Weak signals can suggest `session_status=likely_finished`:
+- long scoreboard without new gameplay,
+- summary/MVP-like screens without explicit final banner,
+- menu transition without explicit winner confirmation.
+
+Truncation signals should prefer `session_status=likely_truncated`:
+- last chunk shows active gameplay,
+- no terminal UI and no post-match transition,
+- data ends abruptly.
 
 Additional hard rules:
 - Never infer `win` because the player "looked stronger".
-- If player side/team is not confirmed, keep `unknown`.
-- If the ending is cut off or interrupted, keep `unknown` unless final evidence was already captured.
+- If player side/team is not confirmed, keep `player_result.outcome=unknown`.
+- `player_result.is_final=true` only when `session_status=confirmed_finished` and winner/player-team evidence is strong.
 - Contradictions must be stored in `hard_conflicts`, not silently overwritten.
 
 ## Admin capabilities (backend requirements)
