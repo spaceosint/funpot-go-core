@@ -543,6 +543,8 @@ func isPlaceholderString(value string) bool {
 
 func stringValue(value any) string {
 	switch typed := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return typed
 	default:
