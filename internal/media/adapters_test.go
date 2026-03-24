@@ -32,6 +32,7 @@ type fakeCommandRunner struct {
 	names        []string
 	argsHistory  [][]string
 	runFn        func(name string, args ...string) error
+	runWithIOFn  func(stdout io.Writer, stderr io.Writer, name string, args ...string) error
 }
 
 func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.Writer, name string, args ...string) error {
@@ -39,8 +40,15 @@ func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.W
 	f.lastArgs = append([]string(nil), args...)
 	f.names = append(f.names, name)
 	f.argsHistory = append(f.argsHistory, append([]string(nil), args...))
+	if f.runWithIOFn != nil {
+		return f.runWithIOFn(stdout, stderr, name, args...)
+	}
 	if f.runFn != nil {
 		return f.runFn(name, args...)
+	}
+	if strings.Contains(name, "ffprobe") {
+		_, _ = io.WriteString(stdout, `{"streams":[{"codec_name":"h264","width":1920,"height":1080}]}`)
+		return nil
 	}
 	if strings.Contains(name, "ffmpeg") && len(args) > 0 {
 		outputPath := args[len(args)-1]
@@ -198,9 +206,17 @@ func TestFFmpegChunkNormalizerRemuxesTSChunksToMP4(t *testing.T) {
 	}
 
 	runner := &fakeCommandRunner{
-		runFn: func(name string, args ...string) error {
+		runWithIOFn: func(stdout io.Writer, _ io.Writer, name string, args ...string) error {
+			if name == "ffprobe-bin" {
+				_, _ = io.WriteString(stdout, `{"streams":[{"codec_name":"h264","width":1920,"height":1080}]}`)
+				return nil
+			}
 			if name != "ffmpeg-bin" {
 				t.Fatalf("runner binary = %q, want ffmpeg-bin", name)
+			}
+			joined := strings.Join(args, " ")
+			if !strings.Contains(joined, "-bsf:v") || !strings.Contains(joined, "h264_metadata=crop_left=420:crop_right=420:crop_top=0:crop_bottom=0") {
+				t.Fatalf("expected crop metadata bitstream filter args, got %q", joined)
 			}
 			if got := args[len(args)-1]; got != filepath.Join(dir, "chunk.mp4") {
 				t.Fatalf("output path = %q", got)
