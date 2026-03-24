@@ -230,6 +230,9 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 
 	parsed, err := parseGeminiStageResponse(rawText)
 	if err != nil {
+		if errors.Is(err, ErrGeminiEmptyResponse) {
+			return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s raw_text=%s", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), strconv.Quote(trimForLog(rawText, 512)))
+		}
 		return StageClassification{}, err
 	}
 	parsed = normalizeGeminiTrackerResponse(input, parsed)
@@ -535,6 +538,14 @@ func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
+}
+
+func trimForLog(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	if max <= 0 || len(trimmed) <= max {
+		return trimmed
+	}
+	return trimmed[:max] + "..."
 }
 
 func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
