@@ -40,12 +40,23 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 	return StageClassification{}, nil
 }
 
-type fakePromptResolver struct{ prompts []prompts.PromptVersion }
+type fakePromptResolver struct {
+	prompts      []prompts.PromptVersion
+	activeSchema prompts.StateSchemaVersion
+	schemaErr    error
+}
 
 func (f fakePromptResolver) ListActive(_ context.Context) []prompts.PromptVersion {
 	out := make([]prompts.PromptVersion, len(f.prompts))
 	copy(out, f.prompts)
 	return out
+}
+
+func (f fakePromptResolver) GetActiveStateSchema(_ context.Context, _ string) (prompts.StateSchemaVersion, error) {
+	if f.schemaErr != nil {
+		return prompts.StateSchemaVersion{}, f.schemaErr
+	}
+	return f.activeSchema, nil
 }
 
 type fakeDecisionStore struct {
@@ -303,6 +314,30 @@ func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) 
 	}
 }
 
+func TestWorkerProcessStreamerRunsCloseCurrentSessionWhenStreamEnds(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	worker := NewWorker(
+		fakeCapture{err: ErrStreamlinkStreamEnded},
+		fakeClassifier{results: map[string]StageClassification{"close_current_session": {Label: "closure_evaluated", Confidence: 0.95, UpdatedStateJSON: `{"session_status":{"value":"likely_truncated"}}`}}},
+		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "close-1", Stage: "close_current_session", Position: 1, IsActive: true, Template: "close session state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-ended")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got.Stage != "close_current_session" {
+		t.Fatalf("stage = %q, want close_current_session", got.Stage)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
+	}
+	if decisions.items[0].ChunkRef != "" {
+		t.Fatalf("chunkRef = %q, want empty for close_current_session", decisions.items[0].ChunkRef)
+	}
+}
+
 func TestWorkerProcessStreamerStillRunsWithoutLegacyScenarioResolver(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
@@ -345,6 +380,29 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	}
 	if !strings.Contains(decisions.items[1].PreviousStateJSON, `"score":{"ct":8,"t":5}`) {
 		t.Fatalf("previous state = %q", decisions.items[1].PreviousStateJSON)
+	}
+}
+
+func TestWorkerProcessStreamerUsesAdminProvidedInitialState(t *testing.T) {
+	decisions := &fakeDecisionStore{}
+	classifier := &flakyClassifier{result: StageClassification{Label: "state_updated", Confidence: 0.95, UpdatedStateJSON: `{"score_state":{"ct_score":1,"t_score":0}}`}}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		classifier,
+		fakePromptResolver{
+			prompts:      []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}},
+			activeSchema: prompts.StateSchemaVersion{InitialStateJSON: `{"session_status":{"value":"in_progress"},"score_state":{"ct_score":0,"t_score":0}}`},
+		},
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
+	}
+	if !strings.Contains(decisions.items[0].PreviousStateJSON, `"session_status":{"value":"in_progress"}`) {
+		t.Fatalf("previous state = %q", decisions.items[0].PreviousStateJSON)
 	}
 }
 

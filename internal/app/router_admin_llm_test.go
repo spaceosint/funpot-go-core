@@ -44,6 +44,18 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 	if stateRes.Code != http.StatusCreated {
 		t.Fatalf("state schema create status = %d body=%s", stateRes.Code, stateRes.Body.String())
 	}
+	stateSchemaBodyWithInitialState, _ := json.Marshal(map[string]any{
+		"gameSlug": "cs2",
+		"name":     "CS2 tracker with initial state",
+		"initialStateJson": `{"session_type":"single_match_single_chat","game":"cs2","session_status":{"value":"unknown"}}`,
+	})
+	stateInitialReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/state-schemas", bytes.NewReader(stateSchemaBodyWithInitialState))
+	stateInitialReq.Header.Set("Authorization", "Bearer "+adminToken)
+	stateInitialRes := httptest.NewRecorder()
+	handler.ServeHTTP(stateInitialRes, stateInitialReq)
+	if stateInitialRes.Code != http.StatusCreated {
+		t.Fatalf("state schema with initial state create status = %d body=%s", stateInitialRes.Code, stateInitialRes.Body.String())
+	}
 
 	ruleBody, _ := json.Marshal(map[string]any{
 		"gameSlug":          "cs2",
