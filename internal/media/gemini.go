@@ -151,6 +151,18 @@ type geminiStageResponse struct {
 }
 
 func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest) (StageClassification, error) {
+	result, err := c.classify(ctx, input, false)
+	if err == nil {
+		return result, nil
+	}
+	if !isGeminiSessionRecoveryError(err) {
+		return StageClassification{}, err
+	}
+	c.resetSession(geminiSessionKey(input))
+	return c.classify(ctx, input, true)
+}
+
+func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest, forceBootstrap bool) (StageClassification, error) {
 	chunkRef := strings.TrimSpace(input.Chunk.Reference)
 	if chunkRef == "" {
 		return StageClassification{}, ErrGeminiChunkRequired
@@ -166,7 +178,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 
 	sessionKey := geminiSessionKey(input)
 	promptFingerprint := geminiPromptFingerprint(input)
-	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data)
+	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data, forceBootstrap)
 
 	requestBody := geminiGenerateContentRequest{
 		Contents: contents,
@@ -265,6 +277,16 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	}, nil
 }
 
+func isGeminiSessionRecoveryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrGeminiEmptyResponse) {
+		return true
+	}
+	return strings.Contains(err.Error(), ErrGeminiEmptyResponse.Error())
+}
+
 func geminiSessionKey(input StageRequest) string {
 	key := strings.TrimSpace(input.StreamerID)
 	if key == "" {
@@ -282,7 +304,7 @@ func geminiPromptFingerprint(input StageRequest) string {
 	}, "|")
 }
 
-func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerprint string, input StageRequest, mimeType string, chunk []byte) []geminiContent {
+func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerprint string, input StageRequest, mimeType string, chunk []byte, forceBootstrap bool) []geminiContent {
 	userTurn := geminiContent{
 		Role: "user",
 		Parts: []geminiPart{
@@ -291,7 +313,7 @@ func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerp
 	}
 	c.sessionsMu.Lock()
 	session, hasSession := c.sessions[sessionKey]
-	shouldRotate := !hasSession || session.TokenCount >= c.maxChatTokens || session.PromptFingerprint != promptFingerprint
+	shouldRotate := forceBootstrap || !hasSession || session.TokenCount >= c.maxChatTokens || session.PromptFingerprint != promptFingerprint
 	if shouldRotate {
 		userTurn.Parts = append([]geminiPart{{Text: buildGeminiInstruction(input)}}, userTurn.Parts...)
 		c.sessions[sessionKey] = geminiChatSession{
@@ -304,6 +326,12 @@ func (c *GeminiStageClassifier) prepareSessionContents(sessionKey, promptFingerp
 	userTurn.Parts = append([]geminiPart{{Text: buildGeminiContinuationInstruction(input)}}, userTurn.Parts...)
 	c.sessionsMu.Unlock()
 	return []geminiContent{userTurn}
+}
+
+func (c *GeminiStageClassifier) resetSession(sessionKey string) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+	delete(c.sessions, strings.ToLower(strings.TrimSpace(sessionKey)))
 }
 
 func (c *GeminiStageClassifier) storeSessionResponse(sessionKey, promptFingerprint string, requestContents []geminiContent, payload geminiGenerateContentResponse, rawText string) {
