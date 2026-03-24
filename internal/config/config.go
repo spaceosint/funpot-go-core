@@ -44,6 +44,7 @@ type GeminiConfig struct {
 	APIKey         string
 	BaseURL        string
 	MaxInlineBytes int64
+	ChatMaxTokens  int
 }
 
 // AdminConfig controls role-based admin access.
@@ -308,6 +309,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	geminiChatMaxTokens, err := getInt("FUNPOT_GEMINI_CHAT_MAX_TOKENS", 900000)
+	if err != nil {
+		return Config{}, err
+	}
 
 	featureFlags, err := getFeatureFlags("FUNPOT_FEATURE_FLAGS")
 	if err != nil {
@@ -431,6 +436,7 @@ func Load() (Config, error) {
 			APIKey:         os.Getenv("FUNPOT_GEMINI_API_KEY"),
 			BaseURL:        getString("FUNPOT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
 			MaxInlineBytes: geminiMaxInlineBytes,
+			ChatMaxTokens:  geminiChatMaxTokens,
 		},
 		Features: FeatureConfig{
 			Flags: featureFlags,
@@ -491,6 +497,9 @@ func Load() (Config, error) {
 
 	if cfg.Gemini.MaxInlineBytes < 1 {
 		return Config{}, fmt.Errorf("FUNPOT_GEMINI_MAX_INLINE_BYTES must be > 0")
+	}
+	if cfg.Gemini.ChatMaxTokens < 1 {
+		return Config{}, fmt.Errorf("FUNPOT_GEMINI_CHAT_MAX_TOKENS must be > 0")
 	}
 
 	return cfg, nil

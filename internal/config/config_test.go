@@ -47,6 +47,7 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_GEMINI_API_KEY", "test-gemini-key")
 	t.Setenv("FUNPOT_GEMINI_BASE_URL", "https://example.test")
 	t.Setenv("FUNPOT_GEMINI_MAX_INLINE_BYTES", "123456")
+	t.Setenv("FUNPOT_GEMINI_CHAT_MAX_TOKENS", "900000")
 
 	cfg, err := Load()
 	if err != nil {
@@ -149,6 +150,9 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	if cfg.Gemini.MaxInlineBytes != 123456 {
 		t.Fatalf("expected gemini max inline bytes to be set")
 	}
+	if cfg.Gemini.ChatMaxTokens != 900000 {
+		t.Fatalf("expected gemini chat max tokens to be set")
+	}
 }
 
 func TestLoadDatabaseValidation(t *testing.T) {
@@ -213,6 +217,12 @@ func TestLoadDatabaseValidation(t *testing.T) {
 			name: "invalid gemini inline limit",
 			env: map[string]string{
 				"FUNPOT_GEMINI_MAX_INLINE_BYTES": "0",
+			},
+		},
+		{
+			name: "invalid gemini chat max tokens",
+			env: map[string]string{
+				"FUNPOT_GEMINI_CHAT_MAX_TOKENS": "0",
 			},
 		},
 	}

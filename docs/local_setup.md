@@ -49,6 +49,7 @@ FUNPOT_STREAMLINK_URL_TEMPLATE=https://twitch.tv/%s
 FUNPOT_GEMINI_API_KEY=<google_ai_studio_api_key>
 FUNPOT_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 FUNPOT_GEMINI_MAX_INLINE_BYTES=19922944
+FUNPOT_GEMINI_CHAT_MAX_TOKENS=900000
 FUNPOT_ADMIN_USER_IDS=<admin_user_uuid_1>,<admin_user_uuid_2>
 FUNPOT_DATABASE_ENABLED=true
 FUNPOT_DATABASE_HOST=localhost
@@ -85,6 +86,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > Set `FUNPOT_GEMINI_API_KEY` to enable real Gemini stage classification. When
 > it is unset, the server falls back to the deterministic placeholder
 > classifier used in early development.
+>
+> `FUNPOT_GEMINI_CHAT_MAX_TOKENS` controls how long the backend keeps one
+> Gemini chat session alive per streamer before rotating to a new chat and
+> re-sending the tracker prompt + latest state bootstrap.
 
 Update this table whenever you introduce a new configuration surface.
 
