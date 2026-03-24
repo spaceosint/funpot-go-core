@@ -227,6 +227,7 @@ func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest
 	if err != nil {
 		return StageClassification{}, err
 	}
+	parsed = normalizeGeminiTrackerResponse(input, parsed)
 	if parsed.Confidence < 0 || parsed.Confidence > 1 {
 		return StageClassification{}, ErrGeminiInvalidConfidence
 	}
@@ -592,4 +593,36 @@ func validateGeminiTrackerResponse(stage string, parsed geminiStageResponse) err
 		}
 	}
 	return nil
+}
+
+func normalizeGeminiTrackerResponse(input StageRequest, parsed geminiStageResponse) geminiStageResponse {
+	if !isTrackerStage(input.Stage) || !isTrackerStartStage(input.Stage) {
+		return parsed
+	}
+	if len(parsed.UpdatedState) == 0 || strings.TrimSpace(string(parsed.UpdatedState)) == "null" {
+		fallbackState := strings.TrimSpace(input.PreviousState)
+		if fallbackState == "" {
+			fallbackState = defaultTrackerState()
+		}
+		parsed.UpdatedState = json.RawMessage(fallbackState)
+	}
+	if len(parsed.Delta) == 0 || strings.TrimSpace(string(parsed.Delta)) == "null" {
+		parsed.Delta = json.RawMessage("[]")
+	}
+	if len(parsed.NextNeededEvidence) == 0 || strings.TrimSpace(string(parsed.NextNeededEvidence)) == "null" {
+		parsed.NextNeededEvidence = json.RawMessage("[]")
+	}
+	if strings.TrimSpace(parsed.FinalOutcome) == "" {
+		parsed.FinalOutcome = "unknown"
+	}
+	return parsed
+}
+
+func isTrackerStartStage(stage string) bool {
+	switch strings.TrimSpace(strings.ToLower(stage)) {
+	case trackerStageDiscovery, "start", "discovery":
+		return true
+	default:
+		return false
+	}
 }
