@@ -91,6 +91,36 @@ func TestSetupRefreshSessionStoreNoopWhenRefreshDisabled(t *testing.T) {
 	}
 }
 
+func TestStreamProcessIntervalUsesCaptureTimeout(t *testing.T) {
+	cfg := config.Config{
+		Streamlink: config.StreamlinkConfig{
+			CaptureTimeout: 25 * time.Second,
+		},
+	}
+
+	if got := streamProcessInterval(cfg); got != 25*time.Second {
+		t.Fatalf("streamProcessInterval() = %s, want %s", got, 25*time.Second)
+	}
+}
+
+func TestStreamProcessIntervalFallback(t *testing.T) {
+	if got := streamProcessInterval(config.Config{}); got != 25*time.Second {
+		t.Fatalf("streamProcessInterval() = %s, want %s", got, 25*time.Second)
+	}
+}
+
+func TestStreamWorkerLockTTLIncludesBuffer(t *testing.T) {
+	cfg := config.Config{
+		Streamlink: config.StreamlinkConfig{
+			CaptureTimeout: 25 * time.Second,
+		},
+	}
+
+	if got := streamWorkerLockTTL(cfg); got != 30*time.Second {
+		t.Fatalf("streamWorkerLockTTL() = %s, want %s", got, 30*time.Second)
+	}
+}
+
 func buildAuthServiceForSetupStore(t *testing.T) *auth.Service {
 	t.Helper()
 	repo := users.NewInMemoryRepository()
