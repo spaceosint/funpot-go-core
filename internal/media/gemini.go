@@ -340,7 +340,7 @@ Stage: %s
 Streamer ID: %s
 Chunk captured at: %s
 Chunk reference: %s
-Use this admin-managed tracker prompt as the source of truth:
+Use this admin-managed tracker prompt as the source of truth (including the expected JSON template):
 %s
 Active state schema:
 %s
@@ -352,10 +352,12 @@ Active rule set:
 	}
 	if !isTrackerStage(input.Stage) {
 		return strings.TrimSpace(fmt.Sprintf(base+`
-Return ONLY valid JSON with keys: label, confidence, summary.
+Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
+For detector stages, the JSON must include keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
-- summary: short rationale.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet)))
+- summary: short rationale.
+Do not include any keys that are not part of the admin-managed template.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.RuleSet)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
@@ -374,7 +376,8 @@ Stage-specific behavior:
 - For match_update: update cumulative state using previous_state + new_chunk.
 - For close_current_session or match_finalize: no more chunks are currently available; do NOT assume the match finished and choose closure status only from accumulated evidence.
 
-Return ONLY valid JSON with this exact shape:
+Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
+Tracker responses must keep this required structure:
 {
   "label": "state_updated | closure_evaluated | unknown",
   "confidence": 0.0,
@@ -405,6 +408,7 @@ Chunk reference: %s
 Do not repeat full state snapshots from earlier turns.
 Return ONLY concrete changes discovered in this chunk and keep delta minimal.
 If there are no concrete changes, return updated_state with the current known state and an empty delta.
+Return JSON that matches the admin-managed JSON template and include only changed fields when possible.
 Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference)))
 }
 
