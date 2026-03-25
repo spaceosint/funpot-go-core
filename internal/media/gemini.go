@@ -427,12 +427,14 @@ Stage: %s
 Streamer ID: %s
 Chunk captured at: %s
 Chunk reference: %s
+Active delta schema (apply on each chunk update):
+%s
 Do not repeat full state snapshots from earlier turns.
 Use only the active admin delta schema for this request and keep payload compact.
 Return ONLY concrete changes discovered in this chunk and keep delta minimal.
 If there are no concrete changes, return updated_state with the current known state and an empty delta.
 Return JSON that matches the admin-managed JSON template and include only changed fields when possible.
-Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference)))
+Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.DeltaSchema)))
 }
 
 func allowsEmptyChunk(stage string) bool {
