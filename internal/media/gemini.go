@@ -585,6 +585,12 @@ func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, er
 
 	var generic map[string]any
 	if err := json.Unmarshal([]byte(cleaned), &generic); err != nil {
+		var arrayPayload []any
+		if arrayErr := json.Unmarshal([]byte(cleaned), &arrayPayload); arrayErr == nil {
+			if coerced, ok := coerceTrackerArrayResponse(stage, arrayPayload); ok {
+				return coerced, nil
+			}
+		}
 		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: %w", err)
 	}
 	parsed.Label = strings.TrimSpace(stringValue(generic["label"]))
@@ -611,6 +617,29 @@ func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, er
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
+}
+
+func coerceTrackerArrayResponse(stage string, payload []any) (geminiStageResponse, bool) {
+	if !isTrackerStage(stage) {
+		return geminiStageResponse{}, false
+	}
+	delta, err := json.Marshal(payload)
+	if err != nil {
+		return geminiStageResponse{}, false
+	}
+	updatedState := json.RawMessage("{}")
+	if isTrackerStartStage(stage) {
+		updatedState = json.RawMessage(defaultTrackerState())
+	}
+	return geminiStageResponse{
+		Label:              "state_updated",
+		Confidence:         0,
+		UpdatedState:       updatedState,
+		Delta:              json.RawMessage(delta),
+		NextNeededEvidence: json.RawMessage("[]"),
+		HardConflicts:      json.RawMessage("[]"),
+		FinalOutcome:       "unknown",
+	}, true
 }
 
 func trimForLog(value string, max int) string {
