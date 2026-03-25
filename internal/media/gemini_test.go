@@ -688,6 +688,59 @@ func TestGeminiStageClassifierBackfillsTrackerStartPayloadWithNullFinalOutcome(t
 	}
 }
 
+func TestGeminiStageClassifierCoercesTrackerArrayResponse(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "[{\"field\":\"score_state.ct_score\",\"value\":1}]"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	result, err := classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err != nil {
+		t.Fatalf("expected tracker array payload coercion, got error %v", err)
+	}
+	if strings.TrimSpace(result.Label) != "state_updated" {
+		t.Fatalf("expected state_updated label, got %q", result.Label)
+	}
+	if strings.TrimSpace(result.UpdatedStateJSON) != "{}" {
+		t.Fatalf("expected empty object updated_state placeholder, got %q", result.UpdatedStateJSON)
+	}
+	if strings.TrimSpace(result.EvidenceDeltaJSON) != `[{"field":"score_state.ct_score","value":1}]` {
+		t.Fatalf("expected array payload in delta, got %q", result.EvidenceDeltaJSON)
+	}
+	if strings.TrimSpace(result.NextEvidenceJSON) != "[]" {
+		t.Fatalf("expected empty next_needed_evidence fallback, got %q", result.NextEvidenceJSON)
+	}
+	if strings.TrimSpace(result.FinalOutcome) != "unknown" {
+		t.Fatalf("expected unknown final_outcome fallback, got %q", result.FinalOutcome)
+	}
+}
+
 func TestGeminiStageClassifierCoercesStartStatePayloadToUpdatedState(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
