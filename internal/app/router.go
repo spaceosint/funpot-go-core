@@ -70,7 +70,15 @@ func stateSchemaRequestToCreateRequest(req stateSchemaCreateRequest, actorID str
 			FinalOnly:          field.FinalOnly,
 		})
 	}
-	return prompts.StateSchemaCreateRequest{GameSlug: req.GameSlug, Name: req.Name, Description: req.Description, Fields: fields, InitialStateJSON: normalizeInitialStateJSON(req.InitialStateJSON), ActorID: actorID}
+	return prompts.StateSchemaCreateRequest{
+		GameSlug:         req.GameSlug,
+		Name:             req.Name,
+		Description:      req.Description,
+		Fields:           fields,
+		StateSchemaJSON:  normalizeInitialStateJSON(req.StateSchemaJSON),
+		InitialStateJSON: normalizeInitialStateJSON(req.InitialStateJSON),
+		ActorID:          actorID,
+	}
 }
 
 func normalizeInitialStateJSON(raw json.RawMessage) string {
@@ -172,6 +180,7 @@ type stateSchemaCreateRequest struct {
 	Name             string              `json:"name"`
 	Description      string              `json:"description"`
 	Fields           []stateFieldRequest `json:"fields"`
+	StateSchemaJSON  json.RawMessage     `json:"stateSchemaJson"`
 	InitialStateJSON json.RawMessage     `json:"initialStateJson"`
 }
 

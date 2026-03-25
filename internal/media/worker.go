@@ -778,7 +778,11 @@ func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string) {
 	var stateSchema string
 	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
 		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
-			stateSchema = fmt.Sprintf("state_schema[%s v%d]: %s", item.Name, item.Version, compactJSON(item.Fields))
+			schemaPayload := strings.TrimSpace(item.StateSchemaJSON)
+			if schemaPayload == "" || schemaPayload == "{}" {
+				schemaPayload = compactJSON(item.Fields)
+			}
+			stateSchema = fmt.Sprintf("state_schema[%s v%d]: %s", item.Name, item.Version, schemaPayload)
 		}
 	}
 	var ruleSet string
