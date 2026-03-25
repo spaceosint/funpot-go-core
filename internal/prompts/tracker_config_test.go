@@ -68,6 +68,7 @@ func TestValidateStateSchemaCreateRequestAllowsJSONSchemaWithoutFields(t *testin
 		GameSlug:        "cs2",
 		Name:            "CS2 full schema",
 		StateSchemaJSON: `{"type":"object","properties":{"score":{"type":"number"}}}`,
+		DeltaSchemaJSON: `{"type":"object","properties":{"new_evidence":{"type":"array"}}}`,
 	})
 	if err != nil {
 		t.Fatalf("ValidateStateSchemaCreateRequest() error = %v", err)
@@ -82,6 +83,18 @@ func TestValidateStateSchemaCreateRequestRejectsInvalidStateSchemaJSON(t *testin
 	})
 	if !errors.Is(err, ErrInvalidStateSchemaJSON) {
 		t.Fatalf("error = %v, want %v", err, ErrInvalidStateSchemaJSON)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestRejectsInvalidDeltaSchemaJSON(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug:        "cs2",
+		Name:            "CS2 full schema",
+		StateSchemaJSON: `{"type":"object","properties":{"score":{"type":"number"}}}`,
+		DeltaSchemaJSON: `[]`,
+	})
+	if !errors.Is(err, ErrInvalidDeltaSchemaJSON) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidDeltaSchemaJSON)
 	}
 }
 

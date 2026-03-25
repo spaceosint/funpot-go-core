@@ -1401,7 +1401,7 @@ components:
       required: [gameSlug, name]
       description: >
         Admin-managed tracker schema definition. At least one of `fields` or
-        `initialStateJson` must be provided.
+        `stateSchemaJson` or `initialStateJson` must be provided.
       properties:
         gameSlug:
           type: string
@@ -1413,6 +1413,20 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StateFieldDefinition'
+        stateSchemaJson:
+          description: >
+            Full JSON schema for the persisted tracker state object.
+            Can be passed either as a JSON object or as a stringified JSON object.
+          oneOf:
+            - type: string
+            - type: object
+        deltaSchemaJson:
+          description: >
+            Compact JSON schema for per-chunk delta payloads returned by the LLM.
+            Can be passed either as a JSON object or as a stringified JSON object.
+          oneOf:
+            - type: string
+            - type: object
         initialStateJson:
           description: >
             Bootstrap state for tracker sessions when no persisted previous
@@ -1426,6 +1440,7 @@ components:
             - type: object
       anyOf:
         - required: [fields]
+        - required: [stateSchemaJson]
         - required: [initialStateJson]
     StateSchemaVersion:
       allOf:

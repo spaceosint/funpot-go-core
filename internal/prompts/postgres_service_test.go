@@ -20,6 +20,7 @@ func TestPostgresServiceCreatePrompt(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_prompt_versions WHERE stage = $1`)).
 		WithArgs("match_update").
@@ -68,9 +69,10 @@ func TestPostgresServiceListStateSchemas(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, description, version, fields_json, state_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions ORDER BY game_slug ASC, version DESC, created_at DESC`)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "description", "version", "fields_json", "state_schema_json", "initial_state_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
-			AddRow("state-schema-1", "cs2", "Schema", "", 1, `[{"key":"score.ct","type":"number"}]`, `{"type":"object"}`, `{"session_status":{"value":"unknown"}}`, true, "admin-1", "admin-1", now, now))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions ORDER BY game_slug ASC, version DESC, created_at DESC`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "description", "version", "fields_json", "state_schema_json", "delta_schema_json", "initial_state_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("state-schema-1", "cs2", "Schema", "", 1, `[{"key":"score.ct","type":"number"}]`, `{"type":"object"}`, `{"type":"object","properties":{"chunk_time_range":{"type":"string"}}}`, `{"session_status":{"value":"unknown"}}`, true, "admin-1", "admin-1", now, now))
 
 	items := svc.ListStateSchemas(context.Background())
 	if len(items) != 1 || items[0].GameSlug != "cs2" {
@@ -96,6 +98,7 @@ func TestPostgresServiceGetActiveRuleSet(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, description, version, rule_items_json, finalization_rules_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_rule_set_versions WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`)).
 		WithArgs("cs2").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "description", "version", "rule_items_json", "finalization_rules_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
