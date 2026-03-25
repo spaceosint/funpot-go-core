@@ -162,6 +162,9 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
 		t.Fatalf("expected second request to include continuation marker, got %s", requestBodies[1])
 	}
+	if strings.Contains(requestBodies[1], "Previous persisted tracker state JSON:") {
+		t.Fatalf("expected second request to avoid re-sending full state, got %s", requestBodies[1])
+	}
 }
 
 func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
