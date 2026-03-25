@@ -59,6 +59,13 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 	stateSchemaBodyWithInitialStateObject, _ := json.Marshal(map[string]any{
 		"gameSlug": "cs2",
 		"name":     "CS2 tracker with object initial state",
+		"stateSchemaJson": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"session_type": map[string]any{"type": "string"},
+			},
+		},
 		"initialStateJson": map[string]any{
 			"session_type": "single_match_single_chat",
 			"game":         "cs2",

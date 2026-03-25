@@ -175,6 +175,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
 - `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
 - `GET /api/admin/llm/state-schemas` / `POST /api/admin/llm/state-schemas` – admin CRUD for versioned match state schemas.
+  - `stateSchemaJson` accepts a JSON Schema object that is passed to the tracker prompt as the strict expected LLM response contract.
   - `initialStateJson` can be used as a tracker bootstrap template: enum-like string placeholders such as `"competitive | faceit | unknown"` are normalized by runtime logic to a concrete value (`unknown` when present, otherwise the first option).
 - `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for update/finalization rules used by the tracker.
 - `GET /api/admin/llm/prompts` / `POST /api/admin/llm/prompts` – admin CRUD for match update/finalization prompt templates.

@@ -63,6 +63,28 @@ func TestValidateStateSchemaCreateRequestRejectsInvalidInitialStateJSON(t *testi
 	}
 }
 
+func TestValidateStateSchemaCreateRequestAllowsJSONSchemaWithoutFields(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug:        "cs2",
+		Name:            "CS2 full schema",
+		StateSchemaJSON: `{"type":"object","properties":{"score":{"type":"number"}}}`,
+	})
+	if err != nil {
+		t.Fatalf("ValidateStateSchemaCreateRequest() error = %v", err)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestRejectsInvalidStateSchemaJSON(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug:        "cs2",
+		Name:            "CS2 full schema",
+		StateSchemaJSON: `[]`,
+	})
+	if !errors.Is(err, ErrInvalidStateSchemaJSON) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidStateSchemaJSON)
+	}
+}
+
 func TestServiceRuleSetLifecycle(t *testing.T) {
 	svc := NewService()
 	created, err := svc.CreateRuleSet(context.Background(), RuleSetCreateRequest{
