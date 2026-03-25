@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
@@ -26,6 +27,8 @@ var (
 	ErrGeminiInvalidConfidence = errors.New("gemini confidence must be between 0 and 1")
 	ErrGeminiUnsupportedMIME   = errors.New("gemini does not support the chunk mime type")
 )
+
+const geminiMaxOutputTokensLimit = 8192
 
 type GeminiClassifierConfig struct {
 	APIKey         string
@@ -100,7 +103,6 @@ type geminiGenerationConfig struct {
 	Temperature      float64 `json:"temperature,omitempty"`
 	MaxOutputTokens  int     `json:"maxOutputTokens,omitempty"`
 	ResponseMIMEType string  `json:"responseMimeType,omitempty"`
-	MediaResolution  string  `json:"mediaResolution,omitempty"`
 }
 
 type geminiGenerateContentResponse struct {
@@ -179,13 +181,8 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 	contents := c.prepareSessionContents(sessionKey, promptFingerprint, input, mimeType, data, forceBootstrap, hasChunk)
 
 	requestBody := geminiGenerateContentRequest{
-		Contents: contents,
-		GenerationConfig: geminiGenerationConfig{
-			Temperature:      input.Prompt.Temperature,
-			MaxOutputTokens:  input.Prompt.MaxTokens,
-			ResponseMIMEType: "application/json",
-			MediaResolution:  "MEDIA_RESOLUTION_LOW",
-		},
+		Contents:         contents,
+		GenerationConfig: sanitizeGeminiGenerationConfig(input.Prompt.Temperature, input.Prompt.MaxTokens),
 	}
 
 	bodyBytes, err := json.Marshal(requestBody)
@@ -221,7 +218,16 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		return StageClassification{}, err
 	}
 	if resp.StatusCode >= 400 {
-		return StageClassification{}, fmt.Errorf("gemini generateContent failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return StageClassification{}, fmt.Errorf("gemini generateContent failed: status=%d stage=%s model=%s mime=%s has_chunk=%t max_output_tokens=%d temperature=%.3f body=%s",
+			resp.StatusCode,
+			strings.TrimSpace(input.Stage),
+			model,
+			mimeType,
+			hasChunk,
+			requestBody.GenerationConfig.MaxOutputTokens,
+			requestBody.GenerationConfig.Temperature,
+			strings.TrimSpace(string(responseBody)),
+		)
 	}
 
 	var payload geminiGenerateContentResponse
@@ -277,6 +283,19 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		ConflictsJSON:     marshalRawMessage(parsed.HardConflicts),
 		FinalOutcome:      strings.TrimSpace(parsed.FinalOutcome),
 	}, nil
+}
+
+func sanitizeGeminiGenerationConfig(temperature float64, maxTokens int) geminiGenerationConfig {
+	cfg := geminiGenerationConfig{
+		ResponseMIMEType: "application/json",
+	}
+	if !math.IsNaN(temperature) && !math.IsInf(temperature, 0) && temperature >= 0 && temperature <= 2 {
+		cfg.Temperature = temperature
+	}
+	if maxTokens > 0 && maxTokens <= geminiMaxOutputTokensLimit {
+		cfg.MaxOutputTokens = maxTokens
+	}
+	return cfg
 }
 
 func geminiSessionKey(input StageRequest) string {

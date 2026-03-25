@@ -90,9 +90,6 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	if !strings.Contains(gotBody, `"mimeType":"video/mp4"`) {
 		t.Fatalf("expected transport stream mime type in request body: %s", gotBody)
 	}
-	if !strings.Contains(gotBody, `"mediaResolution":"MEDIA_RESOLUTION_LOW"`) {
-		t.Fatalf("expected low media resolution in generation config: %s", gotBody)
-	}
 	if !strings.Contains(gotBody, "Detect the game being played") {
 		t.Fatalf("expected prompt template in request body: %s", gotBody)
 	}
@@ -164,6 +161,63 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 	}
 	if strings.Contains(requestBodies[1], "Previous persisted tracker state JSON:") {
 		t.Fatalf("expected second request to avoid re-sending full state, got %s", requestBodies[1])
+	}
+}
+
+func TestGeminiStageClassifierSanitizesGenerationConfig(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	var gotBody string
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				return nil, err
+			}
+			gotBody = string(body)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"label\":\"cs_detected\",\"confidence\":0.93,\"summary\":\"Counter-Strike HUD visible\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 10}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	_, err = classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "detector",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt: prompts.PromptVersion{
+			Stage:       "detector",
+			Template:    "Detect the game being played",
+			Model:       "gemini",
+			Temperature: -1,
+			MaxTokens:   geminiMaxOutputTokensLimit + 1,
+			TimeoutMS:   1000,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if strings.Contains(gotBody, `"temperature":`) {
+		t.Fatalf("expected invalid temperature to be omitted from generation config: %s", gotBody)
+	}
+	if strings.Contains(gotBody, `"maxOutputTokens":`) {
+		t.Fatalf("expected oversized maxOutputTokens to be omitted from generation config: %s", gotBody)
 	}
 }
 
