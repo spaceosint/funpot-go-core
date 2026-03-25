@@ -397,18 +397,15 @@ Mandatory rules:
 }
 
 func buildGeminiContinuationInstruction(input StageRequest) string {
-	previousState := strings.TrimSpace(input.PreviousState)
-	if previousState == "" {
-		previousState = defaultTrackerState()
-	}
 	return strings.TrimSpace(fmt.Sprintf(`Continue the existing match chat session.
 Stage: %s
 Streamer ID: %s
 Chunk captured at: %s
 Chunk reference: %s
-Previous persisted tracker state JSON:
-%s
-Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), previousState))
+Do not repeat full state snapshots from earlier turns.
+Return ONLY concrete changes discovered in this chunk and keep delta minimal.
+If there are no concrete changes, return updated_state with the current known state and an empty delta.
+Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference)))
 }
 
 func allowsEmptyChunk(stage string) bool {

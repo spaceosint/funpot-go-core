@@ -158,6 +158,53 @@ func TestWorkerProcessStreamerPrefersTrackerPromptsOverLegacyStages(t *testing.T
 	}
 }
 
+func TestWorkerProcessStageSkipsHistoryWhenStateDidNotChange(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{
+				RunID:            "run-0",
+				StreamerID:       "str-1",
+				Stage:            "match_update",
+				Label:            "state_updated",
+				Confidence:       0.9,
+				UpdatedStateJSON: `{"session_status":{"value":"in_progress"}}`,
+			},
+		},
+	}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		fakeClassifier{results: map[string]StageClassification{
+			"match_update": {
+				Label:             "state_updated",
+				Confidence:        0.9,
+				UpdatedStateJSON:  `{"session_status":{"value":"in_progress"}}`,
+				EvidenceDeltaJSON: `[]`,
+				NextEvidenceJSON:  `[]`,
+				FinalOutcome:      "unknown",
+			},
+		}},
+		fakePromptResolver{prompts: []prompts.PromptVersion{
+			{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000},
+		}},
+		&InMemoryRunStore{},
+		decisions,
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+	decision, err := worker.processStage(context.Background(), "run-1", "str-1", ChunkRef{Reference: "chunk-1"}, prompts.PromptVersion{
+		ID: "tracker-1", Stage: "match_update", IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000,
+	})
+	if err != nil {
+		t.Fatalf("processStage() error = %v", err)
+	}
+	if decision.Label != "awaiting_changes" {
+		t.Fatalf("decision.Label = %q, want awaiting_changes", decision.Label)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1 (only seed state)", len(decisions.items))
+	}
+}
+
 func TestWorkerResolvePreviousStateDefaultsToTrackerBootstrap(t *testing.T) {
 	worker := NewWorker(fakeCapture{}, fakeClassifier{}, fakePromptResolver{}, &InMemoryRunStore{}, nil, NewInMemoryLocker(), WorkerConfig{})
 	if got := worker.resolvePreviousState(context.Background(), "str-1"); got != defaultTrackerState() {
@@ -372,14 +419,15 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
 		t.Fatalf("first ProcessStreamer() error = %v", err)
 	}
-	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+	second, err := worker.ProcessStreamer(context.Background(), "str-1")
+	if err != nil {
 		t.Fatalf("second ProcessStreamer() error = %v", err)
 	}
-	if len(decisions.items) != 2 {
-		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1 (skip unchanged updates)", len(decisions.items))
 	}
-	if !strings.Contains(decisions.items[1].PreviousStateJSON, `"score":{"ct":8,"t":5}`) {
-		t.Fatalf("previous state = %q", decisions.items[1].PreviousStateJSON)
+	if second.Label != "awaiting_changes" {
+		t.Fatalf("second label = %q, want awaiting_changes", second.Label)
 	}
 }
 
@@ -496,10 +544,17 @@ func TestWorkerProcessStreamerPreservesKnownScoreWhenModelReturnsUnknownPlacehol
 		t.Fatalf("first ProcessStreamer() error = %v", err)
 	}
 	decisions.items[0].UpdatedStateJSON = `{"state":{"ct_score":8,"t_score":5,"mode":"competitive"},"final_outcome":"unknown"}`
-	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+	second, err := worker.ProcessStreamer(context.Background(), "str-1")
+	if err != nil {
 		t.Fatalf("second ProcessStreamer() error = %v", err)
 	}
-	if got := decisions.items[1].UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":8,"mode":"competitive","t_score":5}}` {
+	if second.Label != "awaiting_changes" {
+		t.Fatalf("second label = %q, want awaiting_changes", second.Label)
+	}
+	if got := second.UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":8,"mode":"competitive","t_score":5}}` {
 		t.Fatalf("updated state = %q", got)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1 (skip unchanged updates)", len(decisions.items))
 	}
 }

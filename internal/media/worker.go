@@ -332,6 +332,20 @@ func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chu
 
 func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID, previousState string) (streamers.LLMDecision, error) {
 	updatedStateJSON := normalizeStateSnapshot(previousState, result)
+	evidenceDelta := firstNonEmpty(strings.TrimSpace(result.EvidenceDeltaJSON), strings.TrimSpace(result.NextEvidenceJSON))
+	conflicts := strings.TrimSpace(result.ConflictsJSON)
+	finalOutcome := strings.TrimSpace(result.FinalOutcome)
+	if strings.EqualFold(strings.TrimSpace(activePrompt.Stage), trackerStageUpdate) &&
+		!hasConcreteTrackerChange(previousState, updatedStateJSON, evidenceDelta, conflicts, finalOutcome) {
+		return streamers.LLMDecision{
+			RunID:            runID,
+			StreamerID:       streamerID,
+			Stage:            activePrompt.Stage,
+			Label:            "awaiting_changes",
+			Confidence:       result.Confidence,
+			UpdatedStateJSON: updatedStateJSON,
+		}, nil
+	}
 	label := normalizeDecisionLabel(result, updatedStateJSON)
 	if label == "" || result.Confidence < effectiveConfidenceThreshold(w.minConfidence, activePrompt.MinConfidence) {
 		label = "uncertain"
@@ -365,9 +379,9 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		TransitionOutcome: transitionOutcome,
 		PreviousStateJSON: previousState,
 		UpdatedStateJSON:  updatedStateJSON,
-		EvidenceDeltaJSON: firstNonEmpty(strings.TrimSpace(result.EvidenceDeltaJSON), strings.TrimSpace(result.NextEvidenceJSON)),
-		ConflictsJSON:     strings.TrimSpace(result.ConflictsJSON),
-		FinalOutcome:      strings.TrimSpace(result.FinalOutcome),
+		EvidenceDeltaJSON: evidenceDelta,
+		ConflictsJSON:     conflicts,
+		FinalOutcome:      finalOutcome,
 	}
 	decision, err := w.decisions.RecordLLMDecision(ctx, recordReq)
 	if err != nil {
@@ -375,6 +389,20 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		return streamers.LLMDecision{}, err
 	}
 	return decision, nil
+}
+
+func hasConcreteTrackerChange(previousState, updatedState, evidenceDelta, conflicts, finalOutcome string) bool {
+	if normalizeStateJSON(previousState) != normalizeStateJSON(updatedState) {
+		return true
+	}
+	if normalized := normalizeStateJSON(evidenceDelta); normalized != "" && normalized != "[]" {
+		return true
+	}
+	if normalized := normalizeStateJSON(conflicts); normalized != "" && normalized != "[]" {
+		return true
+	}
+	outcome := strings.TrimSpace(strings.ToLower(finalOutcome))
+	return outcome != "" && outcome != "unknown"
 }
 
 func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) string {
