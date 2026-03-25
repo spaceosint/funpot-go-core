@@ -398,11 +398,71 @@ func (w *Worker) resolveInitialTrackerState(ctx context.Context) string {
 	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
 		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
 			if state := strings.TrimSpace(item.InitialStateJSON); state != "" && state != "{}" {
-				return state
+				return normalizeInitialStateTemplateJSON(state)
 			}
 		}
 	}
 	return ""
+}
+
+func normalizeInitialStateTemplateJSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
+		return trimmed
+	}
+	normalized := normalizeTemplateValue(parsed)
+	body, err := json.Marshal(normalized)
+	if err != nil {
+		return trimmed
+	}
+	return strings.TrimSpace(string(body))
+}
+
+func normalizeTemplateValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			out[key] = normalizeTemplateValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, normalizeTemplateValue(item))
+		}
+		return out
+	case string:
+		return resolveTemplateEnumString(typed)
+	default:
+		return value
+	}
+}
+
+func resolveTemplateEnumString(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if !strings.Contains(trimmed, "|") {
+		return trimmed
+	}
+	parts := strings.Split(trimmed, "|")
+	candidate := ""
+	for _, part := range parts {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			continue
+		}
+		if strings.EqualFold(token, "unknown") {
+			return "unknown"
+		}
+		if candidate == "" {
+			candidate = token
+		}
+	}
+	return candidate
 }
 
 func normalizeDecisionLabel(result StageClassification, updatedStateJSON string) string {

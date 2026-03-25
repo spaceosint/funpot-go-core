@@ -1417,7 +1417,10 @@ components:
           description: >
             Bootstrap state for tracker sessions when no persisted previous
             state exists. Can be passed either as a JSON object or as a
-            stringified JSON object.
+            stringified JSON object. Admin templates with enum-like strings
+            (for example `"ct | t | unknown"`) are accepted; runtime
+            normalization resolves them to a concrete value (prefers
+            `unknown`, otherwise the first option).
           oneOf:
             - type: string
             - type: object
