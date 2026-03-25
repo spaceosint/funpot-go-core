@@ -33,6 +33,7 @@ type StageRequest struct {
 	Prompt        prompts.PromptVersion
 	PreviousState string
 	StateSchema   string
+	DeltaSchema   string
 	RuleSet       string
 }
 
@@ -321,8 +322,8 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 
 func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
 	previousState := w.resolvePreviousState(ctx, streamerID)
-	stateSchema, ruleSet := w.resolveTrackerConfig(ctx)
-	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState, StateSchema: stateSchema, RuleSet: ruleSet}, activePrompt)
+	stateSchema, deltaSchema, ruleSet := w.resolveTrackerConfig(ctx)
+	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState, StateSchema: stateSchema, DeltaSchema: deltaSchema, RuleSet: ruleSet}, activePrompt)
 	if err != nil {
 		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, err
@@ -773,9 +774,10 @@ type activeRuleSetResolver interface {
 	GetActiveRuleSet(ctx context.Context, gameSlug string) (prompts.RuleSetVersion, error)
 }
 
-func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string) {
+func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string, string) {
 	const gameSlug = "cs2"
 	var stateSchema string
+	var deltaSchema string
 	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
 		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
 			schemaPayload := strings.TrimSpace(item.StateSchemaJSON)
@@ -783,6 +785,10 @@ func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string) {
 				schemaPayload = compactJSON(item.Fields)
 			}
 			stateSchema = fmt.Sprintf("state_schema[%s v%d]: %s", item.Name, item.Version, schemaPayload)
+			deltaPayload := strings.TrimSpace(item.DeltaSchemaJSON)
+			if deltaPayload != "" && deltaPayload != "{}" {
+				deltaSchema = fmt.Sprintf("delta_schema[%s v%d]: %s", item.Name, item.Version, deltaPayload)
+			}
 		}
 	}
 	var ruleSet string
@@ -791,7 +797,7 @@ func (w *Worker) resolveTrackerConfig(ctx context.Context) (string, string) {
 			ruleSet = fmt.Sprintf("rule_set[%s v%d]: rule_items=%s finalization_rules=%s", item.Name, item.Version, compactJSON(item.RuleItems), compactJSON(item.FinalizationRules))
 		}
 	}
-	return stateSchema, ruleSet
+	return stateSchema, deltaSchema, ruleSet
 }
 
 func compactJSON(value any) string {

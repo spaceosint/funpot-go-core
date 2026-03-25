@@ -17,6 +17,7 @@ var (
 	ErrInvalidStateFieldKey      = errors.New("state field key must not be empty")
 	ErrInvalidStateFieldType     = errors.New("state field type must not be empty")
 	ErrInvalidStateSchemaJSON    = errors.New("stateSchemaJson must be a valid JSON object")
+	ErrInvalidDeltaSchemaJSON    = errors.New("deltaSchemaJson must be a valid JSON object")
 	ErrInvalidInitialStateJSON   = errors.New("initialStateJson must be a valid JSON object")
 	ErrStateSchemaNotFound       = errors.New("state schema not found")
 	ErrInvalidRuleSetName        = errors.New("rule set name must not be empty")
@@ -46,6 +47,7 @@ type StateSchemaCreateRequest struct {
 	Description      string
 	Fields           []StateFieldDefinition
 	StateSchemaJSON  string
+	DeltaSchemaJSON  string
 	InitialStateJSON string
 	ActorID          string
 }
@@ -58,6 +60,7 @@ type StateSchemaVersion struct {
 	Version          int                    `json:"version"`
 	Fields           []StateFieldDefinition `json:"fields"`
 	StateSchemaJSON  string                 `json:"stateSchemaJson,omitempty"`
+	DeltaSchemaJSON  string                 `json:"deltaSchemaJson,omitempty"`
 	InitialStateJSON string                 `json:"initialStateJson,omitempty"`
 	IsActive         bool                   `json:"isActive"`
 	CreatedBy        string                 `json:"createdBy"`
@@ -143,6 +146,12 @@ func ValidateStateSchemaCreateRequest(req StateSchemaCreateRequest) error {
 			return ErrInvalidStateSchemaJSON
 		}
 	}
+	if raw := strings.TrimSpace(req.DeltaSchemaJSON); raw != "" {
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+			return ErrInvalidDeltaSchemaJSON
+		}
+	}
 	return nil
 }
 
@@ -226,7 +235,7 @@ func (s *Service) CreateStateSchema(ctx context.Context, req StateSchemaCreateRe
 	gameSlug := strings.TrimSpace(req.GameSlug)
 	now := time.Now().UTC()
 	s.counter++
-	item := StateSchemaVersion{ID: fmt.Sprintf("state-schema-%d", s.counter), GameSlug: gameSlug, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Version: len(s.stateSchemas[gameSlug]) + 1, Fields: append([]StateFieldDefinition(nil), req.Fields...), StateSchemaJSON: strings.TrimSpace(req.StateSchemaJSON), InitialStateJSON: strings.TrimSpace(req.InitialStateJSON), CreatedBy: strings.TrimSpace(req.ActorID), CreatedAt: now}
+	item := StateSchemaVersion{ID: fmt.Sprintf("state-schema-%d", s.counter), GameSlug: gameSlug, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Version: len(s.stateSchemas[gameSlug]) + 1, Fields: append([]StateFieldDefinition(nil), req.Fields...), StateSchemaJSON: strings.TrimSpace(req.StateSchemaJSON), DeltaSchemaJSON: strings.TrimSpace(req.DeltaSchemaJSON), InitialStateJSON: strings.TrimSpace(req.InitialStateJSON), CreatedBy: strings.TrimSpace(req.ActorID), CreatedAt: now}
 	if len(s.stateSchemas[gameSlug]) == 0 {
 		item.IsActive = true
 		item.ActivatedBy = strings.TrimSpace(req.ActorID)
@@ -274,6 +283,7 @@ func (s *Service) UpdateStateSchema(ctx context.Context, id string, req StateSch
 			updated.Description = strings.TrimSpace(req.Description)
 			updated.Fields = append([]StateFieldDefinition(nil), req.Fields...)
 			updated.StateSchemaJSON = strings.TrimSpace(req.StateSchemaJSON)
+			updated.DeltaSchemaJSON = strings.TrimSpace(req.DeltaSchemaJSON)
 			updated.InitialStateJSON = strings.TrimSpace(req.InitialStateJSON)
 			if updated.GameSlug != gameSlug {
 				s.stateSchemas[gameSlug] = append(versions[:i], versions[i+1:]...)

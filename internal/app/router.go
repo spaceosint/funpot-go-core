@@ -76,6 +76,7 @@ func stateSchemaRequestToCreateRequest(req stateSchemaCreateRequest, actorID str
 		Description:      req.Description,
 		Fields:           fields,
 		StateSchemaJSON:  normalizeInitialStateJSON(req.StateSchemaJSON),
+		DeltaSchemaJSON:  normalizeInitialStateJSON(req.DeltaSchemaJSON),
 		InitialStateJSON: normalizeInitialStateJSON(req.InitialStateJSON),
 		ActorID:          actorID,
 	}
@@ -181,6 +182,7 @@ type stateSchemaCreateRequest struct {
 	Description      string              `json:"description"`
 	Fields           []stateFieldRequest `json:"fields"`
 	StateSchemaJSON  json.RawMessage     `json:"stateSchemaJson"`
+	DeltaSchemaJSON  json.RawMessage     `json:"deltaSchemaJson"`
 	InitialStateJSON json.RawMessage     `json:"initialStateJson"`
 }
 

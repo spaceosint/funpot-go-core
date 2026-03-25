@@ -66,6 +66,14 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 				"session_type": map[string]any{"type": "string"},
 			},
 		},
+		"deltaSchemaJson": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"new_evidence": map[string]any{
+					"type": "array",
+				},
+			},
+		},
 		"initialStateJson": map[string]any{
 			"session_type": "single_match_single_chat",
 			"game":         "cs2",
@@ -102,6 +110,16 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 	handler.ServeHTTP(listRes, listReq)
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("state schema list status = %d", listRes.Code)
+	}
+	var schemas []map[string]any
+	if err := json.Unmarshal(listRes.Body.Bytes(), &schemas); err != nil {
+		t.Fatalf("state schema list decode error = %v", err)
+	}
+	if len(schemas) == 0 {
+		t.Fatal("expected non-empty state schema list")
+	}
+	if _, ok := schemas[0]["deltaSchemaJson"]; !ok {
+		t.Fatalf("expected deltaSchemaJson in response: %v", schemas[0])
 	}
 
 	ruleListReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/rule-sets", nil)
