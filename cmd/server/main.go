@@ -128,10 +128,10 @@ func main() {
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
-		media.WorkerConfig{LockTTL: 15 * time.Second, MinConfidence: 0.5},
+		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5},
 	)
 	streamWorker.SetLogger(logger.Named("stream_worker"))
-	streamScheduler := media.NewScheduler(streamWorker, 10*time.Second)
+	streamScheduler := media.NewScheduler(streamWorker, streamProcessInterval(cfg))
 	streamScheduler.SetLogger(logger.Named("stream_scheduler"))
 	streamScheduler.SetLifecycleHooks(streamersService.MarkAnalysisActive, streamersService.MarkAnalysisInactive)
 	streamersService.SetSubmissionHook(func(_ context.Context, streamerID string) error {
@@ -243,6 +243,19 @@ func buildStageClassifier(logger *zap.Logger, cfg config.Config) media.StageClas
 	}
 
 	return classifier
+}
+
+func streamProcessInterval(cfg config.Config) time.Duration {
+	if cfg.Streamlink.CaptureTimeout > 0 {
+		return cfg.Streamlink.CaptureTimeout
+	}
+	return 25 * time.Second
+}
+
+func streamWorkerLockTTL(cfg config.Config) time.Duration {
+	interval := streamProcessInterval(cfg)
+	// Keep lock slightly longer than capture interval to prevent overlapping cycles.
+	return interval + 5*time.Second
 }
 
 func newLogger(level string) (*zap.Logger, error) {

@@ -83,6 +83,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > `FUNPOT_STREAMLINK_FFMPEG_BINARY` must point to a working `ffmpeg` binary
 > when Streamlink capture is enabled.
 
+> Scheduler cycle interval is aligned with `FUNPOT_STREAMLINK_CAPTURE_TIMEOUT`
+> (for example, `25s` timeout means one capture/LLM cycle every ~25 seconds).
+> This keeps chunk duration and LLM cadence consistent.
+
 > Set `FUNPOT_GEMINI_API_KEY` to enable real Gemini stage classification. When
 > it is unset, the server falls back to the deterministic placeholder
 > classifier used in early development.
