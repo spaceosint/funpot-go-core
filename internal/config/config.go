@@ -308,7 +308,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	streamlinkAggregateCount, err := getInt("FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT", 24)
+	streamlinkAggregateCount, err := getInt("FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT", 5)
 	if err != nil {
 		return Config{}, err
 	}
