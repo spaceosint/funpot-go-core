@@ -126,8 +126,12 @@ func (p *BunnyChunkPublisher) concatSegments(ctx context.Context, streamerID, se
 	listPath := filepath.Join(segmentsDir, fmt.Sprintf("concat_%s.txt", sanitizeToken(time.Now().UTC().Format(time.RFC3339Nano))))
 	var body strings.Builder
 	for _, segment := range selected {
+		absoluteSegmentPath, err := filepath.Abs(segment)
+		if err != nil {
+			return "", err
+		}
 		body.WriteString("file '")
-		body.WriteString(strings.ReplaceAll(segment, "'", "'\\''"))
+		body.WriteString(strings.ReplaceAll(absoluteSegmentPath, "'", "'\\''"))
 		body.WriteString("'\n")
 	}
 	if err := os.WriteFile(listPath, []byte(body.String()), 0o644); err != nil {
