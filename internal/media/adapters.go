@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ var streamlinkEndedMarkers = []string{
 
 const defaultPreferredStreamQuality = "1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best"
 const minimumStreamlinkCaptureTimeout = 25 * time.Second
+const streamlinkCaptureShutdownGracePeriod = 5 * time.Second
 
 type StreamlinkChannelResolver interface {
 	ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error)
@@ -159,15 +161,27 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 	}
 	defer file.Close() //nolint:errcheck
 
-	captureCtx, cancel := context.WithTimeout(ctx, a.cfg.CaptureTimeout)
+	captureCtx, cancel := context.WithTimeout(ctx, a.cfg.CaptureTimeout+streamlinkCaptureShutdownGracePeriod)
 	defer cancel()
 
 	streamURL := fmt.Sprintf(a.cfg.URLTemplate, channel)
-	args := []string{"--stdout", streamURL, a.cfg.Quality}
+	args := []string{"--stdout", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
 
 	var stderr strings.Builder
 	logger.Info("executing streamlink capture", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath), zap.String("streamURL", streamURL), zap.String("quality", a.cfg.Quality), zap.String("chunkPath", chunkPath))
 	runErr := a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
+	if runErr != nil && isStreamlinkUnknownOption(stderr.String(), "--stream-segmented-duration") {
+		logger.Info("streamlink does not support --stream-segmented-duration; retrying with --hls-duration", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath))
+		if err := file.Truncate(0); err != nil {
+			return ChunkRef{}, err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return ChunkRef{}, err
+		}
+		stderr.Reset()
+		args = []string{"--stdout", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+		runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
+	}
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -216,6 +230,28 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 		logger.Info("stream chunk normalized", zap.String("streamerID", id), zap.String("sourceChunkPath", chunk.Reference), zap.String("normalizedChunkPath", normalized.Reference))
 	}
 	return normalized, nil
+}
+
+func formatStreamlinkDurationArg(value time.Duration) string {
+	seconds := int(value.Round(time.Second) / time.Second)
+	if seconds <= 0 {
+		seconds = int(minimumStreamlinkCaptureTimeout / time.Second)
+	}
+	return strconv.Itoa(seconds)
+}
+
+func isStreamlinkUnknownOption(stderr, option string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(stderr))
+	if normalized == "" {
+		return false
+	}
+	needle := strings.ToLower(strings.TrimSpace(option))
+	if needle == "" || !strings.Contains(normalized, needle) {
+		return false
+	}
+	return strings.Contains(normalized, "unrecognized arguments") ||
+		strings.Contains(normalized, "unknown option") ||
+		strings.Contains(normalized, "no such option")
 }
 
 func sanitizeToken(value string) string {

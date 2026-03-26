@@ -102,6 +102,9 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	if !strings.Contains(joined, "https://twitch.tv/shroud") {
 		t.Fatalf("expected resolved channel in args, got %q", joined)
 	}
+	if !strings.Contains(joined, "--stream-segmented-duration 25") {
+		t.Fatalf("expected --stream-segmented-duration argument, got %q", joined)
+	}
 
 	data, err := os.ReadFile(chunk.Reference)
 	if err != nil {
@@ -115,6 +118,61 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	}
 	if filepath.Ext(chunk.Reference) != ".mp4" {
 		t.Fatalf("expected normalized mp4 chunk, got %q", chunk.Reference)
+	}
+}
+
+func TestStreamlinkCaptureAdapterFallsBackToHLSDurationWhenStreamSegmentedUnsupported(t *testing.T) {
+	outDir := t.TempDir()
+	attempt := 0
+	runner := &fakeCommandRunner{
+		runWithIOFn: func(stdout io.Writer, stderr io.Writer, name string, args ...string) error {
+			if strings.Contains(name, "ffprobe") {
+				_, _ = io.WriteString(stdout, `{"streams":[{"codec_name":"h264","width":1920,"height":1080}]}`)
+				return nil
+			}
+			if strings.Contains(name, "ffmpeg") && len(args) > 0 {
+				outputPath := args[len(args)-1]
+				inputPath := ""
+				for i := 0; i < len(args)-1; i++ {
+					if args[i] == "-i" && i+1 < len(args) {
+						inputPath = args[i+1]
+						break
+					}
+				}
+				data, err := os.ReadFile(inputPath)
+				if err != nil {
+					return err
+				}
+				return os.WriteFile(outputPath, data, 0o644)
+			}
+			attempt++
+			if attempt == 1 {
+				_, _ = io.WriteString(stderr, "error: unrecognized arguments: --stream-segmented-duration")
+				return errors.New("exit status 2")
+			}
+			_, _ = stdout.Write([]byte("chunk-bytes"))
+			return nil
+		},
+	}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: outDir}, nil, runner)
+
+	chunk, err := adapter.Capture(context.Background(), "str_fallback")
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	if chunk.Reference == "" {
+		t.Fatal("expected chunk reference")
+	}
+	if len(runner.argsHistory) < 3 {
+		t.Fatalf("argsHistory length = %d, want at least 3 (streamlink retry + ffprobe + ffmpeg)", len(runner.argsHistory))
+	}
+	first := strings.Join(runner.argsHistory[0], " ")
+	second := strings.Join(runner.argsHistory[1], " ")
+	if !strings.Contains(first, "--stream-segmented-duration 25") {
+		t.Fatalf("first streamlink invocation = %q, want --stream-segmented-duration", first)
+	}
+	if !strings.Contains(second, "--hls-duration 25") {
+		t.Fatalf("second streamlink invocation = %q, want --hls-duration", second)
 	}
 }
 
