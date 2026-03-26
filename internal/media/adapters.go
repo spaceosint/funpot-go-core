@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -78,6 +79,20 @@ type StreamlinkCaptureAdapter struct {
 	runner     StreamlinkCommandRunner
 	normalizer ChunkNormalizer
 	nowFn      func() time.Time
+	continuous bool
+	mu         sync.Mutex
+	sessions   map[string]*continuousCaptureSession
+}
+
+type continuousCaptureSession struct {
+	streamerID    string
+	channel       string
+	segmentsDir   string
+	nextIndex     int
+	started       bool
+	lastErr       error
+	streamlinkCmd *exec.Cmd
+	ffmpegCmd     *exec.Cmd
 }
 
 func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver StreamlinkChannelResolver, runner StreamlinkCommandRunner) *StreamlinkCaptureAdapter {
@@ -97,8 +112,10 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 	if strings.TrimSpace(cfg.URLTemplate) == "" {
 		cfg.URLTemplate = "https://twitch.tv/%s"
 	}
+	continuous := false
 	if runner == nil {
 		runner = execStreamlinkRunner{}
+		continuous = true
 	}
 	return &StreamlinkCaptureAdapter{
 		logger:     zap.NewNop(),
@@ -107,6 +124,8 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 		runner:     runner,
 		normalizer: NewFFmpegChunkNormalizer(cfg.FFmpegBinary, runner),
 		nowFn:      time.Now,
+		continuous: continuous,
+		sessions:   make(map[string]*continuousCaptureSession),
 	}
 }
 
@@ -122,6 +141,13 @@ func (a *StreamlinkCaptureAdapter) SetLogger(logger *zap.Logger) {
 }
 
 func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID string) (ChunkRef, error) {
+	if a.continuous {
+		return a.captureContinuous(ctx, streamerID)
+	}
+	return a.captureSingle(ctx, streamerID)
+}
+
+func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID string) (ChunkRef, error) {
 	logger := a.logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -230,6 +256,160 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 		logger.Info("stream chunk normalized", zap.String("streamerID", id), zap.String("sourceChunkPath", chunk.Reference), zap.String("normalizedChunkPath", normalized.Reference))
 	}
 	return normalized, nil
+}
+
+func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, streamerID string) (ChunkRef, error) {
+	logger := a.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	id := strings.TrimSpace(streamerID)
+	if id == "" {
+		return ChunkRef{}, ErrStreamerIDRequired
+	}
+
+	channel := id
+	if a.resolver != nil {
+		resolved, err := a.resolver.ResolveStreamlinkChannel(ctx, id)
+		if err != nil {
+			return ChunkRef{}, fmt.Errorf("%w: %v", ErrStreamlinkChannelResolve, err)
+		}
+		channel = strings.TrimSpace(resolved)
+	}
+	if channel == "" {
+		return ChunkRef{}, fmt.Errorf("%w: empty channel", ErrStreamlinkChannelResolve)
+	}
+
+	session, err := a.ensureContinuousSession(id, channel)
+	if err != nil {
+		return ChunkRef{}, err
+	}
+	if session.lastErr != nil {
+		return ChunkRef{}, session.lastErr
+	}
+
+	targetIndex := session.nextIndex
+	deadline := time.Now().Add(a.cfg.CaptureTimeout + streamlinkCaptureShutdownGracePeriod)
+	for {
+		select {
+		case <-ctx.Done():
+			return ChunkRef{}, ctx.Err()
+		default:
+		}
+		segmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.ts", targetIndex))
+		info, statErr := os.Stat(segmentPath)
+		if statErr == nil && info.Size() > 0 {
+			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.ts", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
+			if err := os.Rename(segmentPath, chunkPath); err != nil {
+				return ChunkRef{}, err
+			}
+			session.nextIndex++
+			chunk := ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}
+			normalized, normErr := a.normalizer.Normalize(ctx, chunk)
+			if normErr != nil {
+				return ChunkRef{}, normErr
+			}
+			return normalized, nil
+		}
+		if time.Now().After(deadline) {
+			return ChunkRef{}, fmt.Errorf("%w: no continuous segment available before deadline", ErrStreamlinkNoData)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func (a *StreamlinkCaptureAdapter) ensureContinuousSession(streamerID, channel string) (*continuousCaptureSession, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	session, ok := a.sessions[streamerID]
+	if !ok {
+		streamerDir := filepath.Join(a.cfg.OutputDir, sanitizeToken(streamerID))
+		segmentsDir := filepath.Join(streamerDir, "live_segments")
+		session = &continuousCaptureSession{
+			streamerID:  streamerID,
+			channel:     channel,
+			segmentsDir: segmentsDir,
+			nextIndex:   1,
+		}
+		a.sessions[streamerID] = session
+	}
+	if session.started {
+		return session, nil
+	}
+
+	if err := os.MkdirAll(session.segmentsDir, 0o755); err != nil {
+		return nil, err
+	}
+	for _, entry := range []string{"*.ts", "*.mp4"} {
+		matches, _ := filepath.Glob(filepath.Join(session.segmentsDir, entry))
+		for _, m := range matches {
+			_ = os.Remove(m)
+		}
+	}
+	session.started = true
+	session.lastErr = nil
+	go a.runContinuousSession(session)
+	return session, nil
+}
+
+func (a *StreamlinkCaptureAdapter) runContinuousSession(session *continuousCaptureSession) {
+	streamURL := fmt.Sprintf(a.cfg.URLTemplate, session.channel)
+
+	streamlinkArgs := []string{"--stdout", streamURL, a.cfg.Quality}
+	ffmpegOutputPattern := filepath.Join(session.segmentsDir, "%09d.ts")
+	ffmpegArgs := []string{
+		"-y",
+		"-i", "pipe:0",
+		"-c", "copy",
+		"-f", "segment",
+		"-segment_time", formatStreamlinkDurationArg(a.cfg.CaptureTimeout),
+		"-segment_start_number", "1",
+		"-reset_timestamps", "1",
+		ffmpegOutputPattern,
+	}
+
+	streamlinkCmd := exec.Command(a.cfg.BinaryPath, streamlinkArgs...)
+	ffmpegCmd := exec.Command(a.cfg.FFmpegBinary, ffmpegArgs...)
+
+	stdout, err := streamlinkCmd.StdoutPipe()
+	if err != nil {
+		a.setSessionError(session.streamerID, err)
+		return
+	}
+	ffmpegCmd.Stdin = stdout
+	var streamlinkErrBuf, ffmpegErrBuf strings.Builder
+	streamlinkCmd.Stderr = &streamlinkErrBuf
+	ffmpegCmd.Stderr = &ffmpegErrBuf
+
+	if err := ffmpegCmd.Start(); err != nil {
+		a.setSessionError(session.streamerID, err)
+		return
+	}
+	if err := streamlinkCmd.Start(); err != nil {
+		_ = ffmpegCmd.Process.Kill()
+		a.setSessionError(session.streamerID, err)
+		return
+	}
+
+	_ = streamlinkCmd.Wait()
+	_ = ffmpegCmd.Wait()
+	sessionErr := strings.TrimSpace(streamlinkErrBuf.String() + " " + ffmpegErrBuf.String())
+	if sessionErr == "" {
+		sessionErr = "continuous capture session exited"
+	}
+	a.setSessionError(session.streamerID, fmt.Errorf("continuous capture stopped: %s", sessionErr))
+}
+
+func (a *StreamlinkCaptureAdapter) setSessionError(streamerID string, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	session, ok := a.sessions[streamerID]
+	if !ok {
+		return
+	}
+	session.lastErr = err
+	session.started = false
 }
 
 func formatStreamlinkDurationArg(value time.Duration) string {

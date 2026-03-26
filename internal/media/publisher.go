@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sort"
 	"strings"
 	"time"
@@ -73,7 +74,11 @@ func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, ch
 	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
 		return err
 	}
-	segmentPath := filepath.Join(segmentsDir, filepath.Base(chunkPath))
+	nextIndex, err := p.nextSegmentIndex(segmentsDir)
+	if err != nil {
+		return err
+	}
+	segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", nextIndex))
 	if err := os.Rename(chunkPath, segmentPath); err != nil {
 		return err
 	}
@@ -112,6 +117,7 @@ func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error)
 		return nil, err
 	}
 	type segmentMeta struct {
+		index    int
 		path     string
 		captured time.Time
 	}
@@ -121,6 +127,7 @@ func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error)
 			continue
 		}
 		path := filepath.Join(segmentsDir, entry.Name())
+		index := parseSegmentIndex(entry.Name())
 		captured := parseSegmentCapturedAt(entry.Name())
 		if captured.IsZero() {
 			info, statErr := entry.Info()
@@ -129,11 +136,14 @@ func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error)
 			}
 			captured = info.ModTime().UTC()
 		}
-		segments = append(segments, segmentMeta{path: path, captured: captured})
+		segments = append(segments, segmentMeta{index: index, path: path, captured: captured})
 	}
 	sort.SliceStable(segments, func(i, j int) bool {
 		left := segments[i]
 		right := segments[j]
+		if left.index > 0 && right.index > 0 && left.index != right.index {
+			return left.index < right.index
+		}
 		if left.captured.Equal(right.captured) {
 			return left.path < right.path
 		}
@@ -144,6 +154,24 @@ func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error)
 		result = append(result, item.path)
 	}
 	return result, nil
+}
+
+func (p *BunnyChunkPublisher) nextSegmentIndex(segmentsDir string) (int, error) {
+	entries, err := os.ReadDir(segmentsDir)
+	if err != nil {
+		return 0, err
+	}
+	maxIndex := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".mp4") {
+			continue
+		}
+		index := parseSegmentIndex(entry.Name())
+		if index > maxIndex {
+			maxIndex = index
+		}
+	}
+	return maxIndex + 1, nil
 }
 
 func (p *BunnyChunkPublisher) concatSegments(ctx context.Context, streamerID, segmentsDir string, selected []string) (string, error) {
@@ -190,6 +218,15 @@ func parseSegmentCapturedAt(fileName string) time.Time {
 		return time.Time{}
 	}
 	return parsed.UTC()
+}
+
+func parseSegmentIndex(fileName string) int {
+	base := strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
+	value, err := strconv.Atoi(base)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
 }
 
 type bunnyCreateVideoRequest struct {

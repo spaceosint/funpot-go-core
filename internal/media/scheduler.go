@@ -135,7 +135,7 @@ func (s *Scheduler) run(ctx context.Context, streamerID string) {
 
 	s.runCycle(ctx, streamerID)
 	for {
-		wait := s.waitUntilNextWindow()
+		wait := s.waitUntilNextCycle()
 		select {
 		case <-ctx.Done():
 			logger.Info("scheduler context cancelled", zap.String("streamerID", streamerID))
@@ -144,6 +144,17 @@ func (s *Scheduler) run(ctx context.Context, streamerID string) {
 			s.runCycle(ctx, streamerID)
 		}
 	}
+}
+
+func (s *Scheduler) waitUntilNextCycle() time.Duration {
+	if s == nil || s.interval <= 0 {
+		return 10 * time.Second
+	}
+	wait := s.waitUntilNextWindow()
+	if wait <= 0 {
+		return 0
+	}
+	return wait
 }
 
 func (s *Scheduler) runCycle(ctx context.Context, streamerID string) {
@@ -199,7 +210,7 @@ func (s *Scheduler) waitUntilNextWindow() time.Duration {
 		wait = next.Sub(current)
 	}
 	if wait <= 0 {
-		return s.interval
+		return 0
 	}
 	return wait
 }

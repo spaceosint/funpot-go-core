@@ -219,6 +219,35 @@ func TestBunnyChunkPublisherListSegmentsSortsByCapturedTimestamp(t *testing.T) {
 	}
 }
 
+func TestBunnyChunkPublisherListSegmentsSortsByIndex(t *testing.T) {
+	dir := t.TempDir()
+	segmentsDir := filepath.Join(dir, "segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("mkdir segments: %v", err)
+	}
+	files := []string{"000000003.mp4", "000000001.mp4", "000000002.mp4"}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(segmentsDir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("write segment %s: %v", name, err)
+		}
+	}
+
+	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{OutputDir: dir})
+	got, err := publisher.listSegments(segmentsDir)
+	if err != nil {
+		t.Fatalf("listSegments() error = %v", err)
+	}
+
+	want := []string{
+		filepath.Join(segmentsDir, "000000001.mp4"),
+		filepath.Join(segmentsDir, "000000002.mp4"),
+		filepath.Join(segmentsDir, "000000003.mp4"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listSegments() = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseSegmentCapturedAt(t *testing.T) {
 	got := parseSegmentCapturedAt("20260326T120010_123000000.mp4")
 	want := time.Date(2026, 3, 26, 12, 0, 10, 123000000, time.UTC)
@@ -227,5 +256,14 @@ func TestParseSegmentCapturedAt(t *testing.T) {
 	}
 	if !parseSegmentCapturedAt("legacy.mp4").IsZero() {
 		t.Fatalf("expected zero time for unparseable filename")
+	}
+}
+
+func TestParseSegmentIndex(t *testing.T) {
+	if got := parseSegmentIndex("000000007.mp4"); got != 7 {
+		t.Fatalf("parseSegmentIndex() = %d, want 7", got)
+	}
+	if got := parseSegmentIndex("legacy.mp4"); got != 0 {
+		t.Fatalf("parseSegmentIndex() = %d, want 0", got)
 	}
 }
