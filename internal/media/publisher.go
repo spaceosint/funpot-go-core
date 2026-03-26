@@ -16,7 +16,7 @@ import (
 
 const (
 	defaultBunnyBaseURL          = "https://video.bunnycdn.com"
-	defaultChunkPublishBatchSize = 24
+	defaultChunkPublishBatchSize = 5
 )
 
 type BunnyChunkPublisherConfig struct {
