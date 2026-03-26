@@ -46,6 +46,10 @@ FUNPOT_STREAMLINK_QUALITY=1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p
 FUNPOT_STREAMLINK_CAPTURE_TIMEOUT=25s
 FUNPOT_STREAMLINK_OUTPUT_DIR=tmp/stream_chunks
 FUNPOT_STREAMLINK_URL_TEMPLATE=https://twitch.tv/%s
+FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT=24
+FUNPOT_STREAMLINK_BUNNY_BASE_URL=https://video.bunnycdn.com
+FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID=
+FUNPOT_STREAMLINK_BUNNY_API_KEY=
 FUNPOT_GEMINI_API_KEY=<google_ai_studio_api_key>
 FUNPOT_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 FUNPOT_GEMINI_MAX_INLINE_BYTES=19922944
@@ -85,7 +89,11 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 
 > Scheduler cycle interval is aligned with `FUNPOT_STREAMLINK_CAPTURE_TIMEOUT`
 > (for example, `25s` timeout means one capture/LLM cycle every ~25 seconds).
-> This keeps chunk duration and LLM cadence consistent.
+>
+> Each ~25s chunk is analyzed immediately by the worker.
+> In parallel, chunks are accumulated and merged via `ffmpeg -c copy` (no re-encoding)
+> into ~10-minute windows (`FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT` controls batch size),
+> then uploaded to Bunny Stream when Bunny credentials are configured.
 
 > Set `FUNPOT_GEMINI_API_KEY` to enable real Gemini stage classification. When
 > it is unset, the server falls back to the deterministic placeholder

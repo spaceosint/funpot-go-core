@@ -121,6 +121,28 @@ func TestStreamWorkerLockTTLIncludesBuffer(t *testing.T) {
 	}
 }
 
+func TestBuildChunkPublisherReturnsNilWhenBunnyNotConfigured(t *testing.T) {
+	if got := buildChunkPublisher(config.Config{}); got != nil {
+		t.Fatal("expected nil publisher")
+	}
+}
+
+func TestBuildChunkPublisherReturnsPublisherWhenConfigured(t *testing.T) {
+	cfg := config.Config{
+		Streamlink: config.StreamlinkConfig{
+			OutputDir:      "tmp/stream_chunks",
+			FFmpegBinary:   "ffmpeg",
+			AggregateCount: 24,
+			BunnyBaseURL:   "https://video.bunnycdn.com",
+			BunnyLibraryID: "lib-id",
+			BunnyAPIKey:    "api-key",
+		},
+	}
+	if got := buildChunkPublisher(cfg); got == nil {
+		t.Fatal("expected publisher")
+	}
+}
+
 func buildAuthServiceForSetupStore(t *testing.T) *auth.Service {
 	t.Helper()
 	repo := users.NewInMemoryRepository()

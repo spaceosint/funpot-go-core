@@ -128,7 +128,7 @@ func main() {
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
-		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5},
+		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5, ChunkPublisher: buildChunkPublisher(cfg)},
 	)
 	streamWorker.SetLogger(logger.Named("stream_worker"))
 	streamScheduler := media.NewScheduler(streamWorker, streamProcessInterval(cfg))
@@ -256,6 +256,20 @@ func streamWorkerLockTTL(cfg config.Config) time.Duration {
 	interval := streamProcessInterval(cfg)
 	// Keep lock slightly longer than capture interval to prevent overlapping cycles.
 	return interval + 5*time.Second
+}
+
+func buildChunkPublisher(cfg config.Config) media.ChunkPublisher {
+	if cfg.Streamlink.BunnyLibraryID == "" || cfg.Streamlink.BunnyAPIKey == "" {
+		return nil
+	}
+	return media.NewBunnyChunkPublisher(media.BunnyChunkPublisherConfig{
+		OutputDir:      cfg.Streamlink.OutputDir,
+		FFmpegBinary:   cfg.Streamlink.FFmpegBinary,
+		AggregateCount: cfg.Streamlink.AggregateCount,
+		BaseURL:        cfg.Streamlink.BunnyBaseURL,
+		LibraryID:      cfg.Streamlink.BunnyLibraryID,
+		APIKey:         cfg.Streamlink.BunnyAPIKey,
+	})
 }
 
 func newLogger(level string) (*zap.Logger, error) {
