@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,7 @@ type flakyClassifier struct {
 	failures int
 	calls    map[string]int
 	result   StageClassification
+	err      error
 }
 
 type fakeChunkPublisher struct {
@@ -98,6 +100,9 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 	}
 	f.calls[input.Stage]++
 	if f.calls[input.Stage] <= f.failures {
+		if f.err != nil {
+			return StageClassification{}, f.err
+		}
 		return StageClassification{}, errors.New("temporary llm failure")
 	}
 	return f.result, nil
@@ -347,6 +352,48 @@ func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
 	}
 	if got := classifier.calls["custom"]; got != 2 {
 		t.Fatalf("classifier calls = %d, want 2", got)
+	}
+}
+
+func TestWorkerProcessStreamerRetriesTransientGeminiFailuresWithSafetyFloor(t *testing.T) {
+	classifier := &flakyClassifier{
+		failures: 2,
+		result:   StageClassification{Label: "ok", Confidence: 0.9},
+		err: &GeminiGenerateContentError{
+			StatusCode: http.StatusServiceUnavailable,
+			Stage:      "custom",
+			Model:      "gemini",
+		},
+	}
+	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 0, BackoffMS: 0}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got := classifier.calls["custom"]; got != 3 {
+		t.Fatalf("classifier calls = %d, want 3", got)
+	}
+}
+
+func TestWorkerProcessStreamerDoesNotRetryNonTransientGeminiFailures(t *testing.T) {
+	classifier := &flakyClassifier{
+		failures: 2,
+		result:   StageClassification{Label: "ok", Confidence: 0.9},
+		err: &GeminiGenerateContentError{
+			StatusCode: http.StatusBadRequest,
+			Stage:      "custom",
+			Model:      "gemini",
+		},
+	}
+	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 3, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
+
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
+		t.Fatal("expected non-transient gemini error")
+	}
+	if got := classifier.calls["custom"]; got != 1 {
+		t.Fatalf("classifier calls = %d, want 1", got)
 	}
 }
 
