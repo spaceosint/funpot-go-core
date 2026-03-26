@@ -611,6 +611,9 @@ func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, er
 	parsed.HardConflicts = rawMessageFromGenericValue(generic["hard_conflicts"])
 	parsed.FinalOutcome = strings.TrimSpace(stringValue(generic["final_outcome"]))
 	if !hasGeminiResponsePayload(parsed) {
+		if coerced, ok := coerceTrackerLegacyDeltaResponse(stage, generic); ok {
+			return coerced, nil
+		}
 		if coerced, ok := coerceTrackerStateObjectResponse(stage, generic); ok {
 			return coerced, nil
 		}
@@ -674,6 +677,48 @@ func coerceTrackerStateObjectResponse(stage string, payload map[string]any) (gem
 		NextNeededEvidence: json.RawMessage("[]"),
 		HardConflicts:      json.RawMessage("[]"),
 		FinalOutcome:       "unknown",
+	}, true
+}
+
+func coerceTrackerLegacyDeltaResponse(stage string, payload map[string]any) (geminiStageResponse, bool) {
+	if !isTrackerStage(stage) || len(payload) == 0 {
+		return geminiStageResponse{}, false
+	}
+	stateChanges, hasStateChanges := payload["state_changes"]
+	newEvidence, hasNewEvidence := payload["new_evidence"]
+	if !hasStateChanges && !hasNewEvidence {
+		return geminiStageResponse{}, false
+	}
+
+	updatedState := rawMessageFromGenericValue(stateChanges)
+	if len(updatedState) == 0 || strings.TrimSpace(string(updatedState)) == "null" {
+		updatedState = json.RawMessage("{}")
+	}
+	delta := rawMessageFromGenericValue(newEvidence)
+	if len(delta) == 0 || strings.TrimSpace(string(delta)) == "null" {
+		delta = json.RawMessage("[]")
+	}
+	nextNeededEvidence := rawMessageFromGenericValue(payload["next_needed_evidence"])
+	if len(nextNeededEvidence) == 0 || strings.TrimSpace(string(nextNeededEvidence)) == "null" {
+		nextNeededEvidence = json.RawMessage("[]")
+	}
+	hardConflicts := rawMessageFromGenericValue(payload["hard_conflicts"])
+	if len(hardConflicts) == 0 || strings.TrimSpace(string(hardConflicts)) == "null" {
+		hardConflicts = json.RawMessage("[]")
+	}
+	finalOutcome := strings.TrimSpace(stringValue(payload["final_outcome"]))
+	if finalOutcome == "" {
+		finalOutcome = "unknown"
+	}
+
+	return geminiStageResponse{
+		Label:              "state_updated",
+		Confidence:         confidenceFromGeneric(payload["confidence"]),
+		UpdatedState:       updatedState,
+		Delta:              delta,
+		NextNeededEvidence: nextNeededEvidence,
+		HardConflicts:      hardConflicts,
+		FinalOutcome:       finalOutcome,
 	}, true
 }
 
