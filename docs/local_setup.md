@@ -88,7 +88,13 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > when Streamlink capture is enabled.
 
 > Scheduler cycle interval is aligned with `FUNPOT_STREAMLINK_CAPTURE_TIMEOUT`
-> (for example, `25s` timeout means one capture/LLM cycle every ~25 seconds).
+> (for example, `25s` timeout means one capture/LLM cycle every ~25 seconds)
+> and automatically starts the next cycle without an extra idle pause when
+> the previous capture overruns the window.
+>
+> Stream capture now runs as a long-lived Streamlink→FFmpeg pipeline per streamer
+> and cuts sequential ~25s segments continuously (`%09d.ts`) to minimize boundary
+> loss between chunks.
 >
 > Each ~25s chunk is analyzed immediately by the worker.
 > In parallel, chunks are accumulated and merged via `ffmpeg -c copy` (no re-encoding)

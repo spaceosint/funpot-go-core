@@ -196,6 +196,24 @@ func TestNewStreamlinkCaptureAdapterEnforcesMinimumCaptureTimeout(t *testing.T) 
 	}
 }
 
+func TestNewStreamlinkCaptureAdapterEnablesContinuousModeForDefaultRunner(t *testing.T) {
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir: t.TempDir(),
+	}, nil, nil)
+	if !adapter.continuous {
+		t.Fatalf("expected continuous mode for default runner")
+	}
+}
+
+func TestNewStreamlinkCaptureAdapterDisablesContinuousModeForCustomRunner(t *testing.T) {
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir: t.TempDir(),
+	}, nil, &fakeCommandRunner{})
+	if adapter.continuous {
+		t.Fatalf("expected non-continuous mode for custom runner")
+	}
+}
+
 func TestStreamlinkCaptureAdapterFailsWithoutBytes(t *testing.T) {
 	runner := &fakeCommandRunner{err: errors.New("streamlink failed")}
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{OutputDir: t.TempDir()}, nil, runner)
