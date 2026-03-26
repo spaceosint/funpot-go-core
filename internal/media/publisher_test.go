@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -181,5 +182,50 @@ func TestBunnyChunkPublisherConcatListUsesAbsolutePaths(t *testing.T) {
 		if !filepath.IsAbs(pathValue) {
 			t.Fatalf("concat path = %q, want absolute path", pathValue)
 		}
+	}
+}
+
+func TestBunnyChunkPublisherListSegmentsSortsByCapturedTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	segmentsDir := filepath.Join(dir, "segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("mkdir segments: %v", err)
+	}
+
+	files := []string{
+		"20260326T120030_000000000.mp4",
+		"20260326T120010_000000000.mp4",
+		"20260326T120020_000000000.mp4",
+	}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(segmentsDir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("write segment %s: %v", name, err)
+		}
+	}
+
+	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{OutputDir: dir})
+	got, err := publisher.listSegments(segmentsDir)
+	if err != nil {
+		t.Fatalf("listSegments() error = %v", err)
+	}
+
+	want := []string{
+		filepath.Join(segmentsDir, "20260326T120010_000000000.mp4"),
+		filepath.Join(segmentsDir, "20260326T120020_000000000.mp4"),
+		filepath.Join(segmentsDir, "20260326T120030_000000000.mp4"),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("listSegments() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseSegmentCapturedAt(t *testing.T) {
+	got := parseSegmentCapturedAt("20260326T120010_123000000.mp4")
+	want := time.Date(2026, 3, 26, 12, 0, 10, 123000000, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("parseSegmentCapturedAt() = %s, want %s", got, want)
+	}
+	if !parseSegmentCapturedAt("legacy.mp4").IsZero() {
+		t.Fatalf("expected zero time for unparseable filename")
 	}
 }

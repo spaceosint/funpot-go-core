@@ -111,15 +111,39 @@ func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error)
 	if err != nil {
 		return nil, err
 	}
-	segments := make([]string, 0, len(entries))
+	type segmentMeta struct {
+		path     string
+		captured time.Time
+	}
+	segments := make([]segmentMeta, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".mp4") {
 			continue
 		}
-		segments = append(segments, filepath.Join(segmentsDir, entry.Name()))
+		path := filepath.Join(segmentsDir, entry.Name())
+		captured := parseSegmentCapturedAt(entry.Name())
+		if captured.IsZero() {
+			info, statErr := entry.Info()
+			if statErr != nil {
+				return nil, statErr
+			}
+			captured = info.ModTime().UTC()
+		}
+		segments = append(segments, segmentMeta{path: path, captured: captured})
 	}
-	sort.Strings(segments)
-	return segments, nil
+	sort.SliceStable(segments, func(i, j int) bool {
+		left := segments[i]
+		right := segments[j]
+		if left.captured.Equal(right.captured) {
+			return left.path < right.path
+		}
+		return left.captured.Before(right.captured)
+	})
+	result := make([]string, 0, len(segments))
+	for _, item := range segments {
+		result = append(result, item.path)
+	}
+	return result, nil
 }
 
 func (p *BunnyChunkPublisher) concatSegments(ctx context.Context, streamerID, segmentsDir string, selected []string) (string, error) {
@@ -141,12 +165,31 @@ func (p *BunnyChunkPublisher) concatSegments(ctx context.Context, streamerID, se
 
 	outputPath := filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID), fmt.Sprintf("window_%s.mp4", sanitizeToken(time.Now().UTC().Format("20060102T150405.000000000"))))
 	var stderr strings.Builder
-	args := []string{"-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outputPath}
+	args := []string{
+		"-y",
+		"-fflags", "+genpts",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", listPath,
+		"-c", "copy",
+		"-avoid_negative_ts", "make_zero",
+		outputPath,
+	}
 	if err := p.cfg.Runner.Run(ctx, io.Discard, &stderr, p.cfg.FFmpegBinary, args...); err != nil {
 		_ = os.Remove(outputPath)
 		return "", fmt.Errorf("concat chunks failed: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return outputPath, nil
+}
+
+func parseSegmentCapturedAt(fileName string) time.Time {
+	base := strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
+	normalized := strings.ReplaceAll(base, "_", ".")
+	parsed, err := time.Parse("20060102T150405.000000000", normalized)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed.UTC()
 }
 
 type bunnyCreateVideoRequest struct {
