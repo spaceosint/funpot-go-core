@@ -83,7 +83,7 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > `FUNPOT_STREAMLINK_ENABLED=true` requires the `streamlink` binary to be
 > available in PATH (or pointed to by `FUNPOT_STREAMLINK_BINARY`).
 
-> Live Gemini analysis also remuxes Streamlink `.ts` chunks into `.mp4`, so
+> Live Gemini analysis expects `.mp4` chunks, so
 > `FUNPOT_STREAMLINK_FFMPEG_BINARY` must point to a working `ffmpeg` binary
 > when Streamlink capture is enabled.
 
@@ -93,7 +93,7 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > the previous capture overruns the window.
 >
 > Stream capture now runs as a long-lived Streamlink→FFmpeg pipeline per streamer
-> and cuts sequential ~25s segments continuously (`%09d.ts`) to minimize boundary
+> and cuts sequential ~25s segments continuously (`%09d.mp4`) to minimize boundary
 > loss between chunks.
 >
 > Each ~25s chunk is analyzed immediately by the worker.

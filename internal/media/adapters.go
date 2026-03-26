@@ -191,7 +191,7 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 	defer cancel()
 
 	streamURL := fmt.Sprintf(a.cfg.URLTemplate, channel)
-	args := []string{"--stdout", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+	args := []string{"--stdout", "--ffmpeg-fout", "mp4", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
 
 	var stderr strings.Builder
 	logger.Info("executing streamlink capture", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath), zap.String("streamURL", streamURL), zap.String("quality", a.cfg.Quality), zap.String("chunkPath", chunkPath))
@@ -205,8 +205,32 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 			return ChunkRef{}, err
 		}
 		stderr.Reset()
-		args = []string{"--stdout", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+		args = []string{"--stdout", "--ffmpeg-fout", "mp4", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
 		runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
+	}
+	if runErr != nil && isStreamlinkUnknownOption(stderr.String(), "--ffmpeg-fout") {
+		logger.Info("streamlink does not support --ffmpeg-fout; retrying with transport stream output", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath))
+		if err := file.Truncate(0); err != nil {
+			return ChunkRef{}, err
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return ChunkRef{}, err
+		}
+		stderr.Reset()
+		args = []string{"--stdout", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+		runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
+		if runErr != nil && isStreamlinkUnknownOption(stderr.String(), "--stream-segmented-duration") {
+			logger.Info("streamlink does not support --stream-segmented-duration; retrying with --hls-duration", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath))
+			if err := file.Truncate(0); err != nil {
+				return ChunkRef{}, err
+			}
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				return ChunkRef{}, err
+			}
+			stderr.Reset()
+			args = []string{"--stdout", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+			runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
+		}
 	}
 
 	stat, err := file.Stat()
@@ -296,20 +320,18 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 			return ChunkRef{}, ctx.Err()
 		default:
 		}
-		segmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.ts", targetIndex))
+		segmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex))
 		info, statErr := os.Stat(segmentPath)
-		if statErr == nil && info.Size() > 0 {
-			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.ts", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
+		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex+1))
+		nextInfo, nextErr := os.Stat(nextSegmentPath)
+		segmentFinalized := nextErr == nil && nextInfo.Size() > 0
+		if statErr == nil && info.Size() > 0 && segmentFinalized {
+			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.mp4", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
 			if err := os.Rename(segmentPath, chunkPath); err != nil {
 				return ChunkRef{}, err
 			}
 			session.nextIndex++
-			chunk := ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}
-			normalized, normErr := a.normalizer.Normalize(ctx, chunk)
-			if normErr != nil {
-				return ChunkRef{}, normErr
-			}
-			return normalized, nil
+			return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
 		}
 		if time.Now().After(deadline) {
 			return ChunkRef{}, fmt.Errorf("%w: no continuous segment available before deadline", ErrStreamlinkNoData)
@@ -356,16 +378,18 @@ func (a *StreamlinkCaptureAdapter) ensureContinuousSession(streamerID, channel s
 func (a *StreamlinkCaptureAdapter) runContinuousSession(session *continuousCaptureSession) {
 	streamURL := fmt.Sprintf(a.cfg.URLTemplate, session.channel)
 
-	streamlinkArgs := []string{"--stdout", streamURL, a.cfg.Quality}
-	ffmpegOutputPattern := filepath.Join(session.segmentsDir, "%09d.ts")
+	streamlinkArgs := []string{"--stdout", "--ffmpeg-fout", "mp4", streamURL, a.cfg.Quality}
+	ffmpegOutputPattern := filepath.Join(session.segmentsDir, "%09d.mp4")
 	ffmpegArgs := []string{
 		"-y",
 		"-i", "pipe:0",
 		"-c", "copy",
 		"-f", "segment",
+		"-segment_format", "mp4",
 		"-segment_time", formatStreamlinkDurationArg(a.cfg.CaptureTimeout),
 		"-segment_start_number", "1",
 		"-reset_timestamps", "1",
+		"-movflags", "+faststart",
 		ffmpegOutputPattern,
 	}
 
