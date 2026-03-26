@@ -794,6 +794,59 @@ func TestGeminiStageClassifierCoercesStartStatePayloadToUpdatedState(t *testing.
 	}
 }
 
+func TestGeminiStageClassifierCoercesLegacyTrackerDeltaPayload(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+	                    "candidates": [{
+	                        "content": {"parts": [{"text": "{\"chunk_time_range\":\"00:00-00:07\",\"new_evidence\":[{\"type\":\"score_update\",\"text\":\"5-6\",\"confidence\":1.0}],\"state_changes\":{\"t_score\":6,\"ct_score\":5,\"session_status\":\"in_progress\"}}"}]}
+	                    }],
+	                    "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
+	                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	result, err := classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "Start",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+	})
+	if err != nil {
+		t.Fatalf("expected legacy tracker payload coercion, got error %v", err)
+	}
+	if strings.TrimSpace(result.Label) != "state_updated" {
+		t.Fatalf("expected state_updated label, got %q", result.Label)
+	}
+	if strings.TrimSpace(result.UpdatedStateJSON) != `{"ct_score":5,"session_status":"in_progress","t_score":6}` {
+		t.Fatalf("unexpected updated_state mapping, got %q", result.UpdatedStateJSON)
+	}
+	if strings.TrimSpace(result.EvidenceDeltaJSON) != `[{"confidence":1,"text":"5-6","type":"score_update"}]` {
+		t.Fatalf("unexpected delta mapping, got %q", result.EvidenceDeltaJSON)
+	}
+	if strings.TrimSpace(result.NextEvidenceJSON) != "[]" {
+		t.Fatalf("expected empty next_needed_evidence fallback, got %q", result.NextEvidenceJSON)
+	}
+	if strings.TrimSpace(result.FinalOutcome) != "unknown" {
+		t.Fatalf("expected unknown final_outcome fallback, got %q", result.FinalOutcome)
+	}
+}
+
 func TestGeminiStageClassifierDoesNotCoerceNonTrackerStatePayload(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
