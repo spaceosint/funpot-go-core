@@ -48,6 +48,45 @@ type GeminiStageClassifier struct {
 	sessions       map[string]geminiChatSession
 }
 
+type GeminiGenerateContentError struct {
+	StatusCode      int
+	Stage           string
+	Model           string
+	MIMEType        string
+	HasChunk        bool
+	MaxOutputTokens int
+	Temperature     float64
+	Body            string
+}
+
+func (e *GeminiGenerateContentError) Error() string {
+	if e == nil {
+		return "gemini generateContent failed"
+	}
+	return fmt.Sprintf("gemini generateContent failed: status=%d stage=%s model=%s mime=%s has_chunk=%t max_output_tokens=%d temperature=%.3f body=%s",
+		e.StatusCode,
+		strings.TrimSpace(e.Stage),
+		strings.TrimSpace(e.Model),
+		strings.TrimSpace(e.MIMEType),
+		e.HasChunk,
+		e.MaxOutputTokens,
+		e.Temperature,
+		strings.TrimSpace(e.Body),
+	)
+}
+
+func (e *GeminiGenerateContentError) Retryable() bool {
+	if e == nil {
+		return false
+	}
+	switch e.StatusCode {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 type geminiChatSession struct {
 	TokenCount        int
 	PromptFingerprint string
@@ -218,16 +257,16 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		return StageClassification{}, err
 	}
 	if resp.StatusCode >= 400 {
-		return StageClassification{}, fmt.Errorf("gemini generateContent failed: status=%d stage=%s model=%s mime=%s has_chunk=%t max_output_tokens=%d temperature=%.3f body=%s",
-			resp.StatusCode,
-			strings.TrimSpace(input.Stage),
-			model,
-			mimeType,
-			hasChunk,
-			requestBody.GenerationConfig.MaxOutputTokens,
-			requestBody.GenerationConfig.Temperature,
-			strings.TrimSpace(string(responseBody)),
-		)
+		return StageClassification{}, &GeminiGenerateContentError{
+			StatusCode:      resp.StatusCode,
+			Stage:           input.Stage,
+			Model:           model,
+			MIMEType:        mimeType,
+			HasChunk:        hasChunk,
+			MaxOutputTokens: requestBody.GenerationConfig.MaxOutputTokens,
+			Temperature:     requestBody.GenerationConfig.Temperature,
+			Body:            string(responseBody),
+		}
 	}
 
 	var payload geminiGenerateContentResponse

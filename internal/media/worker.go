@@ -719,6 +719,10 @@ func (w *Worker) classifyWithRetry(ctx context.Context, input StageRequest, acti
 	if attempts <= 0 {
 		attempts = 1
 	}
+	const (
+		minTransientAttempts    = 3
+		defaultTransientBackoff = 500 * time.Millisecond
+	)
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -727,14 +731,36 @@ func (w *Worker) classifyWithRetry(ctx context.Context, input StageRequest, acti
 			return result, nil
 		}
 		lastErr = err
-		if attempt == attempts {
+		geminiRetryable, isGeminiError := geminiRetryableClassificationError(err)
+		retryable := geminiRetryable || !isGeminiError
+		maxAttempts := attempts
+		if geminiRetryable && maxAttempts < minTransientAttempts {
+			maxAttempts = minTransientAttempts
+		}
+		if !retryable || attempt == maxAttempts {
 			break
 		}
-		if err := w.waitForRetry(ctx, time.Duration(activePrompt.BackoffMS)*time.Millisecond, attempt); err != nil {
+		backoff := time.Duration(activePrompt.BackoffMS) * time.Millisecond
+		if geminiRetryable && backoff <= 0 {
+			backoff = defaultTransientBackoff
+		}
+		if err := w.waitForRetry(ctx, backoff, attempt); err != nil {
 			return StageClassification{}, err
 		}
+		attempts = maxAttempts
 	}
 	return StageClassification{}, lastErr
+}
+
+func geminiRetryableClassificationError(err error) (retryable bool, isGemini bool) {
+	if err == nil {
+		return false, false
+	}
+	var geminiErr *GeminiGenerateContentError
+	if errors.As(err, &geminiErr) {
+		return geminiErr.Retryable(), true
+	}
+	return false, false
 }
 
 func (w *Worker) waitForRetry(ctx context.Context, base time.Duration, attempt int) error {
