@@ -187,7 +187,7 @@ func TestStreamlinkCaptureAdapterAcceptsTimeoutWhenChunkCaptured(t *testing.T) {
 
 func TestNewStreamlinkCaptureAdapterEnforcesMinimumCaptureTimeout(t *testing.T) {
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
-		CaptureTimeout: 12 * time.Second,
+		CaptureTimeout: 5 * time.Second,
 		OutputDir:      t.TempDir(),
 	}, nil, &fakeCommandRunner{})
 
