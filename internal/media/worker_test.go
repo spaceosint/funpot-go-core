@@ -87,6 +87,11 @@ type flakyClassifier struct {
 	result   StageClassification
 }
 
+type fakeChunkPublisher struct {
+	err   error
+	calls int
+}
+
 func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (StageClassification, error) {
 	if f.calls == nil {
 		f.calls = map[string]int{}
@@ -96,6 +101,11 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 		return StageClassification{}, errors.New("temporary llm failure")
 	}
 	return f.result, nil
+}
+
+func (f *fakeChunkPublisher) Publish(_ context.Context, _ string, _ ChunkRef) error {
+	f.calls++
+	return f.err
 }
 
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
@@ -313,6 +323,17 @@ func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
 	}
 	if got := classifier.calls["custom"]; got != 2 {
 		t.Fatalf("classifier calls = %d, want 2", got)
+	}
+}
+
+func TestWorkerProcessStreamerPublishesChunkAfterAnalysis(t *testing.T) {
+	publisher := &fakeChunkPublisher{}
+	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, ChunkPublisher: publisher})
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if publisher.calls != 1 {
+		t.Fatalf("publisher calls = %d, want 1", publisher.calls)
 	}
 }
 

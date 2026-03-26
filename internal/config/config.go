@@ -37,6 +37,10 @@ type StreamlinkConfig struct {
 	CaptureTimeout time.Duration
 	OutputDir      string
 	URLTemplate    string
+	AggregateCount int
+	BunnyBaseURL   string
+	BunnyLibraryID string
+	BunnyAPIKey    string
 }
 
 // GeminiConfig controls outbound Gemini API integration for stage classification.
@@ -304,6 +308,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	streamlinkAggregateCount, err := getInt("FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT", 24)
+	if err != nil {
+		return Config{}, err
+	}
 
 	geminiMaxInlineBytes, err := getInt64("FUNPOT_GEMINI_MAX_INLINE_BYTES", 19*1024*1024)
 	if err != nil {
@@ -431,6 +439,10 @@ func Load() (Config, error) {
 			CaptureTimeout: streamlinkCaptureTimeout,
 			OutputDir:      getString("FUNPOT_STREAMLINK_OUTPUT_DIR", "tmp/stream_chunks"),
 			URLTemplate:    getString("FUNPOT_STREAMLINK_URL_TEMPLATE", "https://twitch.tv/%s"),
+			AggregateCount: streamlinkAggregateCount,
+			BunnyBaseURL:   getString("FUNPOT_STREAMLINK_BUNNY_BASE_URL", "https://video.bunnycdn.com"),
+			BunnyLibraryID: strings.TrimSpace(os.Getenv("FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID")),
+			BunnyAPIKey:    strings.TrimSpace(os.Getenv("FUNPOT_STREAMLINK_BUNNY_API_KEY")),
 		},
 		Gemini: GeminiConfig{
 			APIKey:         os.Getenv("FUNPOT_GEMINI_API_KEY"),
@@ -492,6 +504,15 @@ func Load() (Config, error) {
 		}
 		if strings.TrimSpace(cfg.Streamlink.URLTemplate) == "" || !strings.Contains(cfg.Streamlink.URLTemplate, "%s") {
 			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_URL_TEMPLATE must include %%s placeholder")
+		}
+		if cfg.Streamlink.AggregateCount <= 0 {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT must be > 0")
+		}
+		if cfg.Streamlink.BunnyLibraryID != "" && cfg.Streamlink.BunnyAPIKey == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_BUNNY_API_KEY must be set when FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID is configured")
+		}
+		if cfg.Streamlink.BunnyAPIKey != "" && cfg.Streamlink.BunnyLibraryID == "" {
+			return Config{}, fmt.Errorf("FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID must be set when FUNPOT_STREAMLINK_BUNNY_API_KEY is configured")
 		}
 	}
 

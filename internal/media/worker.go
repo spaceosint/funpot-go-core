@@ -87,6 +87,10 @@ type Locker interface {
 	Unlock(key string)
 }
 
+type ChunkPublisher interface {
+	Publish(ctx context.Context, streamerID string, chunk ChunkRef) error
+}
+
 type Worker struct {
 	logger              *zap.Logger
 	metrics             *workerMetrics
@@ -100,6 +104,7 @@ type Worker struct {
 	minConfidence       float64
 	captureRetryCount   int
 	captureRetryBackoff time.Duration
+	chunkPublisher      ChunkPublisher
 	sleepFn             func(context.Context, time.Duration) error
 }
 
@@ -108,6 +113,7 @@ type WorkerConfig struct {
 	MinConfidence       float64
 	CaptureRetryCount   int
 	CaptureRetryBackoff time.Duration
+	ChunkPublisher      ChunkPublisher
 }
 
 func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
@@ -136,6 +142,7 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 		minConfidence:       cfg.MinConfidence,
 		captureRetryCount:   cfg.CaptureRetryCount,
 		captureRetryBackoff: cfg.CaptureRetryBackoff,
+		chunkPublisher:      cfg.ChunkPublisher,
 		sleepFn:             sleepContext,
 	}
 }
@@ -216,6 +223,14 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		w.metrics.recordFailure(ctx, id, "execution_plan")
 		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
+	}
+	if w.chunkPublisher != nil {
+		if err := w.chunkPublisher.Publish(ctx, id, chunk); err != nil {
+			logger.Error("chunk publish failed", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference), zap.Error(err))
+			w.metrics.recordFailure(ctx, id, "publish_chunk")
+			w.metrics.recordCycle(ctx, id, "failed")
+			return streamers.LLMDecision{}, err
+		}
 	}
 	w.metrics.recordCycle(ctx, id, "completed")
 	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
