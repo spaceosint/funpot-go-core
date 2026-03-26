@@ -13,8 +13,9 @@ import (
 )
 
 type fakePublishRunner struct {
-	names []string
-	args  [][]string
+	names        []string
+	args         [][]string
+	concatInputs []string
 }
 
 func (f *fakePublishRunner) Run(_ context.Context, _ io.Writer, _ io.Writer, name string, args ...string) error {
@@ -33,6 +34,7 @@ func (f *fakePublishRunner) Run(_ context.Context, _ io.Writer, _ io.Writer, nam
 		if err != nil {
 			return err
 		}
+		f.concatInputs = append(f.concatInputs, string(listData))
 		var merged strings.Builder
 		for _, line := range strings.Split(string(listData), "\n") {
 			line = strings.TrimSpace(line)
@@ -100,5 +102,84 @@ func TestBunnyChunkPublisherAggregatesAndUploadsWhenBatchReady(t *testing.T) {
 	}
 	if uploadCalls != 1 {
 		t.Fatalf("uploadCalls = %d, want 1 after batch ready", uploadCalls)
+	}
+}
+
+func TestBunnyChunkPublisherConcatListUsesAbsolutePaths(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	testWD := t.TempDir()
+	if err := os.Chdir(testWD); err != nil {
+		t.Fatalf("chdir test wd: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	uploadCalls := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			_, _ = w.Write([]byte(`{"guid":"video-1"}`))
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/videos/video-1"):
+			uploadCalls++
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+
+	runner := &fakePublishRunner{}
+	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
+		OutputDir:      "tmp/stream_chunks",
+		FFmpegBinary:   "ffmpeg",
+		Runner:         runner,
+		AggregateCount: 2,
+		BaseURL:        api.URL,
+		LibraryID:      "lib-1",
+		APIKey:         "key",
+		HTTPTimeout:    time.Second,
+	})
+
+	if err := os.MkdirAll("tmp/input", 0o755); err != nil {
+		t.Fatalf("mkdir input: %v", err)
+	}
+	chunkA := filepath.Join("tmp/input", "a.mp4")
+	if err := os.WriteFile(chunkA, []byte("A"), 0o644); err != nil {
+		t.Fatalf("write chunkA: %v", err)
+	}
+	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("publish first chunk: %v", err)
+	}
+
+	chunkB := filepath.Join("tmp/input", "b.mp4")
+	if err := os.WriteFile(chunkB, []byte("B"), 0o644); err != nil {
+		t.Fatalf("write chunkB: %v", err)
+	}
+	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("publish second chunk: %v", err)
+	}
+	if uploadCalls != 1 {
+		t.Fatalf("uploadCalls = %d, want 1", uploadCalls)
+	}
+	if len(runner.concatInputs) == 0 {
+		t.Fatalf("concatInputs is empty")
+	}
+	for _, line := range strings.Split(runner.concatInputs[len(runner.concatInputs)-1], "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "file '") {
+			t.Fatalf("concat line = %q, want prefix file '", line)
+		}
+		pathValue := strings.TrimSuffix(strings.TrimPrefix(line, "file '"), "'")
+		if !filepath.IsAbs(pathValue) {
+			t.Fatalf("concat path = %q, want absolute path", pathValue)
+		}
 	}
 }
