@@ -124,3 +124,56 @@ func TestCreateAutoActivatesFirstPromptPerStageOnly(t *testing.T) {
 		t.Fatalf("active id = %q, want %q", active.ID, first.ID)
 	}
 }
+
+func TestPromptCRUD(t *testing.T) {
+	svc := NewService()
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Stage:         "detector",
+		Position:      1,
+		Template:      "first",
+		Model:         "m",
+		Temperature:   0.1,
+		MaxTokens:     1,
+		TimeoutMS:     1,
+		MinConfidence: 0.4,
+		ActorID:       "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("Get().ID = %q, want %q", got.ID, created.ID)
+	}
+
+	updated, err := svc.Update(context.Background(), created.ID, CreateRequest{
+		Stage:         "detector",
+		Position:      2,
+		Template:      "updated",
+		Model:         "m2",
+		Temperature:   0.2,
+		MaxTokens:     2,
+		TimeoutMS:     2,
+		RetryCount:    1,
+		BackoffMS:     10,
+		CooldownMS:    5,
+		MinConfidence: 0.5,
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated.Template != "updated" || updated.Position != 2 {
+		t.Fatalf("Update() = %#v", updated)
+	}
+
+	if err := svc.Delete(context.Background(), created.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, err := svc.Get(context.Background(), created.ID); err != ErrNotFound {
+		t.Fatalf("Get() after delete error = %v, want %v", err, ErrNotFound)
+	}
+}

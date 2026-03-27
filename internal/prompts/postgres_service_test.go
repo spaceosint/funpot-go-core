@@ -57,6 +57,78 @@ func TestPostgresServiceCreatePrompt(t *testing.T) {
 	}
 }
 
+func TestPostgresServicePromptCRUD(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := NewPostgresService(db)
+	now := time.Date(2026, 3, 27, 10, 0, 0, 0, time.UTC)
+	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, stage, position, version, template, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at FROM llm_prompt_versions WHERE id = $1`)).
+		WithArgs("prompt-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "stage", "position", "version", "template", "model", "temperature", "max_tokens", "timeout_ms", "retry_count", "backoff_ms", "cooldown_ms", "min_confidence", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("prompt-1", "detector", 1, 1, "detect", "gpt", 0.2, 256, 1000, 1, 10, 10, 0.5, true, "admin-1", "admin-1", now, now))
+	item, err := svc.Get(context.Background(), "prompt-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if item.ID != "prompt-1" {
+		t.Fatalf("Get() = %#v", item)
+	}
+
+	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE llm_prompt_versions SET stage = $2, position = $3, template = $4, model = $5, temperature = $6, max_tokens = $7, timeout_ms = $8, retry_count = $9, backoff_ms = $10, cooldown_ms = $11, min_confidence = $12 WHERE id = $1 RETURNING id, stage, position, version, template, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at`)).
+		WithArgs("prompt-1", "detector", 2, "updated", "gpt-2", 0.3, 128, 900, 0, 0, 0, 0.6).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "stage", "position", "version", "template", "model", "temperature", "max_tokens", "timeout_ms", "retry_count", "backoff_ms", "cooldown_ms", "min_confidence", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("prompt-1", "detector", 2, 1, "updated", "gpt-2", 0.3, 128, 900, 0, 0, 0, 0.6, true, "admin-1", "admin-1", now, now))
+	updated, err := svc.Update(context.Background(), "prompt-1", CreateRequest{
+		Stage:         "detector",
+		Position:      2,
+		Template:      "updated",
+		Model:         "gpt-2",
+		Temperature:   0.3,
+		MaxTokens:     128,
+		TimeoutMS:     900,
+		RetryCount:    0,
+		BackoffMS:     0,
+		CooldownMS:    0,
+		MinConfidence: 0.6,
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if updated.Template != "updated" {
+		t.Fatalf("Update() = %#v", updated)
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT stage, is_active FROM llm_prompt_versions WHERE id = $1`)).
+		WithArgs("prompt-1").
+		WillReturnRows(sqlmock.NewRows([]string{"stage", "is_active"}).AddRow("detector", true))
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM llm_prompt_versions WHERE id = $1`)).
+		WithArgs("prompt-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE llm_prompt_versions SET is_active = FALSE WHERE stage = $1`)).
+		WithArgs("detector").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE llm_prompt_versions SET is_active = TRUE WHERE id = (SELECT id FROM llm_prompt_versions WHERE stage = $1 ORDER BY version DESC, created_at DESC LIMIT 1)`)).
+		WithArgs("detector").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := svc.Delete(context.Background(), "prompt-1"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("ExpectationsWereMet() error = %v", err)
+	}
+}
+
 func TestPostgresServiceListStateSchemas(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
