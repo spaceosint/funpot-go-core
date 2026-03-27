@@ -88,3 +88,43 @@ func TestEvaluateCondition(t *testing.T) {
 		})
 	}
 }
+
+func TestScenarioPackageBuildVisualGraph(t *testing.T) {
+	t.Parallel()
+
+	pkg := ScenarioPackage{
+		ID:       "pkg-1",
+		Name:     "default graph",
+		GameSlug: "global",
+		Version:  3,
+		Steps: []ScenarioStep{
+			{ID: "root_detect", Name: "Root", GameSlug: "global", Initial: true, Order: 1},
+			{ID: "cs2_mode", Name: "Mode", GameSlug: "cs2", Folder: "cs2", Order: 2},
+			{ID: "cs2_faceit", Name: "Faceit", GameSlug: "cs2", Folder: "cs2/faceit", Order: 3},
+		},
+		Transitions: []ScenarioTransition{
+			{FromStepID: "root_detect", ToStepID: "cs2_mode", Condition: "game == cs2", Priority: 1},
+			{FromStepID: "cs2_mode", ToStepID: "cs2_faceit", Condition: "mode == faceit", Priority: 1},
+		},
+	}
+
+	graph := pkg.BuildVisualGraph()
+	if graph.PackageID != "pkg-1" || graph.PackageName != "default graph" || graph.Version != 3 {
+		t.Fatalf("unexpected graph metadata: %#v", graph)
+	}
+	if len(graph.Nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(graph.Nodes))
+	}
+	if graph.Nodes[0].ID != "root_detect" || graph.Nodes[0].Level != 1 {
+		t.Fatalf("unexpected root node: %#v", graph.Nodes[0])
+	}
+	if graph.Nodes[2].ID != "cs2_faceit" || graph.Nodes[2].Level != 3 {
+		t.Fatalf("unexpected nested node: %#v", graph.Nodes[2])
+	}
+	if len(graph.Edges) != 2 || graph.Edges[0].FromStepID != "cs2_mode" || graph.Edges[1].FromStepID != "root_detect" {
+		t.Fatalf("unexpected edges ordering/content: %#v", graph.Edges)
+	}
+	if len(graph.Groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d (%#v)", len(graph.Groups), graph.Groups)
+	}
+}

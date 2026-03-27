@@ -765,6 +765,26 @@ paths:
                 $ref: '#/components/schemas/ScenarioPackageVersion'
         default:
           $ref: '#/components/responses/Error'
+  /api/admin/llm/scenario-packages/{scenarioPackageId}/graph:
+    get:
+      summary: Get LLM scenario package visual graph (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: scenarioPackageId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: LLM scenario package visual graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScenarioPackageGraph'
+        default:
+          $ref: '#/components/responses/Error'
   /api/events/live:
     get:
       summary: Get live events for a streamer
@@ -1761,6 +1781,81 @@ components:
               type: string
               format: date-time
               nullable: true
+    ScenarioGraphNode:
+      type: object
+      required: [id, name, gameSlug, folder, initial, order, level]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        gameSlug:
+          type: string
+        folder:
+          type: string
+        initial:
+          type: boolean
+        order:
+          type: integer
+          minimum: 1
+        level:
+          type: integer
+          minimum: 1
+    ScenarioGraphEdge:
+      type: object
+      required: [id, fromStepId, toStepId, condition, priority]
+      properties:
+        id:
+          type: string
+        fromStepId:
+          type: string
+        toStepId:
+          type: string
+        condition:
+          type: string
+        priority:
+          type: integer
+          minimum: 1
+    ScenarioGraphGroup:
+      type: object
+      required: [id, label, gameSlug, folder, nodeIds]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        gameSlug:
+          type: string
+        folder:
+          type: string
+        nodeIds:
+          type: array
+          items:
+            type: string
+    ScenarioPackageGraph:
+      type: object
+      required: [packageId, packageName, gameSlug, version, nodes, edges, groups]
+      properties:
+        packageId:
+          type: string
+        packageName:
+          type: string
+        gameSlug:
+          type: string
+        version:
+          type: integer
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioGraphNode'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioGraphEdge'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScenarioGraphGroup'
     LiveEvent:
       type: object
       properties:

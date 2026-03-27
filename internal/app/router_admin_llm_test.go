@@ -237,6 +237,24 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 		t.Fatalf("scenario package get status = %d body=%s", getRes.Code, getRes.Body.String())
 	}
 
+	graphReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/scenario-packages/"+packageID+"/graph", nil)
+	graphReq.Header.Set("Authorization", "Bearer "+adminToken)
+	graphRes := httptest.NewRecorder()
+	handler.ServeHTTP(graphRes, graphReq)
+	if graphRes.Code != http.StatusOK {
+		t.Fatalf("scenario package graph status = %d body=%s", graphRes.Code, graphRes.Body.String())
+	}
+	var graph map[string]any
+	if err := json.Unmarshal(graphRes.Body.Bytes(), &graph); err != nil {
+		t.Fatalf("scenario package graph decode error = %v", err)
+	}
+	if graph["packageId"] != packageID {
+		t.Fatalf("expected packageId %q, got %#v", packageID, graph["packageId"])
+	}
+	if _, ok := graph["nodes"].([]any); !ok {
+		t.Fatalf("expected nodes array in graph response, got %#v", graph["nodes"])
+	}
+
 	updateBody, _ := json.Marshal(map[string]any{
 		"gameSlug": "global",
 		"name":     "default graph v2",
