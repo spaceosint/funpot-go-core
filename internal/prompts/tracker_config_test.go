@@ -41,60 +41,49 @@ func TestServiceStateSchemaLifecycle(t *testing.T) {
 	}
 }
 
-func TestValidateStateSchemaCreateRequestAllowsInitialStateJSONWithoutFields(t *testing.T) {
+func TestValidateStateSchemaCreateRequestRequiresFields(t *testing.T) {
 	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
-		GameSlug:         "cs2",
-		Name:             "CS2 full state",
-		InitialStateJSON: `{"session_status":{"value":"unknown"}}`,
+		GameSlug: "cs2",
+		Name:     "CS2 full state",
+	})
+	if !errors.Is(err, ErrInvalidStateFieldKey) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidStateFieldKey)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestRejectsMissingFieldType(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug: "cs2",
+		Name:     "CS2 full state",
+		Fields:   []StateFieldDefinition{{Key: "score.ct"}},
+	})
+	if !errors.Is(err, ErrInvalidStateFieldType) {
+		t.Fatalf("error = %v, want %v", err, ErrInvalidStateFieldType)
+	}
+}
+
+func TestValidateStateSchemaCreateRequestAllowsFields(t *testing.T) {
+	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
+		GameSlug: "cs2",
+		Name:     "CS2 full schema",
+		Fields:   []StateFieldDefinition{{Key: "score.ct", Type: "number"}},
 	})
 	if err != nil {
 		t.Fatalf("ValidateStateSchemaCreateRequest() error = %v", err)
 	}
 }
 
-func TestValidateStateSchemaCreateRequestRejectsInvalidInitialStateJSON(t *testing.T) {
+func TestValidateStateSchemaCreateRequestRejectsDuplicateFieldKeys(t *testing.T) {
 	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
-		GameSlug:         "cs2",
-		Name:             "CS2 full state",
-		InitialStateJSON: `[]`,
+		GameSlug: "cs2",
+		Name:     "CS2 full schema",
+		Fields: []StateFieldDefinition{
+			{Key: "score.ct", Type: "number"},
+			{Key: "score.ct", Type: "number"},
+		},
 	})
-	if !errors.Is(err, ErrInvalidInitialStateJSON) {
-		t.Fatalf("error = %v, want %v", err, ErrInvalidInitialStateJSON)
-	}
-}
-
-func TestValidateStateSchemaCreateRequestAllowsJSONSchemaWithoutFields(t *testing.T) {
-	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
-		GameSlug:        "cs2",
-		Name:            "CS2 full schema",
-		StateSchemaJSON: `{"type":"object","properties":{"score":{"type":"number"}}}`,
-		DeltaSchemaJSON: `{"type":"object","properties":{"new_evidence":{"type":"array"}}}`,
-	})
-	if err != nil {
-		t.Fatalf("ValidateStateSchemaCreateRequest() error = %v", err)
-	}
-}
-
-func TestValidateStateSchemaCreateRequestRejectsInvalidStateSchemaJSON(t *testing.T) {
-	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
-		GameSlug:        "cs2",
-		Name:            "CS2 full schema",
-		StateSchemaJSON: `[]`,
-	})
-	if !errors.Is(err, ErrInvalidStateSchemaJSON) {
-		t.Fatalf("error = %v, want %v", err, ErrInvalidStateSchemaJSON)
-	}
-}
-
-func TestValidateStateSchemaCreateRequestRejectsInvalidDeltaSchemaJSON(t *testing.T) {
-	err := ValidateStateSchemaCreateRequest(StateSchemaCreateRequest{
-		GameSlug:        "cs2",
-		Name:            "CS2 full schema",
-		StateSchemaJSON: `{"type":"object","properties":{"score":{"type":"number"}}}`,
-		DeltaSchemaJSON: `[]`,
-	})
-	if !errors.Is(err, ErrInvalidDeltaSchemaJSON) {
-		t.Fatalf("error = %v, want %v", err, ErrInvalidDeltaSchemaJSON)
+	if err == nil {
+		t.Fatal("expected duplicate key validation error")
 	}
 }
 
