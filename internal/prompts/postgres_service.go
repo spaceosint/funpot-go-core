@@ -393,6 +393,90 @@ func (s *Service) activatePromptDB(ctx context.Context, id, actorID string) (Pro
 	return item, nil
 }
 
+func (s *Service) getPromptDB(ctx context.Context, id string) (PromptVersion, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return PromptVersion{}, err
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT id, stage, position, version, template, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at FROM llm_prompt_versions WHERE id = $1`, strings.TrimSpace(id))
+	item, err := scanPrompt(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return PromptVersion{}, ErrNotFound
+		}
+		return PromptVersion{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) updatePromptDB(ctx context.Context, id string, req CreateRequest) (PromptVersion, error) {
+	if err := ValidateCreateRequest(req); err != nil {
+		return PromptVersion{}, err
+	}
+	if err := s.ensureSchema(ctx); err != nil {
+		return PromptVersion{}, err
+	}
+	position := req.Position
+	if position <= 0 {
+		current, err := s.getPromptDB(ctx, id)
+		if err != nil {
+			return PromptVersion{}, err
+		}
+		position = current.Position
+	}
+	row := s.db.QueryRowContext(ctx, `UPDATE llm_prompt_versions SET stage = $2, position = $3, template = $4, model = $5, temperature = $6, max_tokens = $7, timeout_ms = $8, retry_count = $9, backoff_ms = $10, cooldown_ms = $11, min_confidence = $12 WHERE id = $1 RETURNING id, stage, position, version, template, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at`,
+		strings.TrimSpace(id), strings.TrimSpace(req.Stage), position, strings.TrimSpace(req.Template), strings.TrimSpace(req.Model), req.Temperature, req.MaxTokens, req.TimeoutMS, req.RetryCount, req.BackoffMS, req.CooldownMS, req.MinConfidence)
+	item, err := scanPrompt(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return PromptVersion{}, ErrNotFound
+		}
+		return PromptVersion{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) deletePromptDB(ctx context.Context, id string) error {
+	if err := s.ensureSchema(ctx); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var stage string
+	var wasActive bool
+	if err := tx.QueryRowContext(ctx, `SELECT stage, is_active FROM llm_prompt_versions WHERE id = $1`, strings.TrimSpace(id)).Scan(&stage, &wasActive); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM llm_prompt_versions WHERE id = $1`, strings.TrimSpace(id))
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+
+	if wasActive {
+		if _, err := tx.ExecContext(ctx, `UPDATE llm_prompt_versions SET is_active = FALSE WHERE stage = $1`, stage); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE llm_prompt_versions SET is_active = TRUE WHERE id = (SELECT id FROM llm_prompt_versions WHERE stage = $1 ORDER BY version DESC, created_at DESC LIMIT 1)`, stage); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (s *Service) listStateSchemasDB(ctx context.Context) ([]StateSchemaVersion, error) {
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err

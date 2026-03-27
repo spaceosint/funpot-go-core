@@ -1253,34 +1253,118 @@ func NewHandler(
 					return
 				}
 
-				if !strings.HasSuffix(r.URL.Path, "/activate") {
-					writeError(w, http.StatusBadRequest, "prompt action is required")
-					return
-				}
 				promptID := strings.TrimPrefix(r.URL.Path, "/api/admin/prompts/")
-				promptID = strings.TrimSuffix(promptID, "/activate")
 				promptID = strings.Trim(promptID, "/")
-				if promptID == "" || strings.Contains(promptID, "/") {
+				if promptID == "" {
 					writeError(w, http.StatusBadRequest, "prompt id is required")
 					return
 				}
-				if r.Method != http.MethodPost {
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
 
-				updated, err := promptsService.Activate(r.Context(), promptID, claims.Subject)
-				if err != nil {
-					if errors.Is(err, prompts.ErrNotFound) {
-						writeError(w, http.StatusNotFound, err.Error())
+				if strings.HasSuffix(r.URL.Path, "/activate") {
+					promptID = strings.TrimSuffix(promptID, "activate")
+					promptID = strings.Trim(promptID, "/")
+					if promptID == "" || strings.Contains(promptID, "/") {
+						writeError(w, http.StatusBadRequest, "prompt id is required")
 						return
 					}
-					logger.Error("failed to activate prompt", zap.Error(err))
-					writeError(w, http.StatusInternalServerError, "failed to activate prompt")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+
+					updated, err := promptsService.Activate(r.Context(), promptID, claims.Subject)
+					if err != nil {
+						if errors.Is(err, prompts.ErrNotFound) {
+							writeError(w, http.StatusNotFound, err.Error())
+							return
+						}
+						logger.Error("failed to activate prompt", zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to activate prompt")
+						return
+					}
+
+					writeJSON(w, http.StatusOK, updated)
 					return
 				}
 
-				writeJSON(w, http.StatusOK, updated)
+				if strings.Contains(promptID, "/") {
+					writeError(w, http.StatusBadRequest, "prompt id is required")
+					return
+				}
+
+				switch r.Method {
+				case http.MethodGet:
+					item, err := promptsService.Get(r.Context(), promptID)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req promptCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					updated, err := promptsService.Update(r.Context(), promptID, prompts.CreateRequest{
+						Stage:         req.Stage,
+						Position:      req.Position,
+						Template:      req.Template,
+						Model:         req.Model,
+						Temperature:   req.Temperature,
+						MaxTokens:     req.MaxTokens,
+						TimeoutMS:     req.TimeoutMS,
+						RetryCount:    req.RetryCount,
+						BackoffMS:     req.BackoffMS,
+						CooldownMS:    req.CooldownMS,
+						MinConfidence: req.MinConfidence,
+						ActorID:       claims.Subject,
+					})
+					if err != nil {
+						status := http.StatusBadRequest
+						switch {
+						case errors.Is(err, prompts.ErrNotFound):
+							status = http.StatusNotFound
+						case errors.Is(err, prompts.ErrInvalidStage),
+							errors.Is(err, prompts.ErrInvalidTemplate),
+							errors.Is(err, prompts.ErrInvalidModel),
+							errors.Is(err, prompts.ErrInvalidTemperature),
+							errors.Is(err, prompts.ErrInvalidMaxTokens),
+							errors.Is(err, prompts.ErrInvalidTimeoutMS),
+							errors.Is(err, prompts.ErrInvalidRetryCount),
+							errors.Is(err, prompts.ErrInvalidBackoffMS),
+							errors.Is(err, prompts.ErrInvalidCooldownMS),
+							errors.Is(err, prompts.ErrInvalidMinConfidence):
+						default:
+							status = http.StatusInternalServerError
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, updated)
+				case http.MethodDelete:
+					if err := promptsService.Delete(r.Context(), promptID); err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
 			})))
 		}
 

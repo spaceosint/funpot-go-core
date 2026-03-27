@@ -420,6 +420,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/prompts/{promptId}:
+    get:
+      summary: Get prompt version (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: promptId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update prompt version (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: promptId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromptCreateRequest'
+      responses:
+        '200':
+          description: Updated prompt version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete prompt version (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: promptId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Prompt version deleted
+        default:
+          $ref: '#/components/responses/Error'
   /api/admin/llm/state-schemas:
     get:
       summary: List LLM state schemas (admin)
