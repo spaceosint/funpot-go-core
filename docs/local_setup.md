@@ -200,8 +200,9 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
   - Admin configures tracked state via `fields` (including nested keys with dot notation, e.g. `score.ct`).
   - Service derives a normalized initial tracker state from configured fields (no raw schema JSON blobs in the API contract).
 - `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for versioned tracker update/finalization rule sets.
-- `GET /api/admin/llm/prompts` / `POST /api/admin/llm/prompts` – admin CRUD for match update/finalization prompt templates.
-- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
+- `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages (`steps + transitions`) with per-game versioning and activation.
+- `GET /api/admin/prompts` / `POST /api/admin/prompts` – admin CRUD for match update/finalization prompt templates.
+- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/llm/rule-sets`, `/api/admin/llm/scenario-packages`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
