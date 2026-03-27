@@ -96,9 +96,6 @@ func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, ch
 	if err != nil {
 		return err
 	}
-	for _, segment := range selected {
-		_ = os.Remove(segment)
-	}
 	defer os.Remove(windowPath) //nolint:errcheck
 
 	videoID, err := p.createVideo(ctx, streamerID, chunk.CapturedAt)
@@ -107,6 +104,9 @@ func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, ch
 	}
 	if err := p.uploadVideo(ctx, videoID, windowPath); err != nil {
 		return err
+	}
+	for _, segment := range selected {
+		_ = os.Remove(segment)
 	}
 	return nil
 }
