@@ -5,7 +5,9 @@
 > decision persistence in `migrations/0001_users.up.sql`,
 > `migrations/0001_users.down.sql`, `migrations/0002_streamer_llm_decisions.up.sql`,
 > `migrations/0002_streamer_llm_decisions.down.sql`, `migrations/0003_streamer_llm_decisions_state_fields.up.sql`,
-> and `migrations/0003_streamer_llm_decisions_state_fields.down.sql`.
+> `migrations/0003_streamer_llm_decisions_state_fields.down.sql`,
+> `migrations/0004_tracker_config.up.sql`, `migrations/0004_tracker_config.down.sql`,
+> `migrations/0005_llm_scenario_packages.up.sql`, and `migrations/0005_llm_scenario_packages.down.sql`.
 
 1. Create core tables: `users`, `wallet_accounts`, `wallet_ledger`, `payments`, `streamers`, `games`, `events`, `votes`, `media_clips`, `prompts`, `config`, `referrals`, `idempotency`.
 2. Seed configuration values: `minViewers=100`, `starsRate`, `limits.votePerMin`, feature flags (`paymentsEnabled`, `referralsEnabled`, `mediaEnabled`, `adminEnabled`).

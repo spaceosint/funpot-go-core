@@ -27,12 +27,16 @@ type ChunkRef struct {
 }
 
 type StageRequest struct {
-	StreamerID    string
-	Stage         string
-	Chunk         ChunkRef
-	Prompt        prompts.PromptVersion
-	PreviousState string
-	StateSchema   string
+	StreamerID      string
+	Stage           string
+	Chunk           ChunkRef
+	Prompt          prompts.PromptVersion
+	PreviousState   string
+	StateSchema     string
+	ResponseSchema  string
+	SendPrompt      bool
+	ScenarioFolder  string
+	ScenarioPackage string
 }
 
 const (
@@ -69,6 +73,10 @@ type StageClassifier interface {
 
 type PromptResolver interface {
 	ListActive(ctx context.Context) []prompts.PromptVersion
+}
+
+type activeScenarioPackageResolver interface {
+	GetActiveScenarioPackage(ctx context.Context, gameSlug string) (prompts.ScenarioPackage, error)
 }
 
 type RunStore interface {
@@ -258,6 +266,18 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 	logger := w.logger
 	if logger == nil {
 		logger = zap.NewNop()
+	}
+
+	if resolver, ok := w.prompts.(activeScenarioPackageResolver); ok {
+		gameSlug := w.resolveGameSlug(ctx, streamerID)
+		pkg, err := resolver.GetActiveScenarioPackage(ctx, gameSlug)
+		if err == nil {
+			decision, runErr := w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg)
+			if runErr == nil {
+				return decision, nil
+			}
+			logger.Error("scenario package processing failed, fallback to legacy stages", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(runErr))
+		}
 	}
 
 	activePrompts := filterTrackerPrompts(w.prompts.ListActive(ctx))
@@ -830,4 +850,77 @@ func compactJSON(value any) string {
 		return ""
 	}
 	return string(data)
+}
+
+func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage) (streamers.LLMDecision, error) {
+	latest := w.latestDecisionByStreamer(ctx, streamerID)
+	previousState := w.resolvePreviousState(ctx, streamerID)
+	step, entering, err := pkg.ResolveStep(latest.Stage, previousState)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	activePrompt := prompts.PromptVersion{
+		ID:       step.ID,
+		Stage:    step.ID,
+		Template: step.PromptTemplate,
+		Model:    "scenario-graph",
+		IsActive: true,
+	}
+	stateSchema := w.resolveTrackerConfig(ctx)
+	result, err := w.classifyWithRetry(ctx, StageRequest{
+		StreamerID:      streamerID,
+		Stage:           step.ID,
+		Chunk:           chunk,
+		Prompt:          activePrompt,
+		PreviousState:   previousState,
+		StateSchema:     stateSchema,
+		ResponseSchema:  step.ResponseSchemaJSON,
+		SendPrompt:      entering,
+		ScenarioFolder:  step.Folder,
+		ScenarioPackage: pkg.ID,
+	}, activePrompt)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	decision.TransitionToStep = step.ID
+	return decision, nil
+}
+
+func (w *Worker) latestDecisionByStreamer(ctx context.Context, streamerID string) streamers.LLMDecision {
+	if w == nil || w.decisions == nil {
+		return streamers.LLMDecision{}
+	}
+	items := w.decisions.ListAllLLMDecisions(ctx, streamerID)
+	if len(items) == 0 {
+		return streamers.LLMDecision{}
+	}
+	return items[len(items)-1]
+}
+
+func (w *Worker) resolveGameSlug(ctx context.Context, streamerID string) string {
+	state := parseSimpleState(w.resolvePreviousState(ctx, streamerID))
+	if value, ok := state["game"]; ok {
+		if game := strings.TrimSpace(fmt.Sprint(value)); game != "" {
+			return game
+		}
+	}
+	return "global"
+}
+
+func parseSimpleState(raw string) map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]any{}
+	}
+	if nested, ok := out["state"].(map[string]any); ok {
+		return nested
+	}
+	return out
 }

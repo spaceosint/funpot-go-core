@@ -12,30 +12,33 @@ import (
 
 // Service manages versioned LLM prompt templates for each stage.
 type Service struct {
-	mu           sync.RWMutex
-	counter      int
-	versions     map[string][]PromptVersion
-	stateSchemas map[string][]StateSchemaVersion
-	ruleSets     map[string][]RuleSetVersion
-	db           *sql.DB
-	schemaMu     sync.Mutex
-	schemaReady  bool
+	mu               sync.RWMutex
+	counter          int
+	versions         map[string][]PromptVersion
+	stateSchemas     map[string][]StateSchemaVersion
+	ruleSets         map[string][]RuleSetVersion
+	scenarioPackages map[string][]ScenarioPackage
+	db               *sql.DB
+	schemaMu         sync.Mutex
+	schemaReady      bool
 }
 
 func NewService() *Service {
 	return &Service{
-		versions:     map[string][]PromptVersion{},
-		stateSchemas: map[string][]StateSchemaVersion{},
-		ruleSets:     map[string][]RuleSetVersion{},
+		versions:         map[string][]PromptVersion{},
+		stateSchemas:     map[string][]StateSchemaVersion{},
+		ruleSets:         map[string][]RuleSetVersion{},
+		scenarioPackages: map[string][]ScenarioPackage{},
 	}
 }
 
 func NewPostgresService(db *sql.DB) *Service {
 	return &Service{
-		versions:     map[string][]PromptVersion{},
-		stateSchemas: map[string][]StateSchemaVersion{},
-		ruleSets:     map[string][]RuleSetVersion{},
-		db:           db,
+		versions:         map[string][]PromptVersion{},
+		stateSchemas:     map[string][]StateSchemaVersion{},
+		ruleSets:         map[string][]RuleSetVersion{},
+		scenarioPackages: map[string][]ScenarioPackage{},
+		db:               db,
 	}
 }
 

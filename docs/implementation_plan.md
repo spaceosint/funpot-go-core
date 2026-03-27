@@ -94,6 +94,7 @@ stream analysis immediately after a streamer is added:
   iterative state updates for player side, score, evidence, and uncertainties;
   finalization into `win | loss | draw | unknown` only from accumulated
   evidence.
+- [x] Start migration to scenario-graph orchestration (root game-detection step + game-folder steps + concrete game sub-steps) with condition-based transitions and stay-on-step fallback.
 - [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
   handling for failed LLM jobs.
 - [ ] Publish live match-state/finalization updates to clients via WebSocket.
