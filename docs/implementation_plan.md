@@ -52,9 +52,9 @@ business logic and immediate backend scope.
 
 ### M2.1 – LLM Stream Orchestration (State Tracker) for Streamers
 - [x] Delete or refactor legacy detector/scenario-chain codepaths so only the new tracker model remains active.
-- [ ] Deliver admin panel backend contracts for managing state schemas, tracked
-  fields, evidence categories, update/finalization rules, and safety limits
-  (temperature, max tokens, timeout, fallback strategy).
+- [x] Narrow admin panel backend contracts to Scenario Package v2 only
+  (`/api/admin/llm/scenario-packages` + activation + graph).
+- [ ] Remove legacy admin surfaces for prompt versions, state schemas, and rule sets across code + docs + DB migrations.
 - [x] Move tracker configuration storage from in-memory services to
   database-backed repositories with audit-ready versioning for schemas, rules,
   and prompt packages.
