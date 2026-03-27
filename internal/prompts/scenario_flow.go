@@ -133,6 +133,23 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 	return nil
 }
 
+func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now time.Time) []ScenarioStep {
+	normalized := make([]ScenarioStep, len(steps))
+	for i, step := range steps {
+		normalized[i] = step
+		if normalized[i].CreatedAt.IsZero() {
+			normalized[i].CreatedAt = now
+		}
+		if normalized[i].Order <= 0 {
+			normalized[i].Order = i + 1
+		}
+		if strings.TrimSpace(normalized[i].GameSlug) == "" {
+			normalized[i].GameSlug = fallbackGameSlug
+		}
+	}
+	return normalized
+}
+
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 	if s.db != nil {
 		items, err := s.listScenarioPackagesDB(ctx)
@@ -181,7 +198,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		Name:        strings.TrimSpace(req.Name),
 		Version:     version,
 		GameSlug:    gameSlug,
-		Steps:       append([]ScenarioStep(nil), req.Steps...),
+		Steps:       normalizeScenarioSteps(req.Steps, gameSlug, now),
 		Transitions: append([]ScenarioTransition(nil), req.Transitions...),
 		CreatedBy:   strings.TrimSpace(req.ActorID),
 		CreatedAt:   now,
@@ -190,17 +207,6 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		item.IsActive = true
 		item.ActivatedBy = strings.TrimSpace(req.ActorID)
 		item.ActivatedAt = now
-	}
-	for i := range item.Steps {
-		if item.Steps[i].CreatedAt.IsZero() {
-			item.Steps[i].CreatedAt = now
-		}
-		if item.Steps[i].Order <= 0 {
-			item.Steps[i].Order = i + 1
-		}
-		if strings.TrimSpace(item.Steps[i].GameSlug) == "" {
-			item.Steps[i].GameSlug = gameSlug
-		}
 	}
 	s.scenarioPackages[gameSlug] = append(s.scenarioPackages[gameSlug], item)
 	return item, nil
@@ -245,19 +251,13 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated := item
 			updated.Name = strings.TrimSpace(req.Name)
 			updated.GameSlug = targetGameSlug
-			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
-			updated.Transitions = append([]ScenarioTransition(nil), req.Transitions...)
 			now := time.Now().UTC()
-			for idx := range updated.Steps {
-				if updated.Steps[idx].CreatedAt.IsZero() {
-					updated.Steps[idx].CreatedAt = now
-				}
-				if updated.Steps[idx].Order <= 0 {
-					updated.Steps[idx].Order = idx + 1
-				}
-				if strings.TrimSpace(updated.Steps[idx].GameSlug) == "" {
-					updated.Steps[idx].GameSlug = targetGameSlug
-				}
+			updated.Steps = normalizeScenarioSteps(req.Steps, targetGameSlug, now)
+			updated.Transitions = append([]ScenarioTransition(nil), req.Transitions...)
+			if updated.GameSlug != gameSlug {
+				updated.IsActive = false
+				updated.ActivatedBy = ""
+				updated.ActivatedAt = time.Time{}
 			}
 			if updated.GameSlug != gameSlug {
 				s.scenarioPackages[gameSlug] = append(versions[:i], versions[i+1:]...)

@@ -128,3 +128,47 @@ func TestScenarioPackageBuildVisualGraph(t *testing.T) {
 		t.Fatalf("expected 3 groups, got %d (%#v)", len(graph.Groups), graph.Groups)
 	}
 }
+
+func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	created, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:     "global flow",
+		GameSlug: "global",
+		ActorID:  "admin-1",
+		Steps: []ScenarioStep{
+			{ID: "root_detect", Name: "Root", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if !created.IsActive {
+		t.Fatalf("expected created package to be active: %#v", created)
+	}
+
+	updated, err := svc.UpdateScenarioPackage(context.Background(), created.ID, ScenarioPackageCreateRequest{
+		Name:     "cs2 flow",
+		GameSlug: "cs2",
+		ActorID:  "admin-1",
+		Steps: []ScenarioStep{
+			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
+		},
+	})
+	if err != nil {
+		t.Fatalf("update scenario package: %v", err)
+	}
+	if updated.IsActive {
+		t.Fatalf("expected moved package to be inactive: %#v", updated)
+	}
+	if updated.Steps[0].Order != 1 {
+		t.Fatalf("expected normalized step order=1, got %#v", updated.Steps[0])
+	}
+	if updated.Steps[0].GameSlug != "cs2" {
+		t.Fatalf("expected normalized step gameSlug=cs2, got %#v", updated.Steps[0])
+	}
+	if updated.Steps[0].CreatedAt.IsZero() {
+		t.Fatalf("expected normalized step createdAt to be set, got %#v", updated.Steps[0])
+	}
+}
