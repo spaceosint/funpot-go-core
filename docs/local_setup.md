@@ -109,9 +109,9 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > Gemini chat session alive per streamer before rotating to a new chat and
 > re-sending the tracker prompt + latest state bootstrap.
 >
-> Tracker request payloads are intentionally compact: each turn sends the active
-> `state_schema` plus chunk metadata/media, while `delta_schema` and `rule_set`
-> are no longer injected into every LLM request.
+> Tracker runtime is now Scenario Package v2-first: each cycle resolves the
+> active scenario step and sends chunk metadata/media with strict-JSON contract
+> expectations derived from that step.
 
 Update this table whenever you introduce a new configuration surface.
 
@@ -196,14 +196,9 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
 - `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
-- `GET /api/admin/llm/state-schemas` / `POST /api/admin/llm/state-schemas` – admin CRUD for versioned match state schemas.
-  - Admin configures tracked state via `fields` (including nested keys with dot notation, e.g. `score.ct`).
-  - Service derives a normalized initial tracker state from configured fields (no raw schema JSON blobs in the API contract).
-- `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for versioned tracker update/finalization rule sets.
 - `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages (`steps + transitions`) with per-game versioning and activation.
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
-- `GET /api/admin/prompts` / `POST /api/admin/prompts` – admin CRUD for match update/finalization prompt templates.
-- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/llm/rule-sets`, `/api/admin/llm/scenario-packages`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
+- When PostgreSQL is enabled, admin-managed scenario graph configuration (`/api/admin/llm/scenario-packages`) is persisted in dedicated versioned tables and survives service restarts.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
