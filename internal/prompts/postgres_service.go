@@ -90,6 +90,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_rule_set_versions_active_game
     ON llm_rule_set_versions (game_slug) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_llm_rule_set_versions_order
     ON llm_rule_set_versions (game_slug ASC, version DESC, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS llm_scenario_packages (
+    id TEXT PRIMARY KEY,
+    game_slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    steps_json JSONB NOT NULL,
+    transitions_json JSONB NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by TEXT NOT NULL,
+    activated_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ,
+    CHECK (char_length(id) > 0),
+    CHECK (char_length(game_slug) > 0),
+    CHECK (char_length(name) > 0),
+    CHECK (version > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_scenario_packages_active_game
+    ON llm_scenario_packages (game_slug) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_llm_scenario_packages_order
+    ON llm_scenario_packages (game_slug ASC, version DESC, created_at DESC);
 `
 
 func (s *Service) ensureSchema(ctx context.Context) error {
@@ -181,6 +203,38 @@ func scanRuleSet(row scanner) (RuleSetVersion, error) {
 	}
 	if err := json.Unmarshal(finalizationRules, &item.FinalizationRules); err != nil {
 		return RuleSetVersion{}, err
+	}
+	if activatedAt.Valid {
+		item.ActivatedAt = activatedAt.Time
+	}
+	return item, nil
+}
+
+func scanScenarioPackage(row scanner) (ScenarioPackage, error) {
+	var item ScenarioPackage
+	var steps []byte
+	var transitions []byte
+	var activatedAt sql.NullTime
+	if err := row.Scan(
+		&item.ID,
+		&item.GameSlug,
+		&item.Name,
+		&item.Version,
+		&steps,
+		&transitions,
+		&item.IsActive,
+		&item.CreatedBy,
+		&item.ActivatedBy,
+		&item.CreatedAt,
+		&activatedAt,
+	); err != nil {
+		return ScenarioPackage{}, err
+	}
+	if err := json.Unmarshal(steps, &item.Steps); err != nil {
+		return ScenarioPackage{}, err
+	}
+	if err := json.Unmarshal(transitions, &item.Transitions); err != nil {
+		return ScenarioPackage{}, err
 	}
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
@@ -700,6 +754,113 @@ func (s *Service) getActiveRuleSetDB(ctx context.Context, gameSlug string) (Rule
 			return RuleSetVersion{}, ErrRuleSetNotFound
 		}
 		return RuleSetVersion{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) listScenarioPackagesDB(ctx context.Context) ([]ScenarioPackage, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages ORDER BY game_slug ASC, version DESC, created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]ScenarioPackage, 0)
+	for rows.Next() {
+		item, err := scanScenarioPackage(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
+	if len(req.Steps) == 0 {
+		return ScenarioPackage{}, ErrInvalidScenarioPackage
+	}
+	for _, step := range req.Steps {
+		if strings.TrimSpace(step.ID) == "" {
+			return ScenarioPackage{}, ErrInvalidScenarioStepID
+		}
+	}
+	if err := s.ensureSchema(ctx); err != nil {
+		return ScenarioPackage{}, err
+	}
+	gameSlug := strings.TrimSpace(req.GameSlug)
+	if gameSlug == "" {
+		gameSlug = "global"
+	}
+	stepsJSON, err := marshalJSON(req.Steps)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
+	transitionsJSON, err := marshalJSON(req.Transitions)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
+	defer tx.Rollback()
+
+	var version int
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenario_packages WHERE game_slug = $1`, gameSlug).Scan(&version); err != nil {
+		return ScenarioPackage{}, err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM llm_scenario_packages WHERE game_slug = $1`, gameSlug).Scan(&existing); err != nil {
+		return ScenarioPackage{}, err
+	}
+	now := time.Now().UTC()
+	item := ScenarioPackage{
+		ID:          "scenario-pkg-" + uuid.NewString(),
+		Name:        strings.TrimSpace(req.Name),
+		GameSlug:    gameSlug,
+		Version:     version,
+		Steps:       append([]ScenarioStep(nil), req.Steps...),
+		Transitions: append([]ScenarioTransition(nil), req.Transitions...),
+		IsActive:    existing == 0,
+		CreatedBy:   strings.TrimSpace(req.ActorID),
+		CreatedAt:   now,
+	}
+	if item.IsActive {
+		item.ActivatedBy = item.CreatedBy
+		item.ActivatedAt = now
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		item.ID, item.GameSlug, item.Name, item.Version, stepsJSON, transitionsJSON, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
+	); err != nil {
+		return ScenarioPackage{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ScenarioPackage{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) getActiveScenarioPackageDB(ctx context.Context, gameSlug string) (ScenarioPackage, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return ScenarioPackage{}, err
+	}
+	key := strings.TrimSpace(gameSlug)
+	if key == "" {
+		key = "global"
+	}
+	item, err := scanScenarioPackage(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`, key))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ScenarioPackage{}, ErrScenarioPackageNotFound
+		}
+		return ScenarioPackage{}, err
 	}
 	return item, nil
 }

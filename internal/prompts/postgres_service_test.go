@@ -115,3 +115,79 @@ func TestPostgresServiceGetActiveRuleSet(t *testing.T) {
 		t.Fatalf("ExpectationsWereMet() error = %v", err)
 	}
 }
+
+func TestPostgresServiceCreateScenarioPackage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := NewPostgresService(db)
+	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenario_packages WHERE game_slug = $1`)).
+		WithArgs("global").
+		WillReturnRows(sqlmock.NewRows([]string{"next_version"}).AddRow(1))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM llm_scenario_packages WHERE game_slug = $1`)).
+		WithArgs("global").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:     "global-flow",
+		GameSlug: "global",
+		ActorID:  "admin-1",
+		Steps: []ScenarioStep{
+			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
+		},
+		Transitions: []ScenarioTransition{},
+	})
+	if err != nil {
+		t.Fatalf("CreateScenarioPackage() error = %v", err)
+	}
+	if !item.IsActive {
+		t.Fatal("expected first scenario package to be active")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("ExpectationsWereMet() error = %v", err)
+	}
+}
+
+func TestPostgresServiceGetActiveScenarioPackage(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := NewPostgresService(db)
+	now := time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC)
+	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS initial_state_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS state_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta(`ALTER TABLE llm_state_schema_versions ADD COLUMN IF NOT EXISTS delta_schema_json JSONB NOT NULL DEFAULT '{}'::jsonb`)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`)).
+		WithArgs("global").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("scenario-pkg-1", "global", "global-flow", 1, `[{"id":"game_detect","name":"Game detect","promptTemplate":"detect","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, true, "admin-1", "admin-1", now, now))
+
+	item, err := svc.GetActiveScenarioPackage(context.Background(), "global")
+	if err != nil {
+		t.Fatalf("GetActiveScenarioPackage() error = %v", err)
+	}
+	if item.ID != "scenario-pkg-1" {
+		t.Fatalf("GetActiveScenarioPackage() = %#v", item)
+	}
+	if len(item.Steps) != 1 || item.Steps[0].ID != "game_detect" {
+		t.Fatalf("unexpected steps: %#v", item.Steps)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("ExpectationsWereMet() error = %v", err)
+	}
+}
