@@ -409,6 +409,52 @@ func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit
 	return items
 }
 
+func (s *Service) GetLLMHistory(ctx context.Context, streamerID string, limit int) LLMHistory {
+	key := strings.TrimSpace(streamerID)
+	history := LLMHistory{
+		StreamerID:         key,
+		LatestStateUpdates: []LLMDecision{},
+		FinalDecisions:     []LLMDecision{},
+	}
+	if key == "" {
+		return history
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	items := s.ListAllLLMDecisions(ctx, key)
+	if len(items) == 0 {
+		return history
+	}
+
+	latestUpdates := make([]LLMDecision, 0, limit)
+	finals := make([]LLMDecision, 0, limit)
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if len(latestUpdates) < limit && strings.TrimSpace(item.UpdatedStateJSON) != "" {
+			latestUpdates = append(latestUpdates, item)
+		}
+		if len(finals) < limit && isFinalDecision(item) {
+			finals = append(finals, item)
+		}
+		if len(latestUpdates) >= limit && len(finals) >= limit {
+			break
+		}
+	}
+	history.LatestStateUpdates = latestUpdates
+	history.FinalDecisions = finals
+	return history
+}
+
+func isFinalDecision(item LLMDecision) bool {
+	if item.TransitionTerminal {
+		return true
+	}
+	outcome := strings.ToLower(strings.TrimSpace(item.FinalOutcome))
+	return outcome == "win" || outcome == "loss" || outcome == "draw" || outcome == "unknown"
+}
+
 func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus {
 	key := strings.TrimSpace(streamerID)
 	status := LLMStatus{StreamerID: key, State: "idle", LatestByStage: []LLMDecision{}}

@@ -265,6 +265,31 @@ paths:
                 $ref: '#/components/schemas/LLMDecision'
         default:
           $ref: '#/components/responses/Error'
+  /api/streamers/{streamerId}/llm-history:
+    get:
+      summary: Get latest state updates and final decisions for streamer tracker sessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Latest tracker state updates and terminal decisions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMHistory'
+        default:
+          $ref: '#/components/responses/Error'
 
   /api/admin/games:
     get:
@@ -1203,6 +1228,16 @@ components:
           type: string
         transitionTerminal:
           type: boolean
+        previousStateJson:
+          type: string
+        updatedStateJson:
+          type: string
+        evidenceDeltaJson:
+          type: string
+        conflictsJson:
+          type: string
+        finalOutcome:
+          type: string
     LLMDecision:
       type: object
       properties:
@@ -1267,6 +1302,19 @@ components:
         createdAt:
           type: string
           format: date-time
+    LLMHistory:
+      type: object
+      properties:
+        streamerId:
+          type: string
+        latestStateUpdates:
+          type: array
+          items:
+            $ref: '#/components/schemas/LLMDecision'
+        finalDecisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/LLMDecision'
     GameUpsertRequest:
       type: object
       required: [slug, title, status]
