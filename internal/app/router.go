@@ -164,6 +164,11 @@ type llmDecisionRecordRequest struct {
 	TransitionOutcome  string  `json:"transitionOutcome"`
 	TransitionToStep   string  `json:"transitionToStep"`
 	TransitionTerminal bool    `json:"transitionTerminal"`
+	PreviousStateJSON  string  `json:"previousStateJson"`
+	UpdatedStateJSON   string  `json:"updatedStateJson"`
+	EvidenceDeltaJSON  string  `json:"evidenceDeltaJson"`
+	ConflictsJSON      string  `json:"conflictsJson"`
+	FinalOutcome       string  `json:"finalOutcome"`
 }
 
 type stateFieldRequest struct {
@@ -593,6 +598,11 @@ func NewHandler(
 							TransitionOutcome:  req.TransitionOutcome,
 							TransitionToStep:   req.TransitionToStep,
 							TransitionTerminal: req.TransitionTerminal,
+							PreviousStateJSON:  req.PreviousStateJSON,
+							UpdatedStateJSON:   req.UpdatedStateJSON,
+							EvidenceDeltaJSON:  req.EvidenceDeltaJSON,
+							ConflictsJSON:      req.ConflictsJSON,
+							FinalOutcome:       req.FinalOutcome,
 						})
 						if err != nil {
 							writeError(w, http.StatusBadRequest, err.Error())
@@ -602,6 +612,21 @@ func NewHandler(
 					default:
 						w.WriteHeader(http.StatusMethodNotAllowed)
 					}
+				case "llm-history":
+					if r.Method != http.MethodGet {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					limit, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
+					if err != nil && r.URL.Query().Get("limit") != "" {
+						writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+						return
+					}
+					if limit < 0 {
+						writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+						return
+					}
+					writeJSON(w, http.StatusOK, streamersService.GetLLMHistory(r.Context(), streamerID, limit))
 				default:
 					writeError(w, http.StatusNotFound, "streamer route not found")
 				}

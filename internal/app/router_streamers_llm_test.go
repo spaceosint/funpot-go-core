@@ -143,3 +143,75 @@ func TestStreamerLLMDecisionCreateRejectsInvalidChunkTimestamp(t *testing.T) {
 		t.Fatalf("expected 400, got %d", res.Code)
 	}
 }
+
+func TestStreamerLLMHistoryReturnsLatestUpdatesAndFinals(t *testing.T) {
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		nil,
+		streamers.NewService(),
+		nil,
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	adminToken := buildToken(t, "admin-1")
+	firstBody, _ := json.Marshal(map[string]any{
+		"runId":            "run-1",
+		"stage":            "match_update",
+		"label":            "score_observed",
+		"confidence":       0.9,
+		"updatedStateJson": "{\"score\":\"8:5\"}",
+	})
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(firstBody))
+	firstReq.Header.Set("Authorization", "Bearer "+adminToken)
+	firstRes := httptest.NewRecorder()
+	handler.ServeHTTP(firstRes, firstReq)
+	if firstRes.Code != http.StatusCreated {
+		t.Fatalf("expected first decision 201, got %d", firstRes.Code)
+	}
+
+	secondBody, _ := json.Marshal(map[string]any{
+		"runId":              "run-1",
+		"stage":              "match_finalize",
+		"label":              "match_done",
+		"confidence":         0.95,
+		"updatedStateJson":   "{\"score\":\"13:10\"}",
+		"finalOutcome":       "win",
+		"transitionTerminal": true,
+	})
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(secondBody))
+	secondReq.Header.Set("Authorization", "Bearer "+adminToken)
+	secondRes := httptest.NewRecorder()
+	handler.ServeHTTP(secondRes, secondReq)
+	if secondRes.Code != http.StatusCreated {
+		t.Fatalf("expected second decision 201, got %d", secondRes.Code)
+	}
+
+	userToken := buildToken(t, "user-1")
+	historyReq := httptest.NewRequest(http.MethodGet, "/api/streamers/str-1/llm-history?limit=1", nil)
+	historyReq.Header.Set("Authorization", "Bearer "+userToken)
+	historyRes := httptest.NewRecorder()
+	handler.ServeHTTP(historyRes, historyReq)
+	if historyRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", historyRes.Code)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(historyRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode llm history: %v", err)
+	}
+	updates, ok := payload["latestStateUpdates"].([]any)
+	if !ok || len(updates) != 1 {
+		t.Fatalf("expected one latest state update, got %#v", payload["latestStateUpdates"])
+	}
+	finals, ok := payload["finalDecisions"].([]any)
+	if !ok || len(finals) != 1 {
+		t.Fatalf("expected one final decision, got %#v", payload["finalDecisions"])
+	}
+}
