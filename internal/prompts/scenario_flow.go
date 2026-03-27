@@ -16,6 +16,9 @@ var (
 	ErrScenarioStepNotFound    = errors.New("scenario step not found")
 	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
 	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
+	ErrInvalidScenarioFromStep = errors.New("scenario transition fromStepId must not be empty")
+	ErrInvalidScenarioToStep   = errors.New("scenario transition toStepId must not be empty")
 )
 
 type ScenarioStep struct {
@@ -60,6 +63,40 @@ type ScenarioPackageCreateRequest struct {
 	ActorID     string
 }
 
+func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) error {
+	if strings.TrimSpace(req.Name) == "" {
+		return ErrInvalidScenarioName
+	}
+	if len(req.Steps) == 0 {
+		return ErrInvalidScenarioPackage
+	}
+	seenSteps := make(map[string]struct{}, len(req.Steps))
+	for _, step := range req.Steps {
+		id := strings.TrimSpace(step.ID)
+		if id == "" {
+			return ErrInvalidScenarioStepID
+		}
+		seenSteps[id] = struct{}{}
+	}
+	for _, tr := range req.Transitions {
+		from := strings.TrimSpace(tr.FromStepID)
+		if from == "" {
+			return ErrInvalidScenarioFromStep
+		}
+		to := strings.TrimSpace(tr.ToStepID)
+		if to == "" {
+			return ErrInvalidScenarioToStep
+		}
+		if _, ok := seenSteps[from]; !ok {
+			return fmt.Errorf("%w: %s", ErrInvalidScenarioFromStep, from)
+		}
+		if _, ok := seenSteps[to]; !ok {
+			return fmt.Errorf("%w: %s", ErrInvalidScenarioToStep, to)
+		}
+	}
+	return nil
+}
+
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 	if s.db != nil {
 		items, err := s.listScenarioPackagesDB(ctx)
@@ -87,13 +124,8 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	if s.db != nil {
 		return s.createScenarioPackageDB(ctx, req)
 	}
-	if len(req.Steps) == 0 {
-		return ScenarioPackage{}, ErrInvalidScenarioPackage
-	}
-	for _, step := range req.Steps {
-		if strings.TrimSpace(step.ID) == "" {
-			return ScenarioPackage{}, ErrInvalidScenarioStepID
-		}
+	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
+		return ScenarioPackage{}, err
 	}
 	gameSlug := strings.TrimSpace(req.GameSlug)
 	if gameSlug == "" {
@@ -136,6 +168,126 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	}
 	s.scenarioPackages[gameSlug] = append(s.scenarioPackages[gameSlug], item)
 	return item, nil
+}
+
+func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPackage, error) {
+	if s.db != nil {
+		return s.getScenarioPackageDB(ctx, id)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	lookup := strings.TrimSpace(id)
+	for _, versions := range s.scenarioPackages {
+		for _, item := range versions {
+			if item.ID == lookup {
+				return item, nil
+			}
+		}
+	}
+	return ScenarioPackage{}, ErrScenarioPackageNotFound
+}
+
+func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
+	if s.db != nil {
+		return s.updateScenarioPackageDB(ctx, id, req)
+	}
+	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
+		return ScenarioPackage{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lookup := strings.TrimSpace(id)
+	targetGameSlug := strings.TrimSpace(req.GameSlug)
+	if targetGameSlug == "" {
+		targetGameSlug = "global"
+	}
+	for gameSlug, versions := range s.scenarioPackages {
+		for i, item := range versions {
+			if item.ID != lookup {
+				continue
+			}
+			updated := item
+			updated.Name = strings.TrimSpace(req.Name)
+			updated.GameSlug = targetGameSlug
+			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
+			updated.Transitions = append([]ScenarioTransition(nil), req.Transitions...)
+			now := time.Now().UTC()
+			for idx := range updated.Steps {
+				if updated.Steps[idx].CreatedAt.IsZero() {
+					updated.Steps[idx].CreatedAt = now
+				}
+				if updated.Steps[idx].Order <= 0 {
+					updated.Steps[idx].Order = idx + 1
+				}
+				if strings.TrimSpace(updated.Steps[idx].GameSlug) == "" {
+					updated.Steps[idx].GameSlug = targetGameSlug
+				}
+			}
+			if updated.GameSlug != gameSlug {
+				s.scenarioPackages[gameSlug] = append(versions[:i], versions[i+1:]...)
+				s.scenarioPackages[updated.GameSlug] = append(s.scenarioPackages[updated.GameSlug], updated)
+			} else {
+				versions[i] = updated
+				s.scenarioPackages[gameSlug] = versions
+			}
+			return updated, nil
+		}
+	}
+	return ScenarioPackage{}, ErrScenarioPackageNotFound
+}
+
+func (s *Service) DeleteScenarioPackage(ctx context.Context, id string) error {
+	if s.db != nil {
+		return s.deleteScenarioPackageDB(ctx, id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lookup := strings.TrimSpace(id)
+	for gameSlug, versions := range s.scenarioPackages {
+		for i, item := range versions {
+			if item.ID != lookup {
+				continue
+			}
+			s.scenarioPackages[gameSlug] = append(versions[:i], versions[i+1:]...)
+			if item.IsActive && len(s.scenarioPackages[gameSlug]) > 0 {
+				s.scenarioPackages[gameSlug][0].IsActive = true
+			}
+			return nil
+		}
+	}
+	return ErrScenarioPackageNotFound
+}
+
+func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID string) (ScenarioPackage, error) {
+	if s.db != nil {
+		return s.activateScenarioPackageDB(ctx, id, actorID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lookup := strings.TrimSpace(id)
+	for gameSlug, versions := range s.scenarioPackages {
+		active := -1
+		for i := range versions {
+			if versions[i].ID == lookup {
+				active = i
+				break
+			}
+		}
+		if active == -1 {
+			continue
+		}
+		now := time.Now().UTC()
+		for i := range versions {
+			versions[i].IsActive = i == active
+			if i == active {
+				versions[i].ActivatedAt = now
+				versions[i].ActivatedBy = strings.TrimSpace(actorID)
+			}
+		}
+		s.scenarioPackages[gameSlug] = versions
+		return versions[active], nil
+	}
+	return ScenarioPackage{}, ErrScenarioPackageNotFound
 }
 
 func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string) (ScenarioPackage, error) {

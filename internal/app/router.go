@@ -111,6 +111,39 @@ func ruleSetRequestToCreateRequest(req ruleSetCreateRequest, actorID string) pro
 	}
 }
 
+func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, actorID string) prompts.ScenarioPackageCreateRequest {
+	steps := make([]prompts.ScenarioStep, 0, len(req.Steps))
+	for _, step := range req.Steps {
+		steps = append(steps, prompts.ScenarioStep{
+			ID:                 step.ID,
+			Name:               step.Name,
+			GameSlug:           step.GameSlug,
+			Folder:             step.Folder,
+			EntryCondition:     step.EntryCondition,
+			PromptTemplate:     step.PromptTemplate,
+			ResponseSchemaJSON: step.ResponseSchemaJSON,
+			Initial:            step.Initial,
+			Order:              step.Order,
+		})
+	}
+	transitions := make([]prompts.ScenarioTransition, 0, len(req.Transitions))
+	for _, tr := range req.Transitions {
+		transitions = append(transitions, prompts.ScenarioTransition{
+			FromStepID: tr.FromStepID,
+			ToStepID:   tr.ToStepID,
+			Condition:  tr.Condition,
+			Priority:   tr.Priority,
+		})
+	}
+	return prompts.ScenarioPackageCreateRequest{
+		Name:        req.Name,
+		GameSlug:    req.GameSlug,
+		Steps:       steps,
+		Transitions: transitions,
+		ActorID:     actorID,
+	}
+}
+
 type configLimits struct {
 	VotePerMin int `json:"votePerMin"`
 }
@@ -213,6 +246,32 @@ type ruleSetCreateRequest struct {
 	Description       string                 `json:"description"`
 	RuleItems         []ruleItemRequest      `json:"ruleItems"`
 	FinalizationRules []ruleConditionRequest `json:"finalizationRules"`
+}
+
+type scenarioStepRequest struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	GameSlug           string `json:"gameSlug"`
+	Folder             string `json:"folder"`
+	EntryCondition     string `json:"entryCondition"`
+	PromptTemplate     string `json:"promptTemplate"`
+	ResponseSchemaJSON string `json:"responseSchemaJson"`
+	Initial            bool   `json:"initial"`
+	Order              int    `json:"order"`
+}
+
+type scenarioTransitionRequest struct {
+	FromStepID string `json:"fromStepId"`
+	ToStepID   string `json:"toStepId"`
+	Condition  string `json:"condition"`
+	Priority   int    `json:"priority"`
+}
+
+type scenarioPackageCreateRequest struct {
+	Name        string                      `json:"name"`
+	GameSlug    string                      `json:"gameSlug"`
+	Steps       []scenarioStepRequest       `json:"steps"`
+	Transitions []scenarioTransitionRequest `json:"transitions"`
 }
 
 type meResponse struct {
@@ -971,6 +1030,124 @@ func NewHandler(
 					if err := promptsService.DeleteRuleSet(r.Context(), path); err != nil {
 						status := http.StatusBadRequest
 						if errors.Is(err, prompts.ErrRuleSetNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/scenario-packages", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, promptsService.ListScenarioPackages(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req scenarioPackageCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := promptsService.CreateScenarioPackage(r.Context(), scenarioPackageRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/scenario-packages/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/llm/scenario-packages/"), "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "scenario package id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					id := strings.Trim(strings.TrimSuffix(path, "/activate"), "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := promptsService.ActivateScenarioPackage(r.Context(), id, claims.Subject)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioPackageNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					item, err := promptsService.GetScenarioPackage(r.Context(), path)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioPackageNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req scenarioPackageCreateRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := promptsService.UpdateScenarioPackage(r.Context(), path, scenarioPackageRequestToCreateRequest(req, claims.Subject))
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioPackageNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := promptsService.DeleteScenarioPackage(r.Context(), path); err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioPackageNotFound) {
 							status = http.StatusNotFound
 						}
 						writeError(w, status, err.Error())
