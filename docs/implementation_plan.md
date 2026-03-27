@@ -12,38 +12,11 @@ approximate sequencing, and validation criteria.
 - **Operational readiness first**: tracing, metrics, and idempotency are enabled
   before public exposure of new routes.
 
-## Priority Directive (current focus for agents)
-The highest-priority delivery for the next iteration is enabling continuous
-stream analysis immediately after a streamer is added:
-
-- Trigger background orchestration when a streamer is created/activated.
-- Capture stream fragments every **10 seconds** via Streamlink.
-- For each fragment, resolve the **active admin-managed state schema and prompt
-  package** from the database.
-- Treat each detected match as **one chat / one match session** with an explicit,
-  compact persisted state JSON passed back to the model on every update.
-- Replace narrative prompt chains with a **state-tracker loop**:
-  `previous_state + new_chunk -> updated_state`.
-- Let admins CRUD the tracked state fields, evidence fields, and finalization
-  rules so outcome logic is data-driven and auditable.
-- Explicitly delete or refactor the old detector/scenario-chain orchestration
-  codepaths so the runtime has a single tracker-based source of truth.
-- Persist state snapshots, evidence logs, final outcomes, and broadcast live
-  state updates to clients.
-
-### Priority checklist (must be tracked in status updates)
-- [x] Auto-start Streamlink analysis job after `POST /api/streamers` success.
-- [x] Provide a stop-tracking control path so clients can end per-streamer monitoring without restarting the service.
-- [x] Fixed 10-second capture cadence with lock/idempotency protections.
-- [x] Delete or refactor legacy detector/scenario-chain codepaths before enabling the new tracker flow in production.
-- [x] Persist the active state schema, rule set, and prompt package in the database with audit/version history.
-- [ ] Provide admin CRUD for tracked state fields, evidence categories, and finalization rules.
-- [ ] Resolve the active tracker configuration (state schema + prompts) from admin configuration.
-- [ ] Worker payload includes `previous_state`, prompt text, `state_schema`, runtime params, and the new chunk payload for each 10-second window.
-- [ ] Persist chunk metadata, LLM request/response refs, updated state snapshot, evidence delta, conflicts, and finalization outcome when available.
-- [ ] Publish realtime `LLM_MATCH_STATE_UPDATED` / `LLM_MATCH_FINALIZED` events and provide REST backfill/history.
-- [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
-- [ ] Add observability for chunk lag, state-update/finalization latency, conflict rate, unknown-outcome rate, and per-streamer failure rate.
+## Priority Directive (deprecated)
+The old "Priority Directive / Priority checklist" for stream analysis has been
+deprecated. Agents and contributors must use
+`docs/llm_stream_orchestration_plan.md` as the canonical source for current
+business logic and immediate backend scope.
 
 ## Milestones
 

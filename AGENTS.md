@@ -26,16 +26,15 @@ This repository contains the backend modular monolith for the FunPot Telegram Mi
 
 
 ## Priority Task for Agents (current)
-- Top priority: implement Streamlink-driven analysis after streamer onboarding.
-- Required target behavior:
-  1. After streamer is added, connect/start worker job automatically.
-  2. Download/capture stream chunks every 10 seconds.
-  3. Send each chunk to LLM with the active admin-created prompt.
-  4. Persist decisions and publish live status updates.
-- Keep your final checklist explicitly aligned with `docs/implementation_plan.md` M2.1 and the priority checklist.
+- Legacy "Priority Directive / Priority checklist" in `docs/implementation_plan.md` is deprecated and should no longer be used for planning.
+- Canonical business logic for stream orchestration is now `docs/llm_stream_orchestration_plan.md`.
+- Top priority: implement and align runtime behavior to the scenario-graph v2 model described in `docs/llm_stream_orchestration_plan.md`.
+- Keep your final checklist explicitly aligned with:
+  1. `docs/implementation_plan.md` milestone **M2.1**, and
+  2. `docs/llm_stream_orchestration_plan.md` (Goal, Canonical 3-level behavior, State + transitions, Immediate backend scope).
 
 ## Status Reporting
 - Every deliverable or follow-up task must include an explicit checklist in the final
   response that marks what has been completed (`[x]`) and what remains (`[ ]`).
 - Keep the checklist aligned with the implementation plan in `docs/implementation_plan.md`
-  so stakeholders can track progress across iterations.
+  and with `docs/llm_stream_orchestration_plan.md` so stakeholders can track progress across iterations.
