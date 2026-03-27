@@ -156,8 +156,8 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
 		t.Fatalf("expected second request to include continuation marker, got %s", requestBodies[1])
 	}
-	if !strings.Contains(requestBodies[1], "Active delta schema (apply on each chunk update):") {
-		t.Fatalf("expected second request to include active delta schema reminder, got %s", requestBodies[1])
+	if !strings.Contains(requestBodies[1], "Active state schema:") {
+		t.Fatalf("expected second request to include active state schema reminder, got %s", requestBodies[1])
 	}
 	if strings.Contains(requestBodies[1], "Previous persisted tracker state JSON:") {
 		t.Fatalf("expected second request to avoid re-sending full state, got %s", requestBodies[1])
@@ -462,7 +462,6 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 		Chunk:       ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
 		Prompt:      prompts.PromptVersion{Template: "Update the CS2 tracker state"},
 		StateSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
-		RuleSet:     `rule_set[CS2 rules v1]: rule_items=[{"fieldKey":"score.ct"}]`,
 	})
 	for _, fragment := range []string{
 		"Streamer ID: str-42",
@@ -473,8 +472,6 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 		"next_needed_evidence",
 		"Active state schema:",
 		"state_schema[CS2 v1]",
-		"Active rule set:",
-		"rule_set[CS2 rules v1]",
 	} {
 		if !strings.Contains(instruction, fragment) {
 			t.Fatalf("expected instruction to contain %q, got %s", fragment, instruction)
@@ -482,27 +479,24 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	}
 }
 
-func TestBuildGeminiContinuationInstructionIncludesActiveDeltaSchema(t *testing.T) {
+func TestBuildGeminiContinuationInstructionIncludesActiveStateSchema(t *testing.T) {
 	instruction := buildGeminiContinuationInstruction(StageRequest{
 		StreamerID:  "str-42",
 		Stage:       "match_update",
 		Chunk:       ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 10, 0, time.UTC)},
 		Prompt:      prompts.PromptVersion{Template: "Update the CS2 tracker state"},
 		StateSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
-		DeltaSchema: `delta_schema[CS2 v1]: {"type":"array","items":{"type":"object"}}`,
-		RuleSet:     `rule_set[CS2 rules v1]: rule_items=[{"fieldKey":"score.ct"}]`,
 	})
 	for _, fragment := range []string{
 		"Continue the existing match chat session.",
-		"Active delta schema (apply on each chunk update):",
-		`delta_schema[CS2 v1]: {"type":"array","items":{"type":"object"}}`,
+		"Active state schema:",
+		`state_schema[CS2 v1]: [{"key":"score.ct"}]`,
 	} {
 		if !strings.Contains(instruction, fragment) {
 			t.Fatalf("expected continuation instruction to contain %q, got %s", fragment, instruction)
 		}
 	}
 	for _, unexpected := range []string{
-		"Active state schema:",
 		"Active rule set:",
 		"Use this admin-managed tracker prompt as the source of truth",
 	} {

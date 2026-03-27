@@ -108,6 +108,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > `FUNPOT_GEMINI_CHAT_MAX_TOKENS` controls how long the backend keeps one
 > Gemini chat session alive per streamer before rotating to a new chat and
 > re-sending the tracker prompt + latest state bootstrap.
+>
+> Tracker request payloads are intentionally compact: each turn sends the active
+> `state_schema` plus chunk metadata/media, while `delta_schema` and `rule_set`
+> are no longer injected into every LLM request.
 
 Update this table whenever you introduce a new configuration surface.
 
@@ -195,9 +199,8 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/llm/state-schemas` / `POST /api/admin/llm/state-schemas` – admin CRUD for versioned match state schemas.
   - `stateSchemaJson` accepts a JSON Schema object that is passed to the tracker prompt as the strict expected LLM response contract.
   - `initialStateJson` can be used as a tracker bootstrap template: enum-like string placeholders such as `"competitive | faceit | unknown"` are normalized by runtime logic to a concrete value (`unknown` when present, otherwise the first option).
-- `GET /api/admin/llm/rule-sets` / `POST /api/admin/llm/rule-sets` – admin CRUD for update/finalization rules used by the tracker.
 - `GET /api/admin/llm/prompts` / `POST /api/admin/llm/prompts` – admin CRUD for match update/finalization prompt templates.
-- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/llm/rule-sets`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
+- When PostgreSQL is enabled, admin-managed tracker configuration (`/api/admin/llm/state-schemas`, `/api/admin/prompts`) is persisted in dedicated versioned tables and survives service restarts.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

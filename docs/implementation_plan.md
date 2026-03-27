@@ -18,8 +18,8 @@ stream analysis immediately after a streamer is added:
 
 - Trigger background orchestration when a streamer is created/activated.
 - Capture stream fragments every **10 seconds** via Streamlink.
-- For each fragment, resolve the **active admin-managed state schema, rule set,
-  and prompt package** from the database.
+- For each fragment, resolve the **active admin-managed state schema and prompt
+  package** from the database.
 - Treat each detected match as **one chat / one match session** with an explicit,
   compact persisted state JSON passed back to the model on every update.
 - Replace narrative prompt chains with a **state-tracker loop**:
@@ -38,8 +38,8 @@ stream analysis immediately after a streamer is added:
 - [x] Delete or refactor legacy detector/scenario-chain codepaths before enabling the new tracker flow in production.
 - [x] Persist the active state schema, rule set, and prompt package in the database with audit/version history.
 - [ ] Provide admin CRUD for tracked state fields, evidence categories, and finalization rules.
-- [ ] Resolve the active tracker configuration (schema + rules + prompts) from admin configuration.
-- [ ] Worker payload includes `previous_state`, prompt text, runtime params, and the new chunk payload for each 10-second window.
+- [ ] Resolve the active tracker configuration (state schema + prompts) from admin configuration.
+- [ ] Worker payload includes `previous_state`, prompt text, `state_schema`, runtime params, and the new chunk payload for each 10-second window.
 - [ ] Persist chunk metadata, LLM request/response refs, updated state snapshot, evidence delta, conflicts, and finalization outcome when available.
 - [ ] Publish realtime `LLM_MATCH_STATE_UPDATED` / `LLM_MATCH_FINALIZED` events and provide REST backfill/history.
 - [ ] Add retry/backoff + DLQ behavior for Streamlink and LLM failures.
