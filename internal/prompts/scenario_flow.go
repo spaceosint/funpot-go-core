@@ -55,6 +55,42 @@ type ScenarioPackage struct {
 	ActivatedAt time.Time            `json:"activatedAt,omitempty"`
 }
 
+type ScenarioGraphNode struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	GameSlug string `json:"gameSlug"`
+	Folder   string `json:"folder"`
+	Initial  bool   `json:"initial"`
+	Order    int    `json:"order"`
+	Level    int    `json:"level"`
+}
+
+type ScenarioGraphEdge struct {
+	ID         string `json:"id"`
+	FromStepID string `json:"fromStepId"`
+	ToStepID   string `json:"toStepId"`
+	Condition  string `json:"condition"`
+	Priority   int    `json:"priority"`
+}
+
+type ScenarioGraphGroup struct {
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	GameSlug string   `json:"gameSlug"`
+	Folder   string   `json:"folder"`
+	NodeIDs  []string `json:"nodeIds"`
+}
+
+type ScenarioPackageGraph struct {
+	PackageID   string               `json:"packageId"`
+	PackageName string               `json:"packageName"`
+	GameSlug    string               `json:"gameSlug"`
+	Version     int                  `json:"version"`
+	Nodes       []ScenarioGraphNode  `json:"nodes"`
+	Edges       []ScenarioGraphEdge  `json:"edges"`
+	Groups      []ScenarioGraphGroup `json:"groups"`
+}
+
 type ScenarioPackageCreateRequest struct {
 	Name        string
 	GameSlug    string
@@ -363,6 +399,110 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 		return next, next.ID != current, nil
 	}
 	return active, false, nil
+}
+
+func (p ScenarioPackage) BuildVisualGraph() ScenarioPackageGraph {
+	nodes := make([]ScenarioGraphNode, 0, len(p.Steps))
+	for _, step := range p.Steps {
+		nodes = append(nodes, ScenarioGraphNode{
+			ID:       step.ID,
+			Name:     step.Name,
+			GameSlug: step.GameSlug,
+			Folder:   step.Folder,
+			Initial:  step.Initial,
+			Order:    step.Order,
+			Level:    scenarioStepLevel(step),
+		})
+	}
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Level == nodes[j].Level {
+			if nodes[i].Order == nodes[j].Order {
+				return nodes[i].ID < nodes[j].ID
+			}
+			return nodes[i].Order < nodes[j].Order
+		}
+		return nodes[i].Level < nodes[j].Level
+	})
+
+	edges := make([]ScenarioGraphEdge, 0, len(p.Transitions))
+	for i, tr := range p.Transitions {
+		edges = append(edges, ScenarioGraphEdge{
+			ID:         "edge-" + strconv.Itoa(i+1),
+			FromStepID: tr.FromStepID,
+			ToStepID:   tr.ToStepID,
+			Condition:  tr.Condition,
+			Priority:   tr.Priority,
+		})
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].FromStepID == edges[j].FromStepID {
+			if edges[i].Priority == edges[j].Priority {
+				return edges[i].ToStepID < edges[j].ToStepID
+			}
+			return edges[i].Priority < edges[j].Priority
+		}
+		return edges[i].FromStepID < edges[j].FromStepID
+	})
+
+	groupsByKey := make(map[string]*ScenarioGraphGroup)
+	for _, node := range nodes {
+		groupFolder := strings.TrimSpace(node.Folder)
+		if groupFolder == "" {
+			groupFolder = "root"
+		}
+		groupGame := strings.TrimSpace(node.GameSlug)
+		if groupGame == "" {
+			groupGame = strings.TrimSpace(p.GameSlug)
+		}
+		if groupGame == "" {
+			groupGame = "global"
+		}
+		key := groupGame + "/" + groupFolder
+		group, ok := groupsByKey[key]
+		if !ok {
+			group = &ScenarioGraphGroup{
+				ID:       key,
+				Label:    key,
+				GameSlug: groupGame,
+				Folder:   groupFolder,
+				NodeIDs:  []string{},
+			}
+			groupsByKey[key] = group
+		}
+		group.NodeIDs = append(group.NodeIDs, node.ID)
+	}
+	groups := make([]ScenarioGraphGroup, 0, len(groupsByKey))
+	for _, group := range groupsByKey {
+		sort.Strings(group.NodeIDs)
+		groups = append(groups, *group)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].ID < groups[j].ID })
+
+	return ScenarioPackageGraph{
+		PackageID:   p.ID,
+		PackageName: p.Name,
+		GameSlug:    p.GameSlug,
+		Version:     p.Version,
+		Nodes:       nodes,
+		Edges:       edges,
+		Groups:      groups,
+	}
+}
+
+func scenarioStepLevel(step ScenarioStep) int {
+	folder := strings.Trim(strings.TrimSpace(step.Folder), "/")
+	if step.Initial {
+		return 1
+	}
+	if folder == "" {
+		return 1
+	}
+	parts := strings.Split(folder, "/")
+	level := 1 + len(parts)
+	if level < 1 {
+		return 1
+	}
+	return level
 }
 
 func evaluateCondition(condition string, payload map[string]any) (bool, error) {

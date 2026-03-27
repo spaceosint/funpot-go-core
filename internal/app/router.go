@@ -1110,6 +1110,24 @@ func NewHandler(
 					writeJSON(w, http.StatusOK, item)
 					return
 				}
+				if strings.HasSuffix(path, "/graph") {
+					id := strings.Trim(strings.TrimSuffix(path, "/graph"), "/")
+					if r.Method != http.MethodGet {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := promptsService.GetScenarioPackage(r.Context(), id)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrScenarioPackageNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item.BuildVisualGraph())
+					return
+				}
 				switch r.Method {
 				case http.MethodGet:
 					item, err := promptsService.GetScenarioPackage(r.Context(), path)
