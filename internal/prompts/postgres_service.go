@@ -153,18 +153,14 @@ func scanPrompt(row scanner) (PromptVersion, error) {
 func scanStateSchema(row scanner) (StateSchemaVersion, error) {
 	var item StateSchemaVersion
 	var fields []byte
-	var schemaJSON []byte
-	var deltaJSON []byte
 	var initialState []byte
 	var activatedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.GameSlug, &item.Name, &item.Description, &item.Version, &fields, &schemaJSON, &deltaJSON, &initialState, &item.IsActive, &item.CreatedBy, &item.ActivatedBy, &item.CreatedAt, &activatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.GameSlug, &item.Name, &item.Description, &item.Version, &fields, &initialState, &item.IsActive, &item.CreatedBy, &item.ActivatedBy, &item.CreatedAt, &activatedAt); err != nil {
 		return StateSchemaVersion{}, err
 	}
 	if err := json.Unmarshal(fields, &item.Fields); err != nil {
 		return StateSchemaVersion{}, err
 	}
-	item.StateSchemaJSON = strings.TrimSpace(string(schemaJSON))
-	item.DeltaSchemaJSON = strings.TrimSpace(string(deltaJSON))
 	item.InitialStateJSON = strings.TrimSpace(string(initialState))
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
@@ -347,7 +343,7 @@ func (s *Service) listStateSchemasDB(ctx context.Context) ([]StateSchemaVersion,
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions ORDER BY game_slug ASC, version DESC, created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions ORDER BY game_slug ASC, version DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -374,14 +370,6 @@ func (s *Service) createStateSchemaDB(ctx context.Context, req StateSchemaCreate
 	if err != nil {
 		return StateSchemaVersion{}, err
 	}
-	schemaJSONRaw := strings.TrimSpace(req.StateSchemaJSON)
-	if schemaJSONRaw == "" {
-		schemaJSONRaw = "{}"
-	}
-	deltaSchemaJSONRaw := strings.TrimSpace(req.DeltaSchemaJSON)
-	if deltaSchemaJSONRaw == "" {
-		deltaSchemaJSONRaw = "{}"
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return StateSchemaVersion{}, err
@@ -396,17 +384,24 @@ func (s *Service) createStateSchemaDB(ctx context.Context, req StateSchemaCreate
 		return StateSchemaVersion{}, err
 	}
 	now := time.Now().UTC()
-	item := StateSchemaVersion{ID: "state-schema-" + uuid.NewString(), GameSlug: gameSlug, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Version: version, Fields: append([]StateFieldDefinition(nil), req.Fields...), StateSchemaJSON: strings.TrimSpace(req.StateSchemaJSON), DeltaSchemaJSON: strings.TrimSpace(req.DeltaSchemaJSON), InitialStateJSON: strings.TrimSpace(req.InitialStateJSON), IsActive: existing == 0, CreatedBy: strings.TrimSpace(req.ActorID), CreatedAt: now}
+	item := StateSchemaVersion{
+		ID:               "state-schema-" + uuid.NewString(),
+		GameSlug:         gameSlug,
+		Name:             strings.TrimSpace(req.Name),
+		Description:      strings.TrimSpace(req.Description),
+		Version:          version,
+		Fields:           append([]StateFieldDefinition(nil), req.Fields...),
+		InitialStateJSON: buildInitialStateJSON(req.Fields),
+		IsActive:         existing == 0,
+		CreatedBy:        strings.TrimSpace(req.ActorID),
+		CreatedAt:        now,
+	}
 	if item.IsActive {
 		item.ActivatedBy = item.CreatedBy
 		item.ActivatedAt = now
 	}
-	initialStateRaw := strings.TrimSpace(req.InitialStateJSON)
-	if initialStateRaw == "" {
-		initialStateRaw = "{}"
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO llm_state_schema_versions (id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14)`,
-		item.ID, item.GameSlug, item.Name, item.Description, item.Version, fieldsJSON, schemaJSONRaw, deltaSchemaJSONRaw, initialStateRaw, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO llm_state_schema_versions (id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb,'{}'::jsonb,$7::jsonb,$8,$9,$10,$11,$12)`,
+		item.ID, item.GameSlug, item.Name, item.Description, item.Version, fieldsJSON, item.InitialStateJSON, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt))
 	if err != nil {
 		return StateSchemaVersion{}, err
 	}
@@ -420,7 +415,7 @@ func (s *Service) getStateSchemaDB(ctx context.Context, id string) (StateSchemaV
 	if err := s.ensureSchema(ctx); err != nil {
 		return StateSchemaVersion{}, err
 	}
-	item, err := scanStateSchema(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions WHERE id = $1`, strings.TrimSpace(id)))
+	item, err := scanStateSchema(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions WHERE id = $1`, strings.TrimSpace(id)))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return StateSchemaVersion{}, ErrStateSchemaNotFound
@@ -441,20 +436,9 @@ func (s *Service) updateStateSchemaDB(ctx context.Context, id string, req StateS
 	if err != nil {
 		return StateSchemaVersion{}, err
 	}
-	initialStateRaw := strings.TrimSpace(req.InitialStateJSON)
-	if initialStateRaw == "" {
-		initialStateRaw = "{}"
-	}
-	schemaJSONRaw := strings.TrimSpace(req.StateSchemaJSON)
-	if schemaJSONRaw == "" {
-		schemaJSONRaw = "{}"
-	}
-	deltaSchemaJSONRaw := strings.TrimSpace(req.DeltaSchemaJSON)
-	if deltaSchemaJSONRaw == "" {
-		deltaSchemaJSONRaw = "{}"
-	}
-	row := s.db.QueryRowContext(ctx, `UPDATE llm_state_schema_versions SET game_slug = $2, name = $3, description = $4, fields_json = $5, state_schema_json = $6::jsonb, delta_schema_json = $7::jsonb, initial_state_json = $8::jsonb WHERE id = $1 RETURNING id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at`,
-		strings.TrimSpace(id), strings.TrimSpace(req.GameSlug), strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), fieldsJSON, schemaJSONRaw, deltaSchemaJSONRaw, initialStateRaw)
+	initialStateRaw := buildInitialStateJSON(req.Fields)
+	row := s.db.QueryRowContext(ctx, `UPDATE llm_state_schema_versions SET game_slug = $2, name = $3, description = $4, fields_json = $5, state_schema_json = '{}'::jsonb, delta_schema_json = '{}'::jsonb, initial_state_json = $6::jsonb WHERE id = $1 RETURNING id, game_slug, name, description, version, fields_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at`,
+		strings.TrimSpace(id), strings.TrimSpace(req.GameSlug), strings.TrimSpace(req.Name), strings.TrimSpace(req.Description), fieldsJSON, initialStateRaw)
 	item, err := scanStateSchema(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -512,7 +496,7 @@ func (s *Service) activateStateSchemaDB(ctx context.Context, id, actorID string)
 	if _, err := tx.ExecContext(ctx, `UPDATE llm_state_schema_versions SET is_active = FALSE WHERE game_slug = $1`, gameSlug); err != nil {
 		return StateSchemaVersion{}, err
 	}
-	item, err := scanStateSchema(tx.QueryRowContext(ctx, `UPDATE llm_state_schema_versions SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 RETURNING id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at`,
+	item, err := scanStateSchema(tx.QueryRowContext(ctx, `UPDATE llm_state_schema_versions SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 RETURNING id, game_slug, name, description, version, fields_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at`,
 		strings.TrimSpace(id), strings.TrimSpace(actorID), time.Now().UTC()))
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -530,7 +514,7 @@ func (s *Service) getActiveStateSchemaDB(ctx context.Context, gameSlug string) (
 	if err := s.ensureSchema(ctx); err != nil {
 		return StateSchemaVersion{}, err
 	}
-	item, err := scanStateSchema(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, state_schema_json, delta_schema_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`, strings.TrimSpace(gameSlug)))
+	item, err := scanStateSchema(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, description, version, fields_json, initial_state_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_state_schema_versions WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`, strings.TrimSpace(gameSlug)))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return StateSchemaVersion{}, ErrStateSchemaNotFound

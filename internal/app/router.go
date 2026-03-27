@@ -71,29 +71,12 @@ func stateSchemaRequestToCreateRequest(req stateSchemaCreateRequest, actorID str
 		})
 	}
 	return prompts.StateSchemaCreateRequest{
-		GameSlug:         req.GameSlug,
-		Name:             req.Name,
-		Description:      req.Description,
-		Fields:           fields,
-		StateSchemaJSON:  normalizeInitialStateJSON(req.StateSchemaJSON),
-		InitialStateJSON: normalizeInitialStateJSON(req.InitialStateJSON),
-		ActorID:          actorID,
+		GameSlug:    req.GameSlug,
+		Name:        req.Name,
+		Description: req.Description,
+		Fields:      fields,
+		ActorID:     actorID,
 	}
-}
-
-func normalizeInitialStateJSON(raw json.RawMessage) string {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || strings.EqualFold(trimmed, "null") {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "\"") {
-		var decoded string
-		if err := json.Unmarshal(raw, &decoded); err == nil {
-			return strings.TrimSpace(decoded)
-		}
-		return ""
-	}
-	return trimmed
 }
 
 type configLimits struct {
@@ -164,12 +147,10 @@ type stateFieldRequest struct {
 }
 
 type stateSchemaCreateRequest struct {
-	GameSlug         string              `json:"gameSlug"`
-	Name             string              `json:"name"`
-	Description      string              `json:"description"`
-	Fields           []stateFieldRequest `json:"fields"`
-	StateSchemaJSON  json.RawMessage     `json:"stateSchemaJson"`
-	InitialStateJSON json.RawMessage     `json:"initialStateJson"`
+	GameSlug    string              `json:"gameSlug"`
+	Name        string              `json:"name"`
+	Description string              `json:"description"`
+	Fields      []stateFieldRequest `json:"fields"`
 }
 
 type meResponse struct {

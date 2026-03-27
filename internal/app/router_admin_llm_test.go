@@ -44,43 +44,6 @@ func TestAdminLLMStateSchemaRoutes(t *testing.T) {
 	if stateRes.Code != http.StatusCreated {
 		t.Fatalf("state schema create status = %d body=%s", stateRes.Code, stateRes.Body.String())
 	}
-	stateSchemaBodyWithInitialState, _ := json.Marshal(map[string]any{
-		"gameSlug":         "cs2",
-		"name":             "CS2 tracker with initial state",
-		"initialStateJson": `{"session_type":"single_match_single_chat","game":"cs2","session_status":{"value":"unknown"}}`,
-	})
-	stateInitialReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/state-schemas", bytes.NewReader(stateSchemaBodyWithInitialState))
-	stateInitialReq.Header.Set("Authorization", "Bearer "+adminToken)
-	stateInitialRes := httptest.NewRecorder()
-	handler.ServeHTTP(stateInitialRes, stateInitialReq)
-	if stateInitialRes.Code != http.StatusCreated {
-		t.Fatalf("state schema with initial state create status = %d body=%s", stateInitialRes.Code, stateInitialRes.Body.String())
-	}
-	stateSchemaBodyWithInitialStateObject, _ := json.Marshal(map[string]any{
-		"gameSlug": "cs2",
-		"name":     "CS2 tracker with object initial state",
-		"stateSchemaJson": map[string]any{
-			"type":                 "object",
-			"additionalProperties": false,
-			"properties": map[string]any{
-				"session_type": map[string]any{"type": "string"},
-			},
-		},
-		"initialStateJson": map[string]any{
-			"session_type": "single_match_single_chat",
-			"game":         "cs2",
-			"session_status": map[string]any{
-				"value": "unknown",
-			},
-		},
-	})
-	stateInitialObjectReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/state-schemas", bytes.NewReader(stateSchemaBodyWithInitialStateObject))
-	stateInitialObjectReq.Header.Set("Authorization", "Bearer "+adminToken)
-	stateInitialObjectRes := httptest.NewRecorder()
-	handler.ServeHTTP(stateInitialObjectRes, stateInitialObjectReq)
-	if stateInitialObjectRes.Code != http.StatusCreated {
-		t.Fatalf("state schema with object initial state create status = %d body=%s", stateInitialObjectRes.Code, stateInitialObjectRes.Body.String())
-	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/state-schemas", nil)
 	listReq.Header.Set("Authorization", "Bearer "+adminToken)

@@ -1283,43 +1283,32 @@ components:
           type: boolean
     StateSchemaCreateRequest:
       type: object
-      required: [gameSlug, name]
+      required: [gameSlug, name, fields]
       description: >
-        Admin-managed tracker schema definition. At least one of `fields` or
-        `stateSchemaJson` or `initialStateJson` must be provided.
+        Admin-managed tracker state definition.
+        The admin defines explicit state fields (`fields`) and the backend
+        derives a normalized tracker state template from those fields.
+        Raw JSON blobs (`stateSchemaJson`, `deltaSchemaJson`,
+        `initialStateJson`) are intentionally not part of the public contract.
       properties:
         gameSlug:
           type: string
+          description: Target game slug (for example `cs2`).
         name:
           type: string
+          description: Human-readable schema name shown in admin tooling.
         description:
           type: string
+          description: Optional notes for operators.
         fields:
           type: array
+          minItems: 1
+          description: >
+            Ordered list of tracked fields that describe the live match state.
+            Nested objects are expressed via dot notation in `key`
+            (for example `score.ct`).
           items:
             $ref: '#/components/schemas/StateFieldDefinition'
-        stateSchemaJson:
-          description: >
-            Full JSON schema for the persisted tracker state object.
-            Can be passed either as a JSON object or as a stringified JSON object.
-          oneOf:
-            - type: string
-            - type: object
-        initialStateJson:
-          description: >
-            Bootstrap state for tracker sessions when no persisted previous
-            state exists. Can be passed either as a JSON object or as a
-            stringified JSON object. Admin templates with enum-like strings
-            (for example `"ct | t | unknown"`) are accepted; runtime
-            normalization resolves them to a concrete value (prefers
-            `unknown`, otherwise the first option).
-          oneOf:
-            - type: string
-            - type: object
-      anyOf:
-        - required: [fields]
-        - required: [stateSchemaJson]
-        - required: [initialStateJson]
     StateSchemaVersion:
       allOf:
         - $ref: '#/components/schemas/StateSchemaCreateRequest'
