@@ -350,8 +350,6 @@ func geminiPromptFingerprint(input StageRequest) string {
 		strings.TrimSpace(input.Prompt.ID),
 		strings.TrimSpace(input.Prompt.Template),
 		strings.TrimSpace(input.StateSchema),
-		strings.TrimSpace(input.DeltaSchema),
-		strings.TrimSpace(input.RuleSet),
 	}, "|")
 }
 
@@ -402,10 +400,6 @@ Chunk reference: %s
 Use this admin-managed tracker prompt as the source of truth (including the expected JSON template):
 %s
 Active state schema:
-%s
-Active delta schema (apply on each chunk update):
-%s
-Active rule set:
 %s`
 	previousState := strings.TrimSpace(input.PreviousState)
 	if previousState == "" {
@@ -418,7 +412,7 @@ For detector stages, the JSON must include keys: label, confidence, summary.
 - label: short snake_case decision for this stage.
 - confidence: number between 0 and 1.
 - summary: short rationale.
-Do not include any keys that are not part of the admin-managed template.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.DeltaSchema), strings.TrimSpace(input.RuleSet)))
+Do not include any keys that are not part of the admin-managed template.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
 Previous persisted tracker state JSON:
@@ -457,7 +451,7 @@ Mandatory rules:
 5. If chunk stream appears cut during active gameplay, prefer session_status=likely_truncated.
 6. Preserve previously confirmed evidence unless clearly contradicted.
 7. Store contradictions in hard_conflicts instead of silently overwriting facts.
-8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), strings.TrimSpace(input.DeltaSchema), strings.TrimSpace(input.RuleSet), previousState))
+8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.StateSchema), previousState))
 }
 
 func buildGeminiContinuationInstruction(input StageRequest) string {
@@ -466,14 +460,14 @@ Stage: %s
 Streamer ID: %s
 Chunk captured at: %s
 Chunk reference: %s
-Active delta schema (apply on each chunk update):
+Active state schema:
 %s
 Do not repeat full state snapshots from earlier turns.
-Use only the active admin delta schema for this request and keep payload compact.
+Use only the active admin state schema for this request and keep payload compact.
 Return ONLY concrete changes discovered in this chunk and keep delta minimal.
 If there are no concrete changes, return updated_state with the current known state and an empty delta.
 Return JSON that matches the admin-managed JSON template and include only changed fields when possible.
-Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.DeltaSchema)))
+Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.StateSchema)))
 }
 
 func allowsEmptyChunk(stage string) bool {

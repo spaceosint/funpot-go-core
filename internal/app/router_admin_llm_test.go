@@ -14,7 +14,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
 
-func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
+func TestAdminLLMStateSchemaRoutes(t *testing.T) {
 	promptsService := prompts.NewService()
 	handler := NewHandler(
 		zap.NewNop(),
@@ -66,14 +66,6 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 				"session_type": map[string]any{"type": "string"},
 			},
 		},
-		"deltaSchemaJson": map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"new_evidence": map[string]any{
-					"type": "array",
-				},
-			},
-		},
 		"initialStateJson": map[string]any{
 			"session_type": "single_match_single_chat",
 			"game":         "cs2",
@@ -90,20 +82,6 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 		t.Fatalf("state schema with object initial state create status = %d body=%s", stateInitialObjectRes.Code, stateInitialObjectRes.Body.String())
 	}
 
-	ruleBody, _ := json.Marshal(map[string]any{
-		"gameSlug":          "cs2",
-		"name":              "CS2 rules",
-		"ruleItems":         []map[string]any{{"fieldKey": "score.ct", "operation": "set", "confidenceMode": "strict"}},
-		"finalizationRules": []map[string]any{{"priority": 1, "condition": "final_banner_seen", "action": "finalize_win"}},
-	})
-	ruleReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/rule-sets", bytes.NewReader(ruleBody))
-	ruleReq.Header.Set("Authorization", "Bearer "+adminToken)
-	ruleRes := httptest.NewRecorder()
-	handler.ServeHTTP(ruleRes, ruleReq)
-	if ruleRes.Code != http.StatusCreated {
-		t.Fatalf("rule set create status = %d body=%s", ruleRes.Code, ruleRes.Body.String())
-	}
-
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/state-schemas", nil)
 	listReq.Header.Set("Authorization", "Bearer "+adminToken)
 	listRes := httptest.NewRecorder()
@@ -118,15 +96,11 @@ func TestAdminLLMStateSchemaAndRuleSetRoutes(t *testing.T) {
 	if len(schemas) == 0 {
 		t.Fatal("expected non-empty state schema list")
 	}
-	if _, ok := schemas[0]["deltaSchemaJson"]; !ok {
-		t.Fatalf("expected deltaSchemaJson in response: %v", schemas[0])
-	}
-
 	ruleListReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/rule-sets", nil)
 	ruleListReq.Header.Set("Authorization", "Bearer "+adminToken)
 	ruleListRes := httptest.NewRecorder()
 	handler.ServeHTTP(ruleListRes, ruleListReq)
-	if ruleListRes.Code != http.StatusOK {
-		t.Fatalf("rule set list status = %d", ruleListRes.Code)
+	if ruleListRes.Code != http.StatusNoContent {
+		t.Fatalf("expected removed rule-set route to fall through (204), got %d body=%s", ruleListRes.Code, ruleListRes.Body.String())
 	}
 }
