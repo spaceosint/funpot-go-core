@@ -245,3 +245,56 @@ func TestPostgresServiceGetActiveScenarioPackage(t *testing.T) {
 		t.Fatalf("ExpectationsWereMet() error = %v", err)
 	}
 }
+
+func TestPostgresServiceUpdateScenarioPackageCrossGameDeactivates(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+
+	svc := NewPostgresService(db)
+	now := time.Date(2026, 3, 27, 13, 0, 0, 0, time.UTC)
+	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT game_slug, is_active, COALESCE(activated_by, ''), activated_at FROM llm_scenario_packages WHERE id = $1`)).
+		WithArgs("scenario-pkg-1").
+		WillReturnRows(sqlmock.NewRows([]string{"game_slug", "is_active", "activated_by", "activated_at"}).
+			AddRow("global", true, "admin-1", now))
+	mock.ExpectQuery(regexp.QuoteMeta(`UPDATE llm_scenario_packages
+			SET game_slug = $2,
+			    name = $3,
+			    steps_json = $4,
+			    transitions_json = $5,
+			    is_active = $6,
+			    activated_by = $7,
+			    activated_at = $8
+		 WHERE id = $1
+		 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`)).
+		WithArgs("scenario-pkg-1", "cs2", "cs2-flow", sqlmock.AnyArg(), sqlmock.AnyArg(), false, "", nil).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("scenario-pkg-1", "cs2", "cs2-flow", 1, `[{"id":"cs2_mode","name":"CS2 mode","gameSlug":"cs2","promptTemplate":"mode","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, false, "admin-1", "", now, nil))
+	mock.ExpectCommit()
+
+	item, err := svc.UpdateScenarioPackage(context.Background(), "scenario-pkg-1", ScenarioPackageCreateRequest{
+		Name:     "cs2-flow",
+		GameSlug: "cs2",
+		ActorID:  "admin-2",
+		Steps: []ScenarioStep{
+			{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: "{}", Initial: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateScenarioPackage() error = %v", err)
+	}
+	if item.IsActive {
+		t.Fatalf("expected moved package to be inactive: %#v", item)
+	}
+	if len(item.Steps) != 1 || item.Steps[0].GameSlug != "cs2" || item.Steps[0].Order != 1 {
+		t.Fatalf("expected normalized steps in updated package, got %#v", item.Steps)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("ExpectationsWereMet() error = %v", err)
+	}
+}

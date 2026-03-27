@@ -786,14 +786,6 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 	if gameSlug == "" {
 		gameSlug = "global"
 	}
-	stepsJSON, err := marshalJSON(req.Steps)
-	if err != nil {
-		return ScenarioPackage{}, err
-	}
-	transitionsJSON, err := marshalJSON(req.Transitions)
-	if err != nil {
-		return ScenarioPackage{}, err
-	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -810,12 +802,21 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 		return ScenarioPackage{}, err
 	}
 	now := time.Now().UTC()
+	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
+	stepsJSON, err := marshalJSON(normalizedSteps)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
+	transitionsJSON, err := marshalJSON(req.Transitions)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
 	item := ScenarioPackage{
 		ID:          "scenario-pkg-" + uuid.NewString(),
 		Name:        strings.TrimSpace(req.Name),
 		GameSlug:    gameSlug,
 		Version:     version,
-		Steps:       append([]ScenarioStep(nil), req.Steps...),
+		Steps:       normalizedSteps,
 		Transitions: append([]ScenarioTransition(nil), req.Transitions...),
 		IsActive:    existing == 0,
 		CreatedBy:   strings.TrimSpace(req.ActorID),
@@ -885,7 +886,30 @@ func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req Sc
 	if gameSlug == "" {
 		gameSlug = "global"
 	}
-	stepsJSON, err := marshalJSON(req.Steps)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ScenarioPackage{}, err
+	}
+	defer tx.Rollback()
+
+	var currentGameSlug string
+	var isActive bool
+	var activatedBy string
+	var activatedAt sql.NullTime
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT game_slug, is_active, COALESCE(activated_by, ''), activated_at FROM llm_scenario_packages WHERE id = $1`,
+		strings.TrimSpace(id),
+	).Scan(&currentGameSlug, &isActive, &activatedBy, &activatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return ScenarioPackage{}, ErrScenarioPackageNotFound
+		}
+		return ScenarioPackage{}, err
+	}
+
+	now := time.Now().UTC()
+	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
+	stepsJSON, err := marshalJSON(normalizedSteps)
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -893,19 +917,44 @@ func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req Sc
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
-	item, err := scanScenarioPackage(s.db.QueryRowContext(
+
+	nextIsActive := isActive
+	nextActivatedBy := strings.TrimSpace(activatedBy)
+	var nextActivatedAt any
+	if activatedAt.Valid {
+		nextActivatedAt = activatedAt.Time
+	}
+	if strings.TrimSpace(currentGameSlug) != gameSlug {
+		nextIsActive = false
+		nextActivatedBy = ""
+		nextActivatedAt = nil
+	}
+
+	item, err := scanScenarioPackage(tx.QueryRowContext(
 		ctx,
-		`UPDATE llm_scenario_packages SET game_slug = $2, name = $3, steps_json = $4, transitions_json = $5 WHERE id = $1 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`,
+		`UPDATE llm_scenario_packages
+			SET game_slug = $2,
+			    name = $3,
+			    steps_json = $4,
+			    transitions_json = $5,
+			    is_active = $6,
+			    activated_by = $7,
+			    activated_at = $8
+		 WHERE id = $1
+		 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`,
 		strings.TrimSpace(id),
 		gameSlug,
 		strings.TrimSpace(req.Name),
 		stepsJSON,
 		transitionsJSON,
+		nextIsActive,
+		nextActivatedBy,
+		nextActivatedAt,
 	))
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return ScenarioPackage{}, ErrScenarioPackageNotFound
-		}
+		return ScenarioPackage{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return ScenarioPackage{}, err
 	}
 	return item, nil
