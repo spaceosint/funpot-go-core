@@ -220,6 +220,55 @@ func TestWorkerProcessStreamerUsesScenarioPackageFirstStep(t *testing.T) {
 	}
 }
 
+func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePackage(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{
+				RunID:            "run-old",
+				StreamerID:       "str-1",
+				Stage:            "legacy_step",
+				Label:            "state_updated",
+				Confidence:       0.9,
+				UpdatedStateJSON: `{"game":"cs2"}`,
+			},
+		},
+	}
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		fakeClassifier{results: map[string]StageClassification{
+			"root_detect": {Label: "cs2_detected", Confidence: 0.99, UpdatedStateJSON: `{"game":"cs2"}`},
+		}},
+		fakePromptResolver{scenario: prompts.ScenarioPackage{
+			ID:       "scenario-v2",
+			GameSlug: "global",
+			Name:     "v2",
+			Steps: []prompts.ScenarioStep{
+				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			},
+			Transitions: []prompts.ScenarioTransition{
+				{FromStepID: "root_detect", ToStepID: "cs2_mode", Condition: `$.game == "cs2"`, Priority: 1},
+			},
+			IsActive: true,
+		}},
+		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
+	)
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-1")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got.Stage != "root_detect" {
+		t.Fatalf("stage = %q, want root_detect", got.Stage)
+	}
+	if len(decisions.items) != 2 {
+		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
+	}
+	if decisions.items[1].Stage != "root_detect" {
+		t.Fatalf("recorded stage = %q, want root_detect", decisions.items[1].Stage)
+	}
+}
+
 func TestWorkerProcessStageSkipsHistoryWhenStateDidNotChange(t *testing.T) {
 	decisions := &fakeDecisionStore{
 		items: []streamers.RecordDecisionRequest{
