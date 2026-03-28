@@ -1060,7 +1060,7 @@ components:
           nullable: true
     ScenarioStep:
       type: object
-      required: [id, name, promptTemplate, responseSchemaJson, initial, order]
+      required: [id, name, promptTemplate, model, responseSchemaJson, initial, order]
       properties:
         id:
           type: string
@@ -1074,6 +1074,9 @@ components:
           type: string
         promptTemplate:
           type: string
+        model:
+          type: string
+          description: LLM model used for this scenario step.
         responseSchemaJson:
           type: string
         initial:

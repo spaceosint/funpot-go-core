@@ -41,6 +41,7 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"name":               "Root detect",
 				"gameSlug":           "global",
 				"promptTemplate":     "detect",
+				"model":              "gemini-2.0-flash",
 				"responseSchemaJson": "{}",
 				"initial":            true,
 				"order":              1,
@@ -51,6 +52,7 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "cs2",
 				"folder":             "cs2",
 				"promptTemplate":     "mode",
+				"model":              "gemini-2.0-flash-lite",
 				"responseSchemaJson": "{}",
 				"order":              2,
 			},
@@ -74,6 +76,14 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	transitions, _ := created["transitions"].([]any)
 	if len(transitions) != 1 {
 		t.Fatalf("expected auto-generated transitions in response, got %#v", created["transitions"])
+	}
+	steps, _ := created["steps"].([]any)
+	if len(steps) != 2 {
+		t.Fatalf("expected created package steps, got %#v", created["steps"])
+	}
+	rootStep, _ := steps[0].(map[string]any)
+	if rootStep["model"] != "gemini-2.0-flash" {
+		t.Fatalf("expected root step model to round-trip, got %#v", rootStep["model"])
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/scenario-packages", nil)
@@ -119,6 +129,7 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"name":               "Root detect",
 				"gameSlug":           "global",
 				"promptTemplate":     "detect-v2",
+				"model":              "gemini-2.0-flash",
 				"responseSchemaJson": "{}",
 				"initial":            true,
 				"order":              1,
@@ -129,6 +140,7 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "cs2",
 				"folder":             "cs2",
 				"promptTemplate":     "mode-v2",
+				"model":              "gemini-2.5-flash",
 				"responseSchemaJson": "{}",
 				"order":              2,
 			},

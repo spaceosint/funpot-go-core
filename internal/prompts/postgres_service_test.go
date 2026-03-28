@@ -201,7 +201,7 @@ func TestPostgresServiceCreateScenarioPackage(t *testing.T) {
 		GameSlug: "global",
 		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
-			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
+			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true},
 		},
 	})
 	if err != nil {
@@ -280,7 +280,7 @@ func TestPostgresServiceUpdateScenarioPackageCrossGameDeactivates(t *testing.T) 
 		GameSlug: "cs2",
 		ActorID:  "admin-2",
 		Steps: []ScenarioStep{
-			{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: "{}", Initial: true},
+			{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: "{}", Initial: true},
 		},
 	})
 	if err != nil {
