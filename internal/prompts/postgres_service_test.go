@@ -192,16 +192,17 @@ func TestPostgresServiceCreateScenarioPackage(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM llm_scenario_packages WHERE game_slug = $1`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`)).
+	mock.ExpectExec(regexp.QuoteMeta(`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`)).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "global-flow",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "global-flow",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true},
+			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
 		},
 	})
 	if err != nil {
@@ -225,10 +226,10 @@ func TestPostgresServiceGetActiveScenarioPackage(t *testing.T) {
 	svc := NewPostgresService(db)
 	now := time.Date(2026, 3, 27, 12, 0, 0, 0, time.UTC)
 	mock.ExpectExec(regexp.QuoteMeta(trackerConfigDDL)).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`)).
 		WithArgs("global").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
-			AddRow("scenario-pkg-1", "global", "global-flow", 1, `[{"id":"game_detect","name":"Game detect","promptTemplate":"detect","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, true, "admin-1", "admin-1", now, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "llm_model_config_id", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("scenario-pkg-1", "global", "global-flow", 1, `[{"id":"game_detect","name":"Game detect","promptTemplate":"detect","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, "cfg-1", true, "admin-1", "admin-1", now, now))
 
 	item, err := svc.GetActiveScenarioPackage(context.Background(), "global")
 	if err != nil {
@@ -265,22 +266,24 @@ func TestPostgresServiceUpdateScenarioPackageCrossGameDeactivates(t *testing.T) 
 			    name = $3,
 			    steps_json = $4,
 			    transitions_json = $5,
-			    is_active = $6,
-			    activated_by = $7,
-			    activated_at = $8
+			    llm_model_config_id = $6,
+			    is_active = $7,
+			    activated_by = $8,
+			    activated_at = $9
 		 WHERE id = $1
-		 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`)).
-		WithArgs("scenario-pkg-1", "cs2", "cs2-flow", sqlmock.AnyArg(), sqlmock.AnyArg(), false, "", nil).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
-			AddRow("scenario-pkg-1", "cs2", "cs2-flow", 1, `[{"id":"cs2_mode","name":"CS2 mode","gameSlug":"cs2","promptTemplate":"mode","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, false, "admin-1", "", now, nil))
+		 RETURNING id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at`)).
+		WithArgs("scenario-pkg-1", "cs2", "cs2-flow", sqlmock.AnyArg(), sqlmock.AnyArg(), "cfg-2", false, "", nil).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "game_slug", "name", "version", "steps_json", "transitions_json", "llm_model_config_id", "is_active", "created_by", "activated_by", "created_at", "activated_at"}).
+			AddRow("scenario-pkg-1", "cs2", "cs2-flow", 1, `[{"id":"cs2_mode","name":"CS2 mode","gameSlug":"cs2","promptTemplate":"mode","responseSchemaJson":"{}","initial":true,"order":1}]`, `[]`, "cfg-2", false, "admin-1", "", now, nil))
 	mock.ExpectCommit()
 
 	item, err := svc.UpdateScenarioPackage(context.Background(), "scenario-pkg-1", ScenarioPackageCreateRequest{
-		Name:     "cs2-flow",
-		GameSlug: "cs2",
-		ActorID:  "admin-2",
+		Name:             "cs2-flow",
+		GameSlug:         "cs2",
+		ActorID:          "admin-2",
+		LLMModelConfigID: "cfg-2",
 		Steps: []ScenarioStep{
-			{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: "{}", Initial: true},
+			{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: "{}", Initial: true},
 		},
 	})
 	if err != nil {

@@ -65,17 +65,17 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 			Folder:             step.Folder,
 			EntryCondition:     step.EntryCondition,
 			PromptTemplate:     step.PromptTemplate,
-			Model:              step.Model,
 			ResponseSchemaJSON: step.ResponseSchemaJSON,
 			Initial:            step.Initial,
 			Order:              step.Order,
 		})
 	}
 	return prompts.ScenarioPackageCreateRequest{
-		Name:     req.Name,
-		GameSlug: req.GameSlug,
-		Steps:    steps,
-		ActorID:  actorID,
+		Name:             req.Name,
+		GameSlug:         req.GameSlug,
+		LLMModelConfigID: req.LLMModelConfigID,
+		Steps:            steps,
+		ActorID:          actorID,
 	}
 }
 
@@ -103,16 +103,43 @@ type scenarioStepRequest struct {
 	Folder             string `json:"folder"`
 	EntryCondition     string `json:"entryCondition"`
 	PromptTemplate     string `json:"promptTemplate"`
-	Model              string `json:"model"`
 	ResponseSchemaJSON string `json:"responseSchemaJson"`
 	Initial            bool   `json:"initial"`
 	Order              int    `json:"order"`
 }
 
 type scenarioPackageCreateRequest struct {
-	Name     string                `json:"name"`
-	GameSlug string                `json:"gameSlug"`
-	Steps    []scenarioStepRequest `json:"steps"`
+	Name             string                `json:"name"`
+	GameSlug         string                `json:"gameSlug"`
+	LLMModelConfigID string                `json:"llmModelConfigId"`
+	Steps            []scenarioStepRequest `json:"steps"`
+}
+
+type llmSettingsUpsertRequest struct {
+	Name          string  `json:"name"`
+	Model         string  `json:"model"`
+	Temperature   float64 `json:"temperature"`
+	MaxTokens     int     `json:"maxTokens"`
+	TimeoutMS     int     `json:"timeoutMs"`
+	RetryCount    int     `json:"retryCount"`
+	BackoffMS     int     `json:"backoffMs"`
+	CooldownMS    int     `json:"cooldownMs"`
+	MinConfidence float64 `json:"minConfidence"`
+}
+
+func llmSettingsRequestToModelConfigRequest(req llmSettingsUpsertRequest, actorID string) prompts.LLMModelConfigCreateRequest {
+	return prompts.LLMModelConfigCreateRequest{
+		Name:          req.Name,
+		Model:         req.Model,
+		Temperature:   req.Temperature,
+		MaxTokens:     req.MaxTokens,
+		TimeoutMS:     req.TimeoutMS,
+		RetryCount:    req.RetryCount,
+		BackoffMS:     req.BackoffMS,
+		CooldownMS:    req.CooldownMS,
+		MinConfidence: req.MinConfidence,
+		ActorID:       actorID,
+	}
 }
 
 type meResponse struct {
@@ -556,6 +583,126 @@ func NewHandler(
 		}
 
 		if promptsService != nil {
+			mux.Handle("/api/admin/llm/settings", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, promptsService.ListLLMModelConfigs(r.Context()))
+				case http.MethodPost:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req llmSettingsUpsertRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					created, err := promptsService.CreateLLMModelConfig(r.Context(), llmSettingsRequestToModelConfigRequest(req, claims.Subject))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusCreated, created)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
+			mux.Handle("/api/admin/llm/settings/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+
+				path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/llm/settings/"), "/")
+				if path == "" {
+					writeError(w, http.StatusBadRequest, "llm model config id is required")
+					return
+				}
+				if strings.HasSuffix(path, "/activate") {
+					id := strings.Trim(strings.TrimSuffix(path, "/activate"), "/")
+					if r.Method != http.MethodPost {
+						w.WriteHeader(http.StatusMethodNotAllowed)
+						return
+					}
+					item, err := promptsService.ActivateLLMModelConfig(r.Context(), id, claims.Subject)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrLLMModelConfigNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+					return
+				}
+
+				switch r.Method {
+				case http.MethodGet:
+					item, err := promptsService.GetLLMModelConfig(r.Context(), path)
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrLLMModelConfigNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req llmSettingsUpsertRequest
+					if err := json.Unmarshal(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					item, err := promptsService.UpdateLLMModelConfig(r.Context(), path, llmSettingsRequestToModelConfigRequest(req, claims.Subject))
+					if err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrLLMModelConfigNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					writeJSON(w, http.StatusOK, item)
+				case http.MethodDelete:
+					if err := promptsService.DeleteLLMModelConfig(r.Context(), path); err != nil {
+						status := http.StatusBadRequest
+						if errors.Is(err, prompts.ErrLLMModelConfigNotFound) {
+							status = http.StatusNotFound
+						}
+						writeError(w, status, err.Error())
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+
 			mux.Handle("/api/admin/llm/scenario-packages", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				claims, ok := auth.ClaimsFromContext(r.Context())
 				if !ok {
