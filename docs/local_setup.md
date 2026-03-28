@@ -43,7 +43,7 @@ FUNPOT_STREAMLINK_ENABLED=false
 FUNPOT_STREAMLINK_BINARY=streamlink
 FUNPOT_STREAMLINK_FFMPEG_BINARY=ffmpeg
 FUNPOT_STREAMLINK_QUALITY=1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best
-FUNPOT_STREAMLINK_CAPTURE_TIMEOUT=25s
+FUNPOT_STREAMLINK_CAPTURE_TIMEOUT=30s
 FUNPOT_STREAMLINK_OUTPUT_DIR=tmp/stream_chunks
 FUNPOT_STREAMLINK_URL_TEMPLATE=https://twitch.tv/%s
 FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT=5
@@ -88,15 +88,15 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > when Streamlink capture is enabled.
 
 > Scheduler cycle interval is aligned with `FUNPOT_STREAMLINK_CAPTURE_TIMEOUT`
-> (for example, `25s` timeout means one capture/LLM cycle every ~25 seconds)
+> (for example, `30s` timeout means one capture/LLM cycle every ~30 seconds)
 > and automatically starts the next cycle without an extra idle pause when
 > the previous capture overruns the window.
 >
 > Stream capture now runs as a long-lived Streamlink→FFmpeg pipeline per streamer
-> and cuts sequential ~25s segments continuously (`%09d.mp4`) to minimize boundary
+> and cuts sequential ~30s segments continuously (`%09d.mp4`) to minimize boundary
 > loss between chunks.
 >
-> Each ~25s chunk is analyzed immediately by the worker.
+> Each ~30s chunk is analyzed immediately by the worker.
 > In parallel, chunks are accumulated and merged via `ffmpeg -c copy` (no re-encoding)
 > into ~2-minute windows (`FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT` controls batch size),
 > then uploaded to Bunny Stream when Bunny credentials are configured.
