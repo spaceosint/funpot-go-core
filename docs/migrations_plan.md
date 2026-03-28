@@ -9,7 +9,13 @@
 > `migrations/0004_tracker_config.up.sql`, `migrations/0004_tracker_config.down.sql`,
 > `migrations/0005_llm_scenario_packages.up.sql`, `migrations/0005_llm_scenario_packages.down.sql`,
 > `migrations/0006_scenario_graph_v2_cleanup.up.sql`, `migrations/0006_scenario_graph_v2_cleanup.down.sql`,
-> `migrations/0007_remove_streamer_llm_decision_history.up.sql`, and `migrations/0007_remove_streamer_llm_decision_history.down.sql`.
+> `migrations/0007_remove_streamer_llm_decision_history.up.sql`,
+> `migrations/0007_remove_streamer_llm_decision_history.down.sql`,
+> `migrations/0008_llm_model_configs_and_scenario_binding.up.sql`, and
+> `migrations/0008_llm_model_configs_and_scenario_binding.down.sql`.
+>
+> Legacy duplicate-version migration files were removed so `golang-migrate`
+> sees a single `*.up.sql` and `*.down.sql` pair per version.
 
 1. Create core tables: `users`, `wallet_accounts`, `wallet_ledger`, `payments`, `streamers`, `games`, `events`, `votes`, `media_clips`, `prompts`, `config`, `referrals`, `idempotency`.
 2. Seed configuration values: `minViewers=100`, `starsRate`, `limits.votePerMin`, feature flags (`paymentsEnabled`, `referralsEnabled`, `mediaEnabled`, `adminEnabled`).
