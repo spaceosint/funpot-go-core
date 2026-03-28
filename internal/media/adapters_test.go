@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -102,7 +103,7 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	if !strings.Contains(joined, "https://twitch.tv/shroud") {
 		t.Fatalf("expected resolved channel in args, got %q", joined)
 	}
-	if !strings.Contains(joined, "--stream-segmented-duration 25") {
+	if !strings.Contains(joined, fmt.Sprintf("--stream-segmented-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
 		t.Fatalf("expected --stream-segmented-duration argument, got %q", joined)
 	}
 
@@ -168,10 +169,10 @@ func TestStreamlinkCaptureAdapterFallsBackToHLSDurationWhenStreamSegmentedUnsupp
 	}
 	first := strings.Join(runner.argsHistory[0], " ")
 	second := strings.Join(runner.argsHistory[1], " ")
-	if !strings.Contains(first, "--stream-segmented-duration 25") {
+	if !strings.Contains(first, fmt.Sprintf("--stream-segmented-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
 		t.Fatalf("first streamlink invocation = %q, want --stream-segmented-duration", first)
 	}
-	if !strings.Contains(second, "--hls-duration 25") {
+	if !strings.Contains(second, fmt.Sprintf("--hls-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
 		t.Fatalf("second streamlink invocation = %q, want --hls-duration", second)
 	}
 }
