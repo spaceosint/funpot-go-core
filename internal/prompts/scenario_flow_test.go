@@ -10,13 +10,14 @@ func TestScenarioPackageResolveStep(t *testing.T) {
 
 	svc := NewService()
 	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "cs2 flow",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "cs2 flow",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Order: 2},
-			{ID: "cs2_faceit", Name: "Faceit", Folder: "cs2/faceit", EntryCondition: "mode == faceit", PromptTemplate: "faceit", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Order: 3},
+			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "cs2_faceit", Name: "Faceit", Folder: "cs2/faceit", EntryCondition: "mode == faceit", PromptTemplate: "faceit", ResponseSchemaJSON: `{}`, Order: 3},
 		},
 	})
 	if err != nil {
@@ -155,11 +156,12 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 
 	svc := NewService()
 	created, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "global flow",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "global flow",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "root_detect", Name: "Root", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true},
+			{ID: "root_detect", Name: "Root", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
 		},
 	})
 	if err != nil {
@@ -170,11 +172,12 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 	}
 
 	updated, err := svc.UpdateScenarioPackage(context.Background(), created.ID, ScenarioPackageCreateRequest{
-		Name:     "cs2 flow",
-		GameSlug: "cs2",
-		ActorID:  "admin-1",
+		Name:             "cs2 flow",
+		GameSlug:         "cs2",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`},
+			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
 		},
 	})
 	if err != nil {
@@ -199,13 +202,14 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 
 	svc := NewService()
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "auto transitions",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "auto transitions",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "step_a", Name: "Step A", PromptTemplate: "a", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "step_b", Name: "Step B", PromptTemplate: "b", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
-			{ID: "step_c", Name: "Step C", PromptTemplate: "c", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Order: 3},
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_b", Name: "Step B", PromptTemplate: "b", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
+			{ID: "step_c", Name: "Step C", PromptTemplate: "c", ResponseSchemaJSON: `{}`, Order: 3},
 		},
 	})
 	if err != nil {
@@ -239,37 +243,39 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	}
 }
 
-func TestScenarioPackageCreateRequiresStepModelAndPreservesConfiguredValue(t *testing.T) {
+func TestScenarioPackageCreateRequiresModelConfigID(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
 	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "model defaults",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "config defaults",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "",
 		Steps: []ScenarioStep{
 			{ID: "step_missing_model", Name: "Missing model", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 		},
 	})
 	if err == nil {
-		t.Fatalf("expected missing model validation error")
+		t.Fatalf("expected missing llm model config validation error")
 	}
-	if err != ErrInvalidScenarioStepModel {
-		t.Fatalf("expected ErrInvalidScenarioStepModel, got %v", err)
+	if err != ErrInvalidScenarioModelID {
+		t.Fatalf("expected ErrInvalidScenarioModelID, got %v", err)
 	}
 
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "model configured",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "config configured",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: "cfg-1",
 		Steps: []ScenarioStep{
-			{ID: "step_custom_model", Name: "Custom model", PromptTemplate: "b", Model: "gemini-2.5-flash", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_custom_model", Name: "Custom model", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 		},
 	})
 	if err != nil {
 		t.Fatalf("create scenario package: %v", err)
 	}
-	if got := item.Steps[0].Model; got != "gemini-2.5-flash" {
-		t.Fatalf("expected custom model to be preserved, got %q", got)
+	if got := item.LLMModelConfigID; got != "cfg-1" {
+		t.Fatalf("expected llm model config id to be preserved, got %q", got)
 	}
 }

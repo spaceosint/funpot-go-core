@@ -18,6 +18,7 @@ type Service struct {
 	stateSchemas     map[string][]StateSchemaVersion
 	ruleSets         map[string][]RuleSetVersion
 	scenarioPackages map[string][]ScenarioPackage
+	modelConfigs     []LLMModelConfig
 	db               *sql.DB
 	schemaMu         sync.Mutex
 	schemaReady      bool
@@ -29,6 +30,7 @@ func NewService() *Service {
 		stateSchemas:     map[string][]StateSchemaVersion{},
 		ruleSets:         map[string][]RuleSetVersion{},
 		scenarioPackages: map[string][]ScenarioPackage{},
+		modelConfigs:     []LLMModelConfig{},
 	}
 }
 
@@ -38,6 +40,7 @@ func NewPostgresService(db *sql.DB) *Service {
 		stateSchemas:     map[string][]StateSchemaVersion{},
 		ruleSets:         map[string][]RuleSetVersion{},
 		scenarioPackages: map[string][]ScenarioPackage{},
+		modelConfigs:     []LLMModelConfig{},
 		db:               db,
 	}
 }

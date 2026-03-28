@@ -16,6 +16,21 @@ import (
 
 func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	promptsService := prompts.NewService()
+	cfg, err := promptsService.CreateLLMModelConfig(t.Context(), prompts.LLMModelConfigCreateRequest{
+		Name:          "default",
+		Model:         "gemini-2.5-flash",
+		Temperature:   0.2,
+		MaxTokens:     1024,
+		TimeoutMS:     4000,
+		RetryCount:    2,
+		BackoffMS:     300,
+		CooldownMS:    500,
+		MinConfidence: 0.7,
+		ActorID:       "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateLLMModelConfig() error = %v", err)
+	}
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
@@ -33,15 +48,15 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	adminToken := buildToken(t, "admin-1")
 
 	createBody, _ := json.Marshal(map[string]any{
-		"gameSlug": "global",
-		"name":     "default graph",
+		"gameSlug":         "global",
+		"name":             "default graph",
+		"llmModelConfigId": cfg.ID,
 		"steps": []map[string]any{
 			{
 				"id":                 "root_detect",
 				"name":               "Root detect",
 				"gameSlug":           "global",
 				"promptTemplate":     "detect",
-				"model":              "gemini-2.0-flash",
 				"responseSchemaJson": "{}",
 				"initial":            true,
 				"order":              1,
@@ -52,7 +67,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "cs2",
 				"folder":             "cs2",
 				"promptTemplate":     "mode",
-				"model":              "gemini-2.0-flash-lite",
 				"responseSchemaJson": "{}",
 				"order":              2,
 			},
@@ -81,11 +95,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	if len(steps) != 2 {
 		t.Fatalf("expected created package steps, got %#v", created["steps"])
 	}
-	rootStep, _ := steps[0].(map[string]any)
-	if rootStep["model"] != "gemini-2.0-flash" {
-		t.Fatalf("expected root step model to round-trip, got %#v", rootStep["model"])
-	}
-
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/scenario-packages", nil)
 	listReq.Header.Set("Authorization", "Bearer "+adminToken)
 	listRes := httptest.NewRecorder()
@@ -121,15 +130,15 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	}
 
 	updateBody, _ := json.Marshal(map[string]any{
-		"gameSlug": "global",
-		"name":     "default graph v2",
+		"gameSlug":         "global",
+		"name":             "default graph v2",
+		"llmModelConfigId": cfg.ID,
 		"steps": []map[string]any{
 			{
 				"id":                 "root_detect",
 				"name":               "Root detect",
 				"gameSlug":           "global",
 				"promptTemplate":     "detect-v2",
-				"model":              "gemini-2.0-flash",
 				"responseSchemaJson": "{}",
 				"initial":            true,
 				"order":              1,
@@ -140,7 +149,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "cs2",
 				"folder":             "cs2",
 				"promptTemplate":     "mode-v2",
-				"model":              "gemini-2.5-flash",
 				"responseSchemaJson": "{}",
 				"order":              2,
 			},
@@ -168,5 +176,103 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	handler.ServeHTTP(deleteRes, deleteReq)
 	if deleteRes.Code != http.StatusNoContent {
 		t.Fatalf("scenario package delete status = %d body=%s", deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestAdminLLMSettingsRoutes(t *testing.T) {
+	promptsService := prompts.NewService()
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		nil,
+		streamers.NewService(),
+		nil,
+		promptsService,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+	adminToken := buildToken(t, "admin-1")
+
+	createBody, _ := json.Marshal(map[string]any{
+		"name":          "Gemini Flash profile",
+		"model":         "gemini-2.5-flash",
+		"temperature":   0.2,
+		"maxTokens":     1024,
+		"timeoutMs":     4000,
+		"retryCount":    2,
+		"backoffMs":     300,
+		"cooldownMs":    500,
+		"minConfidence": 0.75,
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/settings", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createRes := httptest.NewRecorder()
+	handler.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("llm settings create status = %d body=%s", createRes.Code, createRes.Body.String())
+	}
+
+	var created map[string]any
+	if err := json.Unmarshal(createRes.Body.Bytes(), &created); err != nil {
+		t.Fatalf("llm settings create decode error = %v", err)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("expected created llm settings id, got %#v", created)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/settings", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("llm settings list status = %d body=%s", listRes.Code, listRes.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/settings/"+id, nil)
+	getReq.Header.Set("Authorization", "Bearer "+adminToken)
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("llm settings get status = %d body=%s", getRes.Code, getRes.Body.String())
+	}
+
+	updateBody, _ := json.Marshal(map[string]any{
+		"name":          "Gemini Pro profile",
+		"model":         "gemini-2.5-pro",
+		"temperature":   0.4,
+		"maxTokens":     2048,
+		"timeoutMs":     5000,
+		"retryCount":    3,
+		"backoffMs":     500,
+		"cooldownMs":    600,
+		"minConfidence": 0.8,
+	})
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/admin/llm/settings/"+id, bytes.NewReader(updateBody))
+	updateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	updateRes := httptest.NewRecorder()
+	handler.ServeHTTP(updateRes, updateReq)
+	if updateRes.Code != http.StatusOK {
+		t.Fatalf("llm settings update status = %d body=%s", updateRes.Code, updateRes.Body.String())
+	}
+
+	activateReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/settings/"+id+"/activate", nil)
+	activateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	activateRes := httptest.NewRecorder()
+	handler.ServeHTTP(activateRes, activateReq)
+	if activateRes.Code != http.StatusOK {
+		t.Fatalf("llm settings activate status = %d body=%s", activateRes.Code, activateRes.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/llm/settings/"+id, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteRes := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRes, deleteReq)
+	if deleteRes.Code != http.StatusNoContent {
+		t.Fatalf("llm settings delete status = %d body=%s", deleteRes.Code, deleteRes.Body.String())
 	}
 }

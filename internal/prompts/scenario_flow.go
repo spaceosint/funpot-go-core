@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	ErrScenarioPackageNotFound  = errors.New("scenario package not found")
-	ErrScenarioStepNotFound     = errors.New("scenario step not found")
-	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
-	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
-	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty")
-	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
+	ErrScenarioPackageNotFound = errors.New("scenario package not found")
+	ErrScenarioStepNotFound    = errors.New("scenario step not found")
+	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
+	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioModelID  = errors.New("scenario package llmModelConfigId must not be empty")
+	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
 )
 
 type ScenarioStep struct {
@@ -27,14 +27,11 @@ type ScenarioStep struct {
 	Folder             string    `json:"folder"`
 	EntryCondition     string    `json:"entryCondition,omitempty"`
 	PromptTemplate     string    `json:"promptTemplate"`
-	Model              string    `json:"model"`
 	ResponseSchemaJSON string    `json:"responseSchemaJson"`
 	Initial            bool      `json:"initial"`
 	Order              int       `json:"order"`
 	CreatedAt          time.Time `json:"createdAt"`
 }
-
-const DefaultScenarioStepModel = "gemini-2.0-flash"
 
 type ScenarioTransition struct {
 	FromStepID string `json:"fromStepId"`
@@ -44,17 +41,18 @@ type ScenarioTransition struct {
 }
 
 type ScenarioPackage struct {
-	ID          string               `json:"id"`
-	Name        string               `json:"name"`
-	Version     int                  `json:"version"`
-	GameSlug    string               `json:"gameSlug"`
-	IsActive    bool                 `json:"isActive"`
-	Steps       []ScenarioStep       `json:"steps"`
-	Transitions []ScenarioTransition `json:"transitions"`
-	CreatedBy   string               `json:"createdBy"`
-	ActivatedBy string               `json:"activatedBy,omitempty"`
-	CreatedAt   time.Time            `json:"createdAt"`
-	ActivatedAt time.Time            `json:"activatedAt,omitempty"`
+	ID               string               `json:"id"`
+	Name             string               `json:"name"`
+	Version          int                  `json:"version"`
+	GameSlug         string               `json:"gameSlug"`
+	LLMModelConfigID string               `json:"llmModelConfigId"`
+	IsActive         bool                 `json:"isActive"`
+	Steps            []ScenarioStep       `json:"steps"`
+	Transitions      []ScenarioTransition `json:"transitions"`
+	CreatedBy        string               `json:"createdBy"`
+	ActivatedBy      string               `json:"activatedBy,omitempty"`
+	CreatedAt        time.Time            `json:"createdAt"`
+	ActivatedAt      time.Time            `json:"activatedAt,omitempty"`
 }
 
 type ScenarioGraphNode struct {
@@ -94,10 +92,11 @@ type ScenarioPackageGraph struct {
 }
 
 type ScenarioPackageCreateRequest struct {
-	Name     string
-	GameSlug string
-	Steps    []ScenarioStep
-	ActorID  string
+	Name             string
+	GameSlug         string
+	LLMModelConfigID string
+	Steps            []ScenarioStep
+	ActorID          string
 }
 
 func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) error {
@@ -107,14 +106,14 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 	if len(req.Steps) == 0 {
 		return ErrInvalidScenarioPackage
 	}
+	if strings.TrimSpace(req.LLMModelConfigID) == "" {
+		return ErrInvalidScenarioModelID
+	}
 	seenSteps := make(map[string]struct{}, len(req.Steps))
 	for _, step := range req.Steps {
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
-		}
-		if strings.TrimSpace(step.Model) == "" {
-			return ErrInvalidScenarioStepModel
 		}
 		seenSteps[id] = struct{}{}
 	}
@@ -210,14 +209,15 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	s.counter++
 	version := len(s.scenarioPackages[gameSlug]) + 1
 	item := ScenarioPackage{
-		ID:          fmt.Sprintf("scenario-pkg-%d", s.counter),
-		Name:        strings.TrimSpace(req.Name),
-		Version:     version,
-		GameSlug:    gameSlug,
-		Steps:       append([]ScenarioStep(nil), req.Steps...),
-		Transitions: append([]ScenarioTransition(nil), normalizedTransitions...),
-		CreatedBy:   strings.TrimSpace(req.ActorID),
-		CreatedAt:   now,
+		ID:               fmt.Sprintf("scenario-pkg-%d", s.counter),
+		Name:             strings.TrimSpace(req.Name),
+		Version:          version,
+		GameSlug:         gameSlug,
+		LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
+		Steps:            append([]ScenarioStep(nil), req.Steps...),
+		Transitions:      append([]ScenarioTransition(nil), normalizedTransitions...),
+		CreatedBy:        strings.TrimSpace(req.ActorID),
+		CreatedAt:        now,
 	}
 	if len(s.scenarioPackages[gameSlug]) == 0 {
 		item.IsActive = true
@@ -271,6 +271,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated := item
 			updated.Name = strings.TrimSpace(req.Name)
 			updated.GameSlug = targetGameSlug
+			updated.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
 			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
 			updated.Transitions = append([]ScenarioTransition(nil), normalizedTransitions...)
 			if updated.GameSlug != gameSlug {

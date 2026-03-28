@@ -290,6 +290,121 @@ paths:
           description: Game deleted
         default:
           $ref: '#/components/responses/Error'
+  /api/admin/llm/settings:
+    get:
+      summary: List LLM model configs (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: LLM model configs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMModelConfigVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create LLM model config (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMModelConfigCreateRequest'
+      responses:
+        '201':
+          description: Created LLM model config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModelConfigVersion'
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/llm/settings/{settingsId}:
+    get:
+      summary: Get LLM model config (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: settingsId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: LLM model config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModelConfigVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update LLM model config (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: settingsId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMModelConfigCreateRequest'
+      responses:
+        '200':
+          description: Updated LLM model config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModelConfigVersion'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete LLM model config (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: settingsId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: LLM model config deleted
+        default:
+          $ref: '#/components/responses/Error'
+  /api/admin/llm/settings/{settingsId}/activate:
+    post:
+      summary: Activate LLM model config (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: settingsId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activated LLM model config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMModelConfigVersion'
+        default:
+          $ref: '#/components/responses/Error'
   /api/admin/llm/scenario-packages:
     get:
       summary: List LLM scenario packages (admin)
@@ -1058,9 +1173,64 @@ components:
           type: string
           format: date-time
           nullable: true
+    LLMModelConfigCreateRequest:
+      type: object
+      required: [name, model, temperature, maxTokens, timeoutMs, retryCount, backoffMs, cooldownMs, minConfidence]
+      properties:
+        name:
+          type: string
+        model:
+          type: string
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+        maxTokens:
+          type: integer
+          minimum: 1
+        timeoutMs:
+          type: integer
+          minimum: 1
+        retryCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+        backoffMs:
+          type: integer
+          minimum: 0
+        cooldownMs:
+          type: integer
+          minimum: 0
+        minConfidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+    LLMModelConfigVersion:
+      allOf:
+        - $ref: '#/components/schemas/LLMModelConfigCreateRequest'
+        - type: object
+          properties:
+            id:
+              type: string
+            isActive:
+              type: boolean
+            createdBy:
+              type: string
+            activatedBy:
+              type: string
+              nullable: true
+            createdAt:
+              type: string
+              format: date-time
+            activatedAt:
+              type: string
+              format: date-time
+              nullable: true
     ScenarioStep:
       type: object
-      required: [id, name, promptTemplate, model, responseSchemaJson, initial, order]
+      required: [id, name, promptTemplate, responseSchemaJson, initial, order]
       properties:
         id:
           type: string
@@ -1074,9 +1244,6 @@ components:
           type: string
         promptTemplate:
           type: string
-        model:
-          type: string
-          description: LLM model used for this scenario step.
         responseSchemaJson:
           type: string
         initial:
@@ -1099,11 +1266,13 @@ components:
           minimum: 1
     ScenarioPackageCreateRequest:
       type: object
-      required: [gameSlug, name, steps]
+      required: [gameSlug, name, llmModelConfigId, steps]
       properties:
         gameSlug:
           type: string
         name:
+          type: string
+        llmModelConfigId:
           type: string
         steps:
           type: array

@@ -29,10 +29,35 @@ CREATE TABLE IF NOT EXISTS llm_scenario_packages (
     CHECK (char_length(name) > 0),
     CHECK (version > 0)
 );
+ALTER TABLE llm_scenario_packages
+    ADD COLUMN IF NOT EXISTS llm_model_config_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_scenario_packages_active_game
     ON llm_scenario_packages (game_slug) WHERE is_active;
 CREATE INDEX IF NOT EXISTS idx_llm_scenario_packages_order
     ON llm_scenario_packages (game_slug ASC, version DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_scenario_packages_model_config
+    ON llm_scenario_packages (llm_model_config_id);
+CREATE TABLE IF NOT EXISTS llm_model_configs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    model TEXT NOT NULL,
+    temperature DOUBLE PRECISION NOT NULL,
+    max_tokens INTEGER NOT NULL,
+    timeout_ms INTEGER NOT NULL,
+    retry_count INTEGER NOT NULL,
+    backoff_ms INTEGER NOT NULL,
+    cooldown_ms INTEGER NOT NULL,
+    min_confidence DOUBLE PRECISION NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by TEXT NOT NULL,
+    activated_by TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL,
+    activated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_llm_model_configs_order
+    ON llm_model_configs (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_model_configs_single_active
+    ON llm_model_configs (is_active) WHERE is_active;
 `
 
 func (s *Service) ensureSchema(ctx context.Context) error {
@@ -134,6 +159,7 @@ func scanScenarioPackage(row scanner) (ScenarioPackage, error) {
 		&item.Version,
 		&steps,
 		&transitions,
+		&item.LLMModelConfigID,
 		&item.IsActive,
 		&item.CreatedBy,
 		&item.ActivatedBy,
@@ -147,6 +173,21 @@ func scanScenarioPackage(row scanner) (ScenarioPackage, error) {
 	}
 	if err := json.Unmarshal(transitions, &item.Transitions); err != nil {
 		return ScenarioPackage{}, err
+	}
+	if activatedAt.Valid {
+		item.ActivatedAt = activatedAt.Time
+	}
+	return item, nil
+}
+
+func scanLLMModelConfig(row scanner) (LLMModelConfig, error) {
+	var item LLMModelConfig
+	var activatedAt sql.NullTime
+	if err := row.Scan(
+		&item.ID, &item.Name, &item.Model, &item.Temperature, &item.MaxTokens, &item.TimeoutMS, &item.RetryCount, &item.BackoffMS, &item.CooldownMS, &item.MinConfidence,
+		&item.IsActive, &item.CreatedBy, &item.ActivatedBy, &item.CreatedAt, &activatedAt,
+	); err != nil {
+		return LLMModelConfig{}, err
 	}
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
@@ -758,7 +799,7 @@ func (s *Service) listScenarioPackagesDB(ctx context.Context) ([]ScenarioPackage
 	if err := s.ensureSchema(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages ORDER BY game_slug ASC, version DESC, created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages ORDER BY game_slug ASC, version DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -812,15 +853,16 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 		return ScenarioPackage{}, err
 	}
 	item := ScenarioPackage{
-		ID:          "scenario-pkg-" + uuid.NewString(),
-		Name:        strings.TrimSpace(req.Name),
-		GameSlug:    gameSlug,
-		Version:     version,
-		Steps:       normalizedSteps,
-		Transitions: append([]ScenarioTransition(nil), transitions...),
-		IsActive:    existing == 0,
-		CreatedBy:   strings.TrimSpace(req.ActorID),
-		CreatedAt:   now,
+		ID:               "scenario-pkg-" + uuid.NewString(),
+		Name:             strings.TrimSpace(req.Name),
+		GameSlug:         gameSlug,
+		Version:          version,
+		LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
+		Steps:            normalizedSteps,
+		Transitions:      append([]ScenarioTransition(nil), transitions...),
+		IsActive:         existing == 0,
+		CreatedBy:        strings.TrimSpace(req.ActorID),
+		CreatedAt:        now,
 	}
 	if item.IsActive {
 		item.ActivatedBy = item.CreatedBy
@@ -828,8 +870,8 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		item.ID, item.GameSlug, item.Name, item.Version, stepsJSON, transitionsJSON, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
+		`INSERT INTO llm_scenario_packages (id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		item.ID, item.GameSlug, item.Name, item.Version, stepsJSON, transitionsJSON, item.LLMModelConfigID, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
 	); err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -847,7 +889,7 @@ func (s *Service) getActiveScenarioPackageDB(ctx context.Context, gameSlug strin
 	if key == "" {
 		key = "global"
 	}
-	item, err := scanScenarioPackage(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`, key))
+	item, err := scanScenarioPackage(s.db.QueryRowContext(ctx, `SELECT id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE game_slug = $1 AND is_active = TRUE ORDER BY version DESC LIMIT 1`, key))
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return ScenarioPackage{}, ErrScenarioPackageNotFound
@@ -863,7 +905,7 @@ func (s *Service) getScenarioPackageDB(ctx context.Context, id string) (Scenario
 	}
 	item, err := scanScenarioPackage(s.db.QueryRowContext(
 		ctx,
-		`SELECT id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE id = $1`,
+		`SELECT id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at FROM llm_scenario_packages WHERE id = $1`,
 		strings.TrimSpace(id),
 	))
 	if err != nil {
@@ -937,16 +979,18 @@ func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req Sc
 			    name = $3,
 			    steps_json = $4,
 			    transitions_json = $5,
-			    is_active = $6,
-			    activated_by = $7,
-			    activated_at = $8
+			    llm_model_config_id = $6,
+			    is_active = $7,
+			    activated_by = $8,
+			    activated_at = $9
 		 WHERE id = $1
-		 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`,
+		 RETURNING id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at`,
 		strings.TrimSpace(id),
 		gameSlug,
 		strings.TrimSpace(req.Name),
 		stepsJSON,
 		transitionsJSON,
+		strings.TrimSpace(req.LLMModelConfigID),
 		nextIsActive,
 		nextActivatedBy,
 		nextActivatedAt,
@@ -1019,7 +1063,7 @@ func (s *Service) activateScenarioPackageDB(ctx context.Context, id, actorID str
 	}
 	item, err := scanScenarioPackage(tx.QueryRowContext(
 		ctx,
-		`UPDATE llm_scenario_packages SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 RETURNING id, game_slug, name, version, steps_json, transitions_json, is_active, created_by, activated_by, created_at, activated_at`,
+		`UPDATE llm_scenario_packages SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 RETURNING id, game_slug, name, version, steps_json, transitions_json, llm_model_config_id, is_active, created_by, activated_by, created_at, activated_at`,
 		strings.TrimSpace(id),
 		strings.TrimSpace(actorID),
 		time.Now().UTC(),
@@ -1032,6 +1076,137 @@ func (s *Service) activateScenarioPackageDB(ctx context.Context, id, actorID str
 	}
 	if err := tx.Commit(); err != nil {
 		return ScenarioPackage{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) listLLMModelConfigsDB(ctx context.Context) ([]LLMModelConfig, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at FROM llm_model_configs ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]LLMModelConfig, 0)
+	for rows.Next() {
+		item, err := scanLLMModelConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) createLLMModelConfigDB(ctx context.Context, req LLMModelConfigCreateRequest) (LLMModelConfig, error) {
+	if err := validateLLMModelConfigRequest(req); err != nil {
+		return LLMModelConfig{}, err
+	}
+	if err := s.ensureSchema(ctx); err != nil {
+		return LLMModelConfig{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LLMModelConfig{}, err
+	}
+	defer tx.Rollback()
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM llm_model_configs`).Scan(&existing); err != nil {
+		return LLMModelConfig{}, err
+	}
+	now := time.Now().UTC()
+	item := LLMModelConfig{ID: "llm-model-config-" + uuid.NewString(), Name: strings.TrimSpace(req.Name), Model: strings.TrimSpace(req.Model), Temperature: req.Temperature, MaxTokens: req.MaxTokens, TimeoutMS: req.TimeoutMS, RetryCount: req.RetryCount, BackoffMS: req.BackoffMS, CooldownMS: req.CooldownMS, MinConfidence: req.MinConfidence, IsActive: existing == 0, CreatedBy: strings.TrimSpace(req.ActorID), CreatedAt: now}
+	if item.IsActive {
+		item.ActivatedBy = item.CreatedBy
+		item.ActivatedAt = now
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model_configs (id, name, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, item.ID, item.Name, item.Model, item.Temperature, item.MaxTokens, item.TimeoutMS, item.RetryCount, item.BackoffMS, item.CooldownMS, item.MinConfidence, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt)); err != nil {
+		return LLMModelConfig{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return LLMModelConfig{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) getLLMModelConfigDB(ctx context.Context, id string) (LLMModelConfig, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return LLMModelConfig{}, err
+	}
+	item, err := scanLLMModelConfig(s.db.QueryRowContext(ctx, `SELECT id, name, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at FROM llm_model_configs WHERE id = $1`, strings.TrimSpace(id)))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return LLMModelConfig{}, ErrLLMModelConfigNotFound
+		}
+		return LLMModelConfig{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) updateLLMModelConfigDB(ctx context.Context, id string, req LLMModelConfigCreateRequest) (LLMModelConfig, error) {
+	if err := validateLLMModelConfigRequest(req); err != nil {
+		return LLMModelConfig{}, err
+	}
+	if err := s.ensureSchema(ctx); err != nil {
+		return LLMModelConfig{}, err
+	}
+	item, err := scanLLMModelConfig(s.db.QueryRowContext(ctx, `UPDATE llm_model_configs SET name = $2, model = $3, temperature = $4, max_tokens = $5, timeout_ms = $6, retry_count = $7, backoff_ms = $8, cooldown_ms = $9, min_confidence = $10 WHERE id = $1 RETURNING id, name, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at`, strings.TrimSpace(id), strings.TrimSpace(req.Name), strings.TrimSpace(req.Model), req.Temperature, req.MaxTokens, req.TimeoutMS, req.RetryCount, req.BackoffMS, req.CooldownMS, req.MinConfidence))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return LLMModelConfig{}, ErrLLMModelConfigNotFound
+		}
+		return LLMModelConfig{}, err
+	}
+	return item, nil
+}
+
+func (s *Service) deleteLLMModelConfigDB(ctx context.Context, id string) error {
+	if err := s.ensureSchema(ctx); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var wasActive bool
+	if err := tx.QueryRowContext(ctx, `DELETE FROM llm_model_configs WHERE id = $1 RETURNING is_active`, strings.TrimSpace(id)).Scan(&wasActive); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrLLMModelConfigNotFound
+		}
+		return err
+	}
+	if wasActive {
+		if _, err := tx.ExecContext(ctx, `UPDATE llm_model_configs SET is_active = TRUE WHERE id = (SELECT id FROM llm_model_configs ORDER BY created_at DESC LIMIT 1)`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Service) activateLLMModelConfigDB(ctx context.Context, id, actorID string) (LLMModelConfig, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return LLMModelConfig{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LLMModelConfig{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE llm_model_configs SET is_active = FALSE`); err != nil {
+		return LLMModelConfig{}, err
+	}
+	item, err := scanLLMModelConfig(tx.QueryRowContext(ctx, `UPDATE llm_model_configs SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 RETURNING id, name, model, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at`, strings.TrimSpace(id), strings.TrimSpace(actorID), time.Now().UTC()))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return LLMModelConfig{}, ErrLLMModelConfigNotFound
+		}
+		return LLMModelConfig{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return LLMModelConfig{}, err
 	}
 	return item, nil
 }
