@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	ErrScenarioPackageNotFound = errors.New("scenario package not found")
-	ErrScenarioStepNotFound    = errors.New("scenario step not found")
-	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
-	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
-	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
+	ErrScenarioPackageNotFound  = errors.New("scenario package not found")
+	ErrScenarioStepNotFound     = errors.New("scenario step not found")
+	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
+	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty")
+	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
 )
 
 type ScenarioStep struct {
@@ -26,11 +27,14 @@ type ScenarioStep struct {
 	Folder             string    `json:"folder"`
 	EntryCondition     string    `json:"entryCondition,omitempty"`
 	PromptTemplate     string    `json:"promptTemplate"`
+	Model              string    `json:"model"`
 	ResponseSchemaJSON string    `json:"responseSchemaJson"`
 	Initial            bool      `json:"initial"`
 	Order              int       `json:"order"`
 	CreatedAt          time.Time `json:"createdAt"`
 }
+
+const DefaultScenarioStepModel = "gemini-2.0-flash"
 
 type ScenarioTransition struct {
 	FromStepID string `json:"fromStepId"`
@@ -108,6 +112,9 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
+		}
+		if strings.TrimSpace(step.Model) == "" {
+			return ErrInvalidScenarioStepModel
 		}
 		seenSteps[id] = struct{}{}
 	}

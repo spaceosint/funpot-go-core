@@ -78,6 +78,7 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 			ID:                 stepID,
 			Name:               stepID,
 			PromptTemplate:     prompt.Template,
+			Model:              strings.TrimSpace(prompt.Model),
 			ResponseSchemaJSON: "{}",
 			Initial:            i == 0,
 			Order:              i + 1,
@@ -243,8 +244,8 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 			GameSlug: "global",
 			Name:     "v2",
 			Steps: []prompts.ScenarioStep{
-				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Order: 2},
 			},
 			Transitions: []prompts.ScenarioTransition{
 				{FromStepID: "root_detect", ToStepID: "cs2_mode", Condition: `$.game == "cs2"`, Priority: 1},

@@ -816,8 +816,11 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		ID:       step.ID,
 		Stage:    step.ID,
 		Template: step.PromptTemplate,
-		Model:    "scenario-graph",
+		Model:    strings.TrimSpace(step.Model),
 		IsActive: true,
+	}
+	if activePrompt.Model == "" {
+		activePrompt.Model = prompts.DefaultScenarioStepModel
 	}
 	stateSchema := w.resolveTrackerConfig(ctx)
 	result, err := w.classifyWithRetry(ctx, StageRequest{
