@@ -55,9 +55,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"order":              2,
 			},
 		},
-		"transitions": []map[string]any{
-			{"fromStepId": "root_detect", "toStepId": "cs2_mode", "condition": "game == 'cs2'", "priority": 1},
-		},
 	})
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/scenario-packages", bytes.NewReader(createBody))
 	createReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -73,6 +70,10 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	packageID, _ := created["id"].(string)
 	if packageID == "" {
 		t.Fatalf("expected created scenario package id, got %#v", created)
+	}
+	transitions, _ := created["transitions"].([]any)
+	if len(transitions) != 1 {
+		t.Fatalf("expected auto-generated transitions in response, got %#v", created["transitions"])
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/scenario-packages", nil)
@@ -131,9 +132,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"responseSchemaJson": "{}",
 				"order":              2,
 			},
-		},
-		"transitions": []map[string]any{
-			{"fromStepId": "root_detect", "toStepId": "cs2_mode", "condition": "game == 'cs2'", "priority": 1},
 		},
 	})
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/admin/llm/scenario-packages/"+packageID, bytes.NewReader(updateBody))

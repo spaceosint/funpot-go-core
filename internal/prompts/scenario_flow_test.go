@@ -15,12 +15,8 @@ func TestScenarioPackageResolveStep(t *testing.T) {
 		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
 			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
-			{ID: "cs2_faceit", Name: "Faceit", Folder: "cs2/faceit", PromptTemplate: "faceit", ResponseSchemaJSON: `{}`, Order: 3},
-		},
-		Transitions: []ScenarioTransition{
-			{FromStepID: "game_detect", ToStepID: "cs2_mode", Condition: "game == cs2", Priority: 1},
-			{FromStepID: "cs2_mode", ToStepID: "cs2_faceit", Condition: "mode == faceit", Priority: 1},
+			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "cs2_faceit", Name: "Faceit", Folder: "cs2/faceit", EntryCondition: "mode == faceit", PromptTemplate: "faceit", ResponseSchemaJSON: `{}`, Order: 3},
 		},
 	})
 	if err != nil {
@@ -170,5 +166,50 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 	}
 	if updated.Steps[0].CreatedAt.IsZero() {
 		t.Fatalf("expected normalized step createdAt to be set, got %#v", updated.Steps[0])
+	}
+}
+
+func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:     "auto transitions",
+		GameSlug: "global",
+		ActorID:  "admin-1",
+		Steps: []ScenarioStep{
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_b", Name: "Step B", PromptTemplate: "b", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
+			{ID: "step_c", Name: "Step C", PromptTemplate: "c", ResponseSchemaJSON: `{}`, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if len(item.Transitions) != 2 {
+		t.Fatalf("expected 2 auto transitions, got %#v", item.Transitions)
+	}
+	if item.Transitions[0].FromStepID != "step_a" || item.Transitions[0].ToStepID != "step_b" {
+		t.Fatalf("unexpected first transition: %#v", item.Transitions[0])
+	}
+	if item.Transitions[0].Condition != "mode == faceit" {
+		t.Fatalf("expected first auto transition condition from target step entryCondition, got %#v", item.Transitions[0])
+	}
+	if item.Transitions[1].FromStepID != "step_b" || item.Transitions[1].ToStepID != "step_c" {
+		t.Fatalf("unexpected second transition: %#v", item.Transitions[1])
+	}
+	step, entered, err := item.ResolveStep("step_a", `{"mode":"none"}`)
+	if err != nil {
+		t.Fatalf("resolve auto transition hold: %v", err)
+	}
+	if entered || step.ID != "step_a" {
+		t.Fatalf("expected stay on step_a until entry condition matches, got entered=%v step=%s", entered, step.ID)
+	}
+	step, entered, err = item.ResolveStep("step_a", `{"mode":"faceit"}`)
+	if err != nil {
+		t.Fatalf("resolve auto transition: %v", err)
+	}
+	if !entered || step.ID != "step_b" {
+		t.Fatalf("expected auto transition to step_b, got entered=%v step=%s", entered, step.ID)
 	}
 }

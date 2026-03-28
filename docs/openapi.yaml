@@ -1257,10 +1257,6 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/ScenarioStep'
-        transitions:
-          type: array
-          items:
-            $ref: '#/components/schemas/ScenarioTransition'
     ScenarioPackageVersion:
       allOf:
         - $ref: '#/components/schemas/ScenarioPackageCreateRequest'
@@ -1272,6 +1268,11 @@ components:
               type: integer
             isActive:
               type: boolean
+            transitions:
+              type: array
+              description: Auto-generated transitions derived from step ordering and target-step `entryCondition`.
+              items:
+                $ref: '#/components/schemas/ScenarioTransition'
             createdBy:
               type: string
             activatedBy:

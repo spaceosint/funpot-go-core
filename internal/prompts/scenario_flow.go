@@ -17,8 +17,6 @@ var (
 	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
 	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
 	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
-	ErrInvalidScenarioFromStep = errors.New("scenario transition fromStepId must not be empty")
-	ErrInvalidScenarioToStep   = errors.New("scenario transition toStepId must not be empty")
 )
 
 type ScenarioStep struct {
@@ -92,11 +90,10 @@ type ScenarioPackageGraph struct {
 }
 
 type ScenarioPackageCreateRequest struct {
-	Name        string
-	GameSlug    string
-	Steps       []ScenarioStep
-	Transitions []ScenarioTransition
-	ActorID     string
+	Name     string
+	GameSlug string
+	Steps    []ScenarioStep
+	ActorID  string
 }
 
 func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) error {
@@ -113,22 +110,6 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 			return ErrInvalidScenarioStepID
 		}
 		seenSteps[id] = struct{}{}
-	}
-	for _, tr := range req.Transitions {
-		from := strings.TrimSpace(tr.FromStepID)
-		if from == "" {
-			return ErrInvalidScenarioFromStep
-		}
-		to := strings.TrimSpace(tr.ToStepID)
-		if to == "" {
-			return ErrInvalidScenarioToStep
-		}
-		if _, ok := seenSteps[from]; !ok {
-			return fmt.Errorf("%w: %s", ErrInvalidScenarioFromStep, from)
-		}
-		if _, ok := seenSteps[to]; !ok {
-			return fmt.Errorf("%w: %s", ErrInvalidScenarioToStep, to)
-		}
 	}
 	return nil
 }
@@ -148,6 +129,31 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		}
 	}
 	return normalized
+}
+
+func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
+	if len(steps) < 2 {
+		return nil
+	}
+	ordered := make([]ScenarioStep, len(steps))
+	copy(ordered, steps)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Order == ordered[j].Order {
+			return ordered[i].ID < ordered[j].ID
+		}
+		return ordered[i].Order < ordered[j].Order
+	})
+	autowired := make([]ScenarioTransition, 0, len(ordered)-1)
+	for i := 0; i < len(ordered)-1; i++ {
+		next := ordered[i+1]
+		autowired = append(autowired, ScenarioTransition{
+			FromStepID: strings.TrimSpace(ordered[i].ID),
+			ToStepID:   strings.TrimSpace(next.ID),
+			Condition:  strings.TrimSpace(next.EntryCondition),
+			Priority:   1,
+		})
+	}
+	return autowired
 }
 
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
@@ -174,9 +180,6 @@ func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 }
 
 func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
-	if s.db != nil {
-		return s.createScenarioPackageDB(ctx, req)
-	}
 	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -184,13 +187,19 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	if gameSlug == "" {
 		gameSlug = "global"
 	}
+	now := time.Now().UTC()
+	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
+	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
+	req.Steps = normalizedSteps
+	if s.db != nil {
+		return s.createScenarioPackageDB(ctx, req, normalizedTransitions)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.scenarioPackages == nil {
 		s.scenarioPackages = map[string][]ScenarioPackage{}
 	}
-	now := time.Now().UTC()
 	s.counter++
 	version := len(s.scenarioPackages[gameSlug]) + 1
 	item := ScenarioPackage{
@@ -198,8 +207,8 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		Name:        strings.TrimSpace(req.Name),
 		Version:     version,
 		GameSlug:    gameSlug,
-		Steps:       normalizeScenarioSteps(req.Steps, gameSlug, now),
-		Transitions: append([]ScenarioTransition(nil), req.Transitions...),
+		Steps:       append([]ScenarioStep(nil), req.Steps...),
+		Transitions: append([]ScenarioTransition(nil), normalizedTransitions...),
 		CreatedBy:   strings.TrimSpace(req.ActorID),
 		CreatedAt:   now,
 	}
@@ -230,19 +239,23 @@ func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPa
 }
 
 func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
-	if s.db != nil {
-		return s.updateScenarioPackageDB(ctx, id, req)
-	}
 	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
 		return ScenarioPackage{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	lookup := strings.TrimSpace(id)
 	targetGameSlug := strings.TrimSpace(req.GameSlug)
 	if targetGameSlug == "" {
 		targetGameSlug = "global"
 	}
+	now := time.Now().UTC()
+	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
+	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
+	req.Steps = normalizedSteps
+	if s.db != nil {
+		return s.updateScenarioPackageDB(ctx, id, req, normalizedTransitions)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lookup := strings.TrimSpace(id)
 	for gameSlug, versions := range s.scenarioPackages {
 		for i, item := range versions {
 			if item.ID != lookup {
@@ -251,9 +264,8 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated := item
 			updated.Name = strings.TrimSpace(req.Name)
 			updated.GameSlug = targetGameSlug
-			now := time.Now().UTC()
-			updated.Steps = normalizeScenarioSteps(req.Steps, targetGameSlug, now)
-			updated.Transitions = append([]ScenarioTransition(nil), req.Transitions...)
+			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
+			updated.Transitions = append([]ScenarioTransition(nil), normalizedTransitions...)
 			if updated.GameSlug != gameSlug {
 				updated.IsActive = false
 				updated.ActivatedBy = ""

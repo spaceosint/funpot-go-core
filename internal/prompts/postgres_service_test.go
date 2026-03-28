@@ -203,7 +203,6 @@ func TestPostgresServiceCreateScenarioPackage(t *testing.T) {
 		Steps: []ScenarioStep{
 			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
 		},
-		Transitions: []ScenarioTransition{},
 	})
 	if err != nil {
 		t.Fatalf("CreateScenarioPackage() error = %v", err)
