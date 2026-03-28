@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,8 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 
 type fakePromptResolver struct {
 	prompts      []prompts.PromptVersion
+	scenario     prompts.ScenarioPackage
+	scenarioErr  error
 	activeSchema prompts.StateSchemaVersion
 	schemaErr    error
 }
@@ -51,6 +54,50 @@ func (f fakePromptResolver) ListActive(_ context.Context) []prompts.PromptVersio
 	out := make([]prompts.PromptVersion, len(f.prompts))
 	copy(out, f.prompts)
 	return out
+}
+
+func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string) (prompts.ScenarioPackage, error) {
+	if f.scenarioErr != nil {
+		return prompts.ScenarioPackage{}, f.scenarioErr
+	}
+	if len(f.scenario.Steps) > 0 {
+		return f.scenario, nil
+	}
+	if len(f.prompts) == 0 {
+		return prompts.ScenarioPackage{}, prompts.ErrScenarioPackageNotFound
+	}
+
+	steps := make([]prompts.ScenarioStep, 0, len(f.prompts))
+	transitions := make([]prompts.ScenarioTransition, 0, len(f.prompts)-1)
+	for i, prompt := range f.prompts {
+		stepID := strings.TrimSpace(prompt.Stage)
+		if stepID == "" {
+			stepID = "step_" + strconv.Itoa(i+1)
+		}
+		steps = append(steps, prompts.ScenarioStep{
+			ID:                 stepID,
+			Name:               stepID,
+			PromptTemplate:     prompt.Template,
+			ResponseSchemaJSON: "{}",
+			Initial:            i == 0,
+			Order:              i + 1,
+		})
+		if i > 0 {
+			transitions = append(transitions, prompts.ScenarioTransition{
+				FromStepID: steps[i-1].ID,
+				ToStepID:   stepID,
+				Condition:  "",
+			})
+		}
+	}
+	return prompts.ScenarioPackage{
+		ID:          "scenario-test",
+		GameSlug:    "global",
+		Name:        "generated",
+		Steps:       steps,
+		Transitions: transitions,
+		IsActive:    true,
+	}, nil
 }
 
 func (f fakePromptResolver) GetActiveStateSchema(_ context.Context, _ string) (prompts.StateSchemaVersion, error) {
@@ -141,7 +188,7 @@ func (s *countingRunStore) CreateRun(_ context.Context, streamerID string) (stri
 	return streamerID + "-run", nil
 }
 
-func TestWorkerProcessStreamerPrefersTrackerPromptsOverLegacyStages(t *testing.T) {
+func TestWorkerProcessStreamerUsesScenarioPackageFirstStep(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
@@ -162,14 +209,14 @@ func TestWorkerProcessStreamerPrefersTrackerPromptsOverLegacyStages(t *testing.T
 	if err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
-	if got.Stage != "match_finalize" || got.FinalOutcome != "" {
+	if got.Stage != "detector" || got.FinalOutcome != "" {
 		t.Fatalf("final decision = %#v", got)
 	}
-	if len(decisions.items) != 2 {
-		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
-	if decisions.items[0].Stage != "match_update" || decisions.items[1].Stage != "match_finalize" {
-		t.Fatalf("unexpected stage order: %#v", decisions.items)
+	if decisions.items[0].Stage != "detector" {
+		t.Fatalf("unexpected stage: %#v", decisions.items[0].Stage)
 	}
 }
 
@@ -243,11 +290,11 @@ func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
-	if got.Stage != "result" || got.Label != "win" {
+	if got.Stage != "detector" || got.Label != "cs_detected" {
 		t.Fatalf("final decision = %#v", got)
 	}
-	if len(decisions.items) != 3 {
-		t.Fatalf("recorded %d decisions, want 3", len(decisions.items))
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
 	if decisions.items[0].RequestRef == "" || decisions.items[0].ResponseRef == "" || decisions.items[0].ChunkCapturedAt.IsZero() {
 		t.Fatalf("expected request/response/chunk metadata, got %#v", decisions.items[0])
@@ -323,11 +370,11 @@ func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
 	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
 
-	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
+		t.Fatal("expected classifier retry exhaustion error")
 	}
-	if got := classifier.calls["custom"]; got != 2 {
-		t.Fatalf("classifier calls = %d, want 2", got)
+	if got := classifier.calls["custom"]; got != 1 {
+		t.Fatalf("classifier calls = %d, want 1", got)
 	}
 }
 
@@ -350,8 +397,8 @@ func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
 		t.Fatal("expected classifier retry exhaustion error")
 	}
-	if got := classifier.calls["custom"]; got != 2 {
-		t.Fatalf("classifier calls = %d, want 2", got)
+	if got := classifier.calls["custom"]; got != 1 {
+		t.Fatalf("classifier calls = %d, want 1", got)
 	}
 }
 
@@ -429,49 +476,24 @@ func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) 
 	}
 }
 
-func TestWorkerProcessStreamerRunsCloseCurrentSessionWhenStreamEnds(t *testing.T) {
-	decisions := &fakeDecisionStore{}
-	worker := NewWorker(
-		fakeCapture{err: ErrStreamlinkStreamEnded},
-		fakeClassifier{results: map[string]StageClassification{"close_current_session": {Label: "closure_evaluated", Confidence: 0.95, UpdatedStateJSON: `{"session_status":{"value":"likely_truncated"}}`}}},
-		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "close-1", Stage: "close_current_session", Position: 1, IsActive: true, Template: "close session state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
-		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
-	)
-
-	got, err := worker.ProcessStreamer(context.Background(), "str-ended")
-	if err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
-	}
-	if got.Stage != "close_current_session" {
-		t.Fatalf("stage = %q, want close_current_session", got.Stage)
-	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
-	}
-	if decisions.items[0].ChunkRef != "" {
-		t.Fatalf("chunkRef = %q, want empty for close_current_session", decisions.items[0].ChunkRef)
-	}
-}
-
-func TestWorkerProcessStreamerStillRunsWithoutLegacyScenarioResolver(t *testing.T) {
+func TestWorkerProcessStreamerFailsWhenScenarioPackageIsMissing(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
 			"match_update": {Label: "state_updated", Confidence: 0.98, UpdatedStateJSON: `{"match_status":"in_progress"}`},
 		}},
-		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
+		fakePromptResolver{
+			prompts:     []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}},
+			scenarioErr: prompts.ErrScenarioPackageNotFound,
+		},
 		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
 	)
-	got, err := worker.ProcessStreamer(context.Background(), "str-1")
-	if err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
+	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); !errors.Is(err, prompts.ErrScenarioPackageNotFound) {
+		t.Fatalf("ProcessStreamer() error = %v, want %v", err, prompts.ErrScenarioPackageNotFound)
 	}
-	if got.Stage != "match_update" || got.Label != "state_updated" {
-		t.Fatalf("final decision = %#v", got)
-	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
+	if len(decisions.items) != 0 {
+		t.Fatalf("recorded %d decisions, want 0", len(decisions.items))
 	}
 }
 

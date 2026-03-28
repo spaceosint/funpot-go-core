@@ -189,8 +189,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - When Streamlink reports that a Twitch URL has no playable streams (for example, the stream ended or is offline), the scheduler treats that cycle as a graceful skip instead of a hard worker failure and retries on the next 10-second window.
 - `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM match-session / state-tracker status for a streamer.
 - `DELETE /api/streamers/{streamerId}/tracking` – stops the active Streamlink/LLM tracking loop for a streamer and returns the updated `stopped` status so the client can disable the tracking button immediately.
-- When PostgreSQL is enabled, detailed LLM tracker history (`chunkRef`, prompt/runtime params, request/response refs, updated state snapshot, evidence delta, conflict data, finalization outcome) is persisted so `/api/streamers/{streamerId}/llm-decisions` and `/status` survive service restarts. Versioned migrations remain the canonical deployment path.
-- `GET /api/streamers/{streamerId}/llm-decisions?limit=` – returns recent state-update/finalization history for a streamer.
+- Decision history REST endpoints were removed as part of scenario-graph v2 cleanup; `/api/streamers/{streamerId}/status` remains the supported read model.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.

@@ -197,15 +197,8 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		}
 		if errors.Is(err, ErrStreamlinkStreamEnded) {
 			logger.Info("stream chunk capture skipped because stream has ended or is unavailable", zap.String("streamerID", id), zap.Error(err))
-			decision, closeErr := w.processCloseCurrentSession(ctx, id)
-			if closeErr != nil {
-				logger.Error("close_current_session processing failed", zap.String("streamerID", id), zap.Error(closeErr))
-				w.metrics.recordFailure(ctx, id, trackerStageClose)
-				w.metrics.recordCycle(ctx, id, "failed")
-				return streamers.LLMDecision{}, closeErr
-			}
 			w.metrics.recordCycle(ctx, id, "stream_unavailable")
-			return decision, nil
+			return streamers.LLMDecision{}, nil
 		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "capture")
@@ -243,78 +236,25 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	return lastDecision, nil
 }
 
-func (w *Worker) processCloseCurrentSession(ctx context.Context, streamerID string) (streamers.LLMDecision, error) {
-	activePrompts := filterTrackerPrompts(w.prompts.ListActive(ctx))
-	var closePrompt prompts.PromptVersion
-	for _, item := range activePrompts {
-		if strings.EqualFold(strings.TrimSpace(item.Stage), trackerStageClose) {
-			closePrompt = item
-			break
-		}
-	}
-	if strings.TrimSpace(closePrompt.Stage) == "" {
-		return streamers.LLMDecision{}, nil
-	}
-	runID, err := w.runs.CreateRun(ctx, streamerID)
-	if err != nil {
-		return streamers.LLMDecision{}, err
-	}
-	return w.processStage(ctx, runID, streamerID, ChunkRef{CapturedAt: time.Now().UTC()}, closePrompt)
-}
-
 func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID string, chunk ChunkRef) (streamers.LLMDecision, error) {
 	logger := w.logger
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
-	if resolver, ok := w.prompts.(activeScenarioPackageResolver); ok {
-		gameSlug := w.resolveGameSlug(ctx, streamerID)
-		pkg, err := resolver.GetActiveScenarioPackage(ctx, gameSlug)
-		if err == nil {
-			decision, runErr := w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg)
-			if runErr == nil {
-				return decision, nil
-			}
-			logger.Error("scenario package processing failed, fallback to legacy stages", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(runErr))
-		}
+	resolver, ok := w.prompts.(activeScenarioPackageResolver)
+	if !ok {
+		logger.Warn("scenario package resolver is not configured", zap.String("streamerID", streamerID))
+		return streamers.LLMDecision{}, prompts.ErrScenarioPackageNotFound
 	}
 
-	activePrompts := filterTrackerPrompts(w.prompts.ListActive(ctx))
-	if len(activePrompts) == 0 {
-		logger.Warn("no active prompts found for streamer processing", zap.String("streamerID", streamerID))
-		return streamers.LLMDecision{}, prompts.ErrNotFound
+	gameSlug := w.resolveGameSlug(ctx, streamerID)
+	pkg, err := resolver.GetActiveScenarioPackage(ctx, gameSlug)
+	if err != nil {
+		logger.Error("active scenario package lookup failed", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(err))
+		return streamers.LLMDecision{}, err
 	}
-	logger.Info("active prompts loaded for streamer processing", zap.String("streamerID", streamerID), zap.Int("promptCount", len(activePrompts)))
-
-	var lastDecision streamers.LLMDecision
-	for _, activePrompt := range activePrompts {
-		logger.Info("processing prompt stage", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.String("promptVersionID", activePrompt.ID))
-		decision, err := w.processStage(ctx, runID, streamerID, chunk, activePrompt)
-		if err != nil {
-			logger.Error("prompt stage processing failed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", activePrompt.Stage), zap.Error(err))
-			return streamers.LLMDecision{}, err
-		}
-		logger.Info("prompt stage processed", zap.String("streamerID", streamerID), zap.String("runID", runID), zap.String("stage", decision.Stage), zap.String("label", decision.Label), zap.Float64("confidence", decision.Confidence))
-		lastDecision = decision
-	}
-	return lastDecision, nil
-}
-
-func filterTrackerPrompts(items []prompts.PromptVersion) []prompts.PromptVersion {
-	if len(items) == 0 {
-		return nil
-	}
-	trackerOnly := make([]prompts.PromptVersion, 0, len(items))
-	for _, item := range items {
-		if isTrackerStage(item.Stage) {
-			trackerOnly = append(trackerOnly, item)
-		}
-	}
-	if len(trackerOnly) > 0 {
-		return trackerOnly
-	}
-	return items
+	return w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg)
 }
 
 func isTrackerStage(stage string) bool {
