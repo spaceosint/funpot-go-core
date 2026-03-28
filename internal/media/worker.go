@@ -792,11 +792,25 @@ func compactJSON(value any) string {
 }
 
 func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage) (streamers.LLMDecision, error) {
+	logger := w.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
 	latest := w.latestDecisionByStreamer(ctx, streamerID)
 	previousState := w.resolvePreviousState(ctx, streamerID)
 	step, entering, err := pkg.ResolveStep(latest.Stage, previousState)
 	if err != nil {
-		return streamers.LLMDecision{}, err
+		if errors.Is(err, prompts.ErrScenarioStepNotFound) && strings.TrimSpace(latest.Stage) != "" {
+			logger.Warn("current scenario step is missing in active package, restarting from initial step",
+				zap.String("streamerID", streamerID),
+				zap.String("missingStepID", latest.Stage),
+				zap.String("scenarioPackageID", pkg.ID),
+			)
+			step, entering, err = pkg.ResolveStep("", previousState)
+		}
+		if err != nil {
+			return streamers.LLMDecision{}, err
+		}
 	}
 	activePrompt := prompts.PromptVersion{
 		ID:       step.ID,
