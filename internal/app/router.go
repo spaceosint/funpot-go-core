@@ -95,35 +95,6 @@ type gameUpsertRequest struct {
 	Status      string   `json:"status"`
 }
 
-type llmDecisionRecordRequest struct {
-	RunID              string  `json:"runId"`
-	Stage              string  `json:"stage"`
-	Label              string  `json:"label"`
-	Confidence         float64 `json:"confidence"`
-	ChunkCapturedAt    string  `json:"chunkCapturedAt"`
-	PromptVersionID    string  `json:"promptVersionId"`
-	PromptText         string  `json:"promptText"`
-	Model              string  `json:"model"`
-	Temperature        float64 `json:"temperature"`
-	MaxTokens          int     `json:"maxTokens"`
-	TimeoutMS          int     `json:"timeoutMs"`
-	ChunkRef           string  `json:"chunkRef"`
-	RequestRef         string  `json:"requestRef"`
-	ResponseRef        string  `json:"responseRef"`
-	RawResponse        string  `json:"rawResponse"`
-	TokensIn           int     `json:"tokensIn"`
-	TokensOut          int     `json:"tokensOut"`
-	LatencyMS          int64   `json:"latencyMs"`
-	TransitionOutcome  string  `json:"transitionOutcome"`
-	TransitionToStep   string  `json:"transitionToStep"`
-	TransitionTerminal bool    `json:"transitionTerminal"`
-	PreviousStateJSON  string  `json:"previousStateJson"`
-	UpdatedStateJSON   string  `json:"updatedStateJson"`
-	EvidenceDeltaJSON  string  `json:"evidenceDeltaJson"`
-	ConflictsJSON      string  `json:"conflictsJson"`
-	FinalOutcome       string  `json:"finalOutcome"`
-}
-
 type scenarioStepRequest struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
@@ -464,96 +435,6 @@ func NewHandler(
 						return
 					}
 					writeJSON(w, http.StatusOK, streamersService.GetLLMStatus(r.Context(), streamerID))
-				case "llm-decisions":
-					switch r.Method {
-					case http.MethodGet:
-						limit, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
-						if err != nil && r.URL.Query().Get("limit") != "" {
-							writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-							return
-						}
-						if limit < 0 {
-							writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-							return
-						}
-						writeJSON(w, http.StatusOK, streamersService.ListLLMDecisions(r.Context(), streamerID, limit))
-					case http.MethodPost:
-						if !requireAdmin(w, r, adminService) {
-							writeError(w, http.StatusForbidden, "admin role is required")
-							return
-						}
-						defer r.Body.Close() //nolint:errcheck
-						body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-						if err != nil {
-							writeError(w, http.StatusBadRequest, "failed to read request body")
-							return
-						}
-						var req llmDecisionRecordRequest
-						if err := json.Unmarshal(body, &req); err != nil {
-							writeError(w, http.StatusBadRequest, "invalid request body")
-							return
-						}
-						var chunkCapturedAt time.Time
-						if strings.TrimSpace(req.ChunkCapturedAt) != "" {
-							parsed, err := time.Parse(time.RFC3339Nano, req.ChunkCapturedAt)
-							if err != nil {
-								writeError(w, http.StatusBadRequest, "chunkCapturedAt must be RFC3339 timestamp")
-								return
-							}
-							chunkCapturedAt = parsed
-						}
-						item, err := streamersService.RecordLLMDecision(r.Context(), streamers.RecordDecisionRequest{
-							RunID:              req.RunID,
-							StreamerID:         streamerID,
-							Stage:              req.Stage,
-							Label:              req.Label,
-							Confidence:         req.Confidence,
-							ChunkCapturedAt:    chunkCapturedAt,
-							PromptVersionID:    req.PromptVersionID,
-							PromptText:         req.PromptText,
-							Model:              req.Model,
-							Temperature:        req.Temperature,
-							MaxTokens:          req.MaxTokens,
-							TimeoutMS:          req.TimeoutMS,
-							ChunkRef:           req.ChunkRef,
-							RequestRef:         req.RequestRef,
-							ResponseRef:        req.ResponseRef,
-							RawResponse:        req.RawResponse,
-							TokensIn:           req.TokensIn,
-							TokensOut:          req.TokensOut,
-							LatencyMS:          req.LatencyMS,
-							TransitionOutcome:  req.TransitionOutcome,
-							TransitionToStep:   req.TransitionToStep,
-							TransitionTerminal: req.TransitionTerminal,
-							PreviousStateJSON:  req.PreviousStateJSON,
-							UpdatedStateJSON:   req.UpdatedStateJSON,
-							EvidenceDeltaJSON:  req.EvidenceDeltaJSON,
-							ConflictsJSON:      req.ConflictsJSON,
-							FinalOutcome:       req.FinalOutcome,
-						})
-						if err != nil {
-							writeError(w, http.StatusBadRequest, err.Error())
-							return
-						}
-						writeJSON(w, http.StatusCreated, item)
-					default:
-						w.WriteHeader(http.StatusMethodNotAllowed)
-					}
-				case "llm-history":
-					if r.Method != http.MethodGet {
-						w.WriteHeader(http.StatusMethodNotAllowed)
-						return
-					}
-					limit, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit")))
-					if err != nil && r.URL.Query().Get("limit") != "" {
-						writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-						return
-					}
-					if limit < 0 {
-						writeError(w, http.StatusBadRequest, "limit must be a positive integer")
-						return
-					}
-					writeJSON(w, http.StatusOK, streamersService.GetLLMHistory(r.Context(), streamerID, limit))
 				default:
 					writeError(w, http.StatusNotFound, "streamer route not found")
 				}

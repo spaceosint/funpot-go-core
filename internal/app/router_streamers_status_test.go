@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -31,30 +30,12 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 		ClientConfigResponse{},
 	)
 
-	adminToken := buildToken(t, "admin-1")
-	for _, payload := range []map[string]any{
-		{
-			"runId":           "run-1",
-			"stage":           "detector",
-			"label":           "cs_detected",
-			"confidence":      0.94,
-			"promptVersionId": "prompt-a",
-		},
-		{
-			"runId":           "run-1",
-			"stage":           "ranked_mode",
-			"label":           "competitive",
-			"confidence":      0.77,
-			"promptVersionId": "prompt-b",
-		},
+	for _, req := range []streamers.RecordDecisionRequest{
+		{RunID: "run-1", StreamerID: "str-1", Stage: "detector", Label: "cs_detected", Confidence: 0.94, PromptVersionID: "prompt-a"},
+		{RunID: "run-1", StreamerID: "str-1", Stage: "ranked_mode", Label: "competitive", Confidence: 0.77, PromptVersionID: "prompt-b"},
 	} {
-		body, _ := json.Marshal(payload)
-		req := httptest.NewRequest(http.MethodPost, "/api/streamers/str-1/llm-decisions", bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		res := httptest.NewRecorder()
-		handler.ServeHTTP(res, req)
-		if res.Code != http.StatusCreated {
-			t.Fatalf("expected 201, got %d", res.Code)
+		if _, err := streamersService.RecordLLMDecision(context.Background(), req); err != nil {
+			t.Fatalf("RecordLLMDecision() error = %v", err)
 		}
 	}
 

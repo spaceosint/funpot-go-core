@@ -213,83 +213,6 @@ paths:
                 $ref: '#/components/schemas/LLMStatus'
         default:
           $ref: '#/components/responses/Error'
-  /api/streamers/{streamerId}/llm-decisions:
-    get:
-      summary: List latest LLM state updates/finalizations for streamer
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: streamerId
-          required: true
-          schema:
-            type: string
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-      responses:
-        '200':
-          description: Match-tracker history ordered by latest first
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/LLMDecision'
-        default:
-          $ref: '#/components/responses/Error'
-    post:
-      summary: Record LLM tracker update/finalization for streamer (admin)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: streamerId
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LLMDecisionRecordRequest'
-      responses:
-        '201':
-          description: Recorded LLM tracker entry
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LLMDecision'
-        default:
-          $ref: '#/components/responses/Error'
-  /api/streamers/{streamerId}/llm-history:
-    get:
-      summary: Get latest state updates and final decisions for streamer tracker sessions
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: path
-          name: streamerId
-          required: true
-          schema:
-            type: string
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-      responses:
-        '200':
-          description: Latest tracker state updates and terminal decisions
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LLMHistory'
-        default:
-          $ref: '#/components/responses/Error'
 
   /api/admin/games:
     get:
@@ -1030,66 +953,6 @@ components:
           items:
             $ref: '#/components/schemas/LLMDecision'
 
-    LLMDecisionRecordRequest:
-      type: object
-      required: [runId, stage, label, confidence]
-      properties:
-        runId:
-          type: string
-        stage:
-          type: string
-          description: Tracker stage, for example `match_update`, `match_finalize`, or `match_discovery`.
-        label:
-          type: string
-        confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-        chunkCapturedAt:
-          type: string
-          format: date-time
-        promptVersionId:
-          type: string
-        promptText:
-          type: string
-        model:
-          type: string
-        temperature:
-          type: number
-        maxTokens:
-          type: integer
-        timeoutMs:
-          type: integer
-        chunkRef:
-          type: string
-        requestRef:
-          type: string
-        responseRef:
-          type: string
-        rawResponse:
-          type: string
-        tokensIn:
-          type: integer
-        tokensOut:
-          type: integer
-        latencyMs:
-          type: integer
-        transitionOutcome:
-          type: string
-        transitionToStep:
-          type: string
-        transitionTerminal:
-          type: boolean
-        previousStateJson:
-          type: string
-        updatedStateJson:
-          type: string
-        evidenceDeltaJson:
-          type: string
-        conflictsJson:
-          type: string
-        finalOutcome:
-          type: string
     LLMDecision:
       type: object
       properties:
@@ -1154,19 +1017,6 @@ components:
         createdAt:
           type: string
           format: date-time
-    LLMHistory:
-      type: object
-      properties:
-        streamerId:
-          type: string
-        latestStateUpdates:
-          type: array
-          items:
-            $ref: '#/components/schemas/LLMDecision'
-        finalDecisions:
-          type: array
-          items:
-            $ref: '#/components/schemas/LLMDecision'
     GameUpsertRequest:
       type: object
       required: [slug, title, status]
@@ -1555,15 +1405,6 @@ components:
           type: integer
         confidence:
           type: number
-        promptVersions:
-          type: object
-          properties:
-            session:
-              type: string
-            game:
-              type: string
-            perClip:
-              type: string
         schemaVersion:
           type: string
         rawJson:

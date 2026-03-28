@@ -63,12 +63,6 @@ type LLMStatus struct {
 	LatestByStage     []LLMDecision `json:"latestByStage"`
 }
 
-type LLMHistory struct {
-	StreamerID         string        `json:"streamerId"`
-	LatestStateUpdates []LLMDecision `json:"latestStateUpdates"`
-	FinalDecisions     []LLMDecision `json:"finalDecisions"`
-}
-
 type RecordDecisionRequest struct {
 	RunID              string
 	StreamerID         string
