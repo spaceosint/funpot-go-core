@@ -248,10 +248,9 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		return streamers.LLMDecision{}, prompts.ErrScenarioPackageNotFound
 	}
 
-	gameSlug := w.resolveGameSlug(ctx, streamerID)
-	pkg, err := resolver.GetActiveScenarioPackage(ctx, gameSlug)
+	pkg, err := resolver.GetActiveScenarioPackage(ctx, "global")
 	if err != nil {
-		logger.Error("active scenario package lookup failed", zap.String("streamerID", streamerID), zap.String("gameSlug", gameSlug), zap.Error(err))
+		logger.Error("active scenario package lookup failed", zap.String("streamerID", streamerID), zap.String("gameSlug", "global"), zap.Error(err))
 		return streamers.LLMDecision{}, err
 	}
 	return w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg)
@@ -839,16 +838,6 @@ func (w *Worker) latestDecisionByStreamer(ctx context.Context, streamerID string
 		return streamers.LLMDecision{}
 	}
 	return items[len(items)-1]
-}
-
-func (w *Worker) resolveGameSlug(ctx context.Context, streamerID string) string {
-	state := parseSimpleState(w.resolvePreviousState(ctx, streamerID))
-	if value, ok := state["game"]; ok {
-		if game := strings.TrimSpace(fmt.Sprint(value)); game != "" {
-			return game
-		}
-	}
-	return "global"
 }
 
 func parseSimpleState(raw string) map[string]any {
