@@ -43,11 +43,13 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 }
 
 type fakePromptResolver struct {
-	prompts      []prompts.PromptVersion
-	scenario     prompts.ScenarioPackage
-	scenarioErr  error
-	activeSchema prompts.StateSchemaVersion
-	schemaErr    error
+	prompts        []prompts.PromptVersion
+	scenario       prompts.ScenarioPackage
+	scenarioErr    error
+	activeSchema   prompts.StateSchemaVersion
+	schemaErr      error
+	llmModelConfig prompts.LLMModelConfig
+	llmConfigErr   error
 }
 
 func (f fakePromptResolver) ListActive(_ context.Context) []prompts.PromptVersion {
@@ -78,7 +80,6 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 			ID:                 stepID,
 			Name:               stepID,
 			PromptTemplate:     prompt.Template,
-			Model:              strings.TrimSpace(prompt.Model),
 			ResponseSchemaJSON: "{}",
 			Initial:            i == 0,
 			Order:              i + 1,
@@ -92,13 +93,29 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 		}
 	}
 	return prompts.ScenarioPackage{
-		ID:          "scenario-test",
-		GameSlug:    "global",
-		Name:        "generated",
-		Steps:       steps,
-		Transitions: transitions,
-		IsActive:    true,
+		ID:               "scenario-test",
+		GameSlug:         "global",
+		Name:             "generated",
+		LLMModelConfigID: "cfg-test",
+		Steps:            steps,
+		Transitions:      transitions,
+		IsActive:         true,
 	}, nil
+}
+
+func (f fakePromptResolver) GetLLMModelConfig(_ context.Context, _ string) (prompts.LLMModelConfig, error) {
+	if f.llmConfigErr != nil {
+		return prompts.LLMModelConfig{}, f.llmConfigErr
+	}
+	if strings.TrimSpace(f.llmModelConfig.Model) != "" {
+		return f.llmModelConfig, nil
+	}
+	for _, prompt := range f.prompts {
+		if model := strings.TrimSpace(prompt.Model); model != "" {
+			return prompts.LLMModelConfig{ID: "cfg-test", Model: model}, nil
+		}
+	}
+	return prompts.LLMModelConfig{}, prompts.ErrLLMModelConfigNotFound
 }
 
 func (f fakePromptResolver) GetActiveStateSchema(_ context.Context, _ string) (prompts.StateSchemaVersion, error) {
@@ -244,8 +261,8 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 			GameSlug: "global",
 			Name:     "v2",
 			Steps: []prompts.ScenarioStep{
-				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", Model: "gemini-2.0-flash", ResponseSchemaJSON: `{}`, Order: 2},
+				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
 			},
 			Transitions: []prompts.ScenarioTransition{
 				{FromStepID: "root_detect", ToStepID: "cs2_mode", Condition: `$.game == "cs2"`, Priority: 1},
