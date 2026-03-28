@@ -775,7 +775,7 @@ func (s *Service) listScenarioPackagesDB(ctx context.Context) ([]ScenarioPackage
 	return items, rows.Err()
 }
 
-func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
+func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPackageCreateRequest, transitions []ScenarioTransition) (ScenarioPackage, error) {
 	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -807,7 +807,7 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
-	transitionsJSON, err := marshalJSON(req.Transitions)
+	transitionsJSON, err := marshalJSON(transitions)
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -817,7 +817,7 @@ func (s *Service) createScenarioPackageDB(ctx context.Context, req ScenarioPacka
 		GameSlug:    gameSlug,
 		Version:     version,
 		Steps:       normalizedSteps,
-		Transitions: append([]ScenarioTransition(nil), req.Transitions...),
+		Transitions: append([]ScenarioTransition(nil), transitions...),
 		IsActive:    existing == 0,
 		CreatedBy:   strings.TrimSpace(req.ActorID),
 		CreatedAt:   now,
@@ -875,7 +875,7 @@ func (s *Service) getScenarioPackageDB(ctx context.Context, id string) (Scenario
 	return item, nil
 }
 
-func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req ScenarioPackageCreateRequest) (ScenarioPackage, error) {
+func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req ScenarioPackageCreateRequest, transitions []ScenarioTransition) (ScenarioPackage, error) {
 	if err := ValidateScenarioPackageCreateRequest(req); err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -913,7 +913,7 @@ func (s *Service) updateScenarioPackageDB(ctx context.Context, id string, req Sc
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
-	transitionsJSON, err := marshalJSON(req.Transitions)
+	transitionsJSON, err := marshalJSON(transitions)
 	if err != nil {
 		return ScenarioPackage{}, err
 	}

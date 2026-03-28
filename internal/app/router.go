@@ -70,21 +70,11 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 			Order:              step.Order,
 		})
 	}
-	transitions := make([]prompts.ScenarioTransition, 0, len(req.Transitions))
-	for _, tr := range req.Transitions {
-		transitions = append(transitions, prompts.ScenarioTransition{
-			FromStepID: tr.FromStepID,
-			ToStepID:   tr.ToStepID,
-			Condition:  tr.Condition,
-			Priority:   tr.Priority,
-		})
-	}
 	return prompts.ScenarioPackageCreateRequest{
-		Name:        req.Name,
-		GameSlug:    req.GameSlug,
-		Steps:       steps,
-		Transitions: transitions,
-		ActorID:     actorID,
+		Name:     req.Name,
+		GameSlug: req.GameSlug,
+		Steps:    steps,
+		ActorID:  actorID,
 	}
 }
 
@@ -146,18 +136,10 @@ type scenarioStepRequest struct {
 	Order              int    `json:"order"`
 }
 
-type scenarioTransitionRequest struct {
-	FromStepID string `json:"fromStepId"`
-	ToStepID   string `json:"toStepId"`
-	Condition  string `json:"condition"`
-	Priority   int    `json:"priority"`
-}
-
 type scenarioPackageCreateRequest struct {
-	Name        string                      `json:"name"`
-	GameSlug    string                      `json:"gameSlug"`
-	Steps       []scenarioStepRequest       `json:"steps"`
-	Transitions []scenarioTransitionRequest `json:"transitions"`
+	Name     string                `json:"name"`
+	GameSlug string                `json:"gameSlug"`
+	Steps    []scenarioStepRequest `json:"steps"`
 }
 
 type meResponse struct {
