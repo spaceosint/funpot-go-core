@@ -384,6 +384,13 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 				return candidate, true, nil
 			}
 		}
+		// Bootstrap fail-safe: if no initial candidate condition matches,
+		// still start from the first ordered initial/root step.
+		// This keeps scheduler cycles running when state payload is sparse
+		// or legacy entry conditions are too strict.
+		if len(initial) > 0 {
+			return initial[0], true, nil
+		}
 		return ScenarioStep{}, false, ErrScenarioStepNotFound
 	}
 

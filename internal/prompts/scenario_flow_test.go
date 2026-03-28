@@ -56,6 +56,31 @@ func TestScenarioPackageResolveStep(t *testing.T) {
 	}
 }
 
+func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches(t *testing.T) {
+	t.Parallel()
+
+	pkg := ScenarioPackage{
+		ID:       "pkg-1",
+		Name:     "fallback flow",
+		GameSlug: "global",
+		Steps: []ScenarioStep{
+			{ID: "root_detect", Name: "Root detect", Initial: true, Order: 1, EntryCondition: "game == cs2"},
+			{ID: "secondary", Name: "Secondary", Initial: true, Order: 2, EntryCondition: "mode == faceit"},
+		},
+	}
+
+	step, entered, err := pkg.ResolveStep("", `{"game":"dota2"}`)
+	if err != nil {
+		t.Fatalf("resolve initial fallback: %v", err)
+	}
+	if !entered {
+		t.Fatalf("expected entered=true for bootstrap fallback")
+	}
+	if step.ID != "root_detect" {
+		t.Fatalf("expected fallback to first ordered initial step root_detect, got %s", step.ID)
+	}
+}
+
 func TestEvaluateCondition(t *testing.T) {
 	t.Parallel()
 	payload := map[string]any{"game": "cs2", "mode": "faceit", "nested": map[string]any{"value": "x"}}
