@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"context"
+
 	"go.uber.org/zap"
 
 	"github.com/funpot/funpot-go-core/internal/admin"
@@ -16,7 +18,7 @@ import (
 
 func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	promptsService := prompts.NewService()
-	cfg, err := promptsService.CreateLLMModelConfig(t.Context(), prompts.LLMModelConfigCreateRequest{
+	cfg, err := promptsService.CreateLLMModelConfig(context.Background(), prompts.LLMModelConfigCreateRequest{
 		Name:          "default",
 		Model:         "gemini-2.5-flash",
 		Temperature:   0.2,

@@ -768,6 +768,10 @@ type activeStateSchemaResolver interface {
 	GetActiveStateSchema(ctx context.Context, gameSlug string) (prompts.StateSchemaVersion, error)
 }
 
+type llmModelConfigResolver interface {
+	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
+}
+
 func (w *Worker) resolveTrackerConfig(ctx context.Context) string {
 	const gameSlug = "cs2"
 	var stateSchema string
@@ -816,11 +820,12 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		ID:       step.ID,
 		Stage:    step.ID,
 		Template: step.PromptTemplate,
-		Model:    strings.TrimSpace(step.Model),
 		IsActive: true,
 	}
-	if activePrompt.Model == "" {
-		activePrompt.Model = prompts.DefaultScenarioStepModel
+	if resolver, ok := w.prompts.(llmModelConfigResolver); ok {
+		if cfg, resolveErr := resolver.GetLLMModelConfig(ctx, pkg.LLMModelConfigID); resolveErr == nil {
+			activePrompt.Model = strings.TrimSpace(cfg.Model)
+		}
 	}
 	stateSchema := w.resolveTrackerConfig(ctx)
 	result, err := w.classifyWithRetry(ctx, StageRequest{
