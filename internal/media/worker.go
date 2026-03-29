@@ -597,50 +597,8 @@ func mergeStateValue(previous, current any) any {
 			merged[key] = mergeStateValue(previousTyped[key], item)
 		}
 		return merged
-	case []any:
-		if len(currentTyped) == 0 {
-			if previousTyped, ok := previous.([]any); ok && len(previousTyped) > 0 {
-				return previousTyped
-			}
-		}
-		return currentTyped
-	case string:
-		if isPlaceholderString(currentTyped) {
-			if previousTyped, ok := previous.(string); ok && strings.TrimSpace(previousTyped) != "" {
-				return previousTyped
-			}
-		}
-		return currentTyped
-	case float64:
-		if currentTyped == 0 {
-			if previousTyped, ok := previous.(float64); ok && previousTyped != 0 {
-				return previousTyped
-			}
-		}
-		return currentTyped
-	case bool:
-		if !currentTyped {
-			if previousTyped, ok := previous.(bool); ok && previousTyped {
-				return previousTyped
-			}
-		}
-		return currentTyped
-	case nil:
-		if previous != nil {
-			return previous
-		}
-		return nil
 	default:
-		return currentTyped
-	}
-}
-
-func isPlaceholderString(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "unknown", "null", "nil", "n/a", "none", "unset":
-		return true
-	default:
-		return false
+		return current
 	}
 }
 
