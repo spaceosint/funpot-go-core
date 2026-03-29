@@ -682,7 +682,7 @@ func TestWorkerProcessStreamerNormalizesLegacyStatePayloads(t *testing.T) {
 	}
 }
 
-func TestWorkerProcessStreamerPreservesKnownScoreWhenModelReturnsUnknownPlaceholders(t *testing.T) {
+func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	classifier := &flakyClassifier{
 		result: StageClassification{
@@ -705,13 +705,13 @@ func TestWorkerProcessStreamerPreservesKnownScoreWhenModelReturnsUnknownPlacehol
 	if err != nil {
 		t.Fatalf("second ProcessStreamer() error = %v", err)
 	}
-	if second.Label != "awaiting_changes" {
-		t.Fatalf("second label = %q, want awaiting_changes", second.Label)
+	if second.Label != "state_updated" {
+		t.Fatalf("second label = %q, want state_updated", second.Label)
 	}
-	if got := second.UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":8,"mode":"competitive","t_score":5}}` {
+	if got := second.UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":0,"mode":"unknown","t_score":0}}` {
 		t.Fatalf("updated state = %q", got)
 	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1 (skip unchanged updates)", len(decisions.items))
+	if len(decisions.items) != 2 {
+		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
 	}
 }
