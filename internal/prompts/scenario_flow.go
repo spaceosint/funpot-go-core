@@ -165,13 +165,7 @@ func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
 }
 
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
-	if s.db != nil {
-		items, err := s.listScenarioPackagesDB(ctx)
-		if err == nil {
-			return items
-		}
-		return nil
-	}
+	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]ScenarioPackage, 0)
@@ -199,9 +193,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
 	req.Steps = normalizedSteps
-	if s.db != nil {
-		return s.createScenarioPackageDB(ctx, req, normalizedTransitions)
-	}
+	_ = ctx
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,9 +223,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 }
 
 func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPackage, error) {
-	if s.db != nil {
-		return s.getScenarioPackageDB(ctx, id)
-	}
+	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	lookup := strings.TrimSpace(id)
@@ -259,9 +249,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
 	req.Steps = normalizedSteps
-	if s.db != nil {
-		return s.updateScenarioPackageDB(ctx, id, req, normalizedTransitions)
-	}
+	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lookup := strings.TrimSpace(id)
@@ -295,9 +283,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 }
 
 func (s *Service) DeleteScenarioPackage(ctx context.Context, id string) error {
-	if s.db != nil {
-		return s.deleteScenarioPackageDB(ctx, id)
-	}
+	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lookup := strings.TrimSpace(id)
@@ -317,9 +303,7 @@ func (s *Service) DeleteScenarioPackage(ctx context.Context, id string) error {
 }
 
 func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID string) (ScenarioPackage, error) {
-	if s.db != nil {
-		return s.activateScenarioPackageDB(ctx, id, actorID)
-	}
+	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lookup := strings.TrimSpace(id)
@@ -349,9 +333,7 @@ func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID strin
 }
 
 func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string) (ScenarioPackage, error) {
-	if s.db != nil {
-		return s.getActiveScenarioPackageDB(ctx, gameSlug)
-	}
+	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.scenarioPackages == nil {
