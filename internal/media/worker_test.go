@@ -46,8 +46,6 @@ type fakePromptResolver struct {
 	prompts        []prompts.PromptVersion
 	scenario       prompts.ScenarioPackage
 	scenarioErr    error
-	activeSchema   prompts.StateSchemaVersion
-	schemaErr      error
 	llmModelConfig prompts.LLMModelConfig
 	llmConfigErr   error
 }
@@ -116,13 +114,6 @@ func (f fakePromptResolver) GetLLMModelConfig(_ context.Context, _ string) (prom
 		}
 	}
 	return prompts.LLMModelConfig{}, prompts.ErrLLMModelConfigNotFound
-}
-
-func (f fakePromptResolver) GetActiveStateSchema(_ context.Context, _ string) (prompts.StateSchemaVersion, error) {
-	if f.schemaErr != nil {
-		return prompts.StateSchemaVersion{}, f.schemaErr
-	}
-	return f.activeSchema, nil
 }
 
 type fakeDecisionStore struct {
@@ -585,65 +576,6 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	}
 	if second.Label != "awaiting_changes" {
 		t.Fatalf("second label = %q, want awaiting_changes", second.Label)
-	}
-}
-
-func TestWorkerProcessStreamerUsesAdminProvidedInitialState(t *testing.T) {
-	decisions := &fakeDecisionStore{}
-	classifier := &flakyClassifier{result: StageClassification{Label: "state_updated", Confidence: 0.95, UpdatedStateJSON: `{"score_state":{"ct_score":1,"t_score":0}}`}}
-	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
-		classifier,
-		fakePromptResolver{
-			prompts:      []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}},
-			activeSchema: prompts.StateSchemaVersion{InitialStateJSON: `{"session_status":{"value":"in_progress"},"score_state":{"ct_score":0,"t_score":0}}`},
-		},
-		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
-	)
-	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
-	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
-	}
-	if !strings.Contains(decisions.items[0].PreviousStateJSON, `"session_status":{"value":"in_progress"}`) {
-		t.Fatalf("previous state = %q", decisions.items[0].PreviousStateJSON)
-	}
-}
-
-func TestWorkerProcessStreamerNormalizesAdminInitialStateTemplate(t *testing.T) {
-	decisions := &fakeDecisionStore{}
-	classifier := &flakyClassifier{result: StageClassification{Label: "state_updated", Confidence: 0.95, UpdatedStateJSON: `{"score_state":{"ct_score":1,"t_score":0}}`}}
-	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
-		classifier,
-		fakePromptResolver{
-			prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}},
-			activeSchema: prompts.StateSchemaVersion{InitialStateJSON: `{
-				"mode": "competitive | faceit | wingman | unknown",
-				"session_status": {
-					"value": "in_progress | likely_finished | confirmed_finished | likely_truncated | unknown"
-				},
-				"winner_state": {"winner_side":"CT | T | draw | unknown"}
-			}`},
-		},
-		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
-	)
-	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
-	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
-	}
-	previous := decisions.items[0].PreviousStateJSON
-	if !strings.Contains(previous, `"mode":"unknown"`) {
-		t.Fatalf("previous state mode was not normalized: %q", previous)
-	}
-	if !strings.Contains(previous, `"value":"unknown"`) {
-		t.Fatalf("previous state session_status was not normalized: %q", previous)
-	}
-	if !strings.Contains(previous, `"winner_side":"unknown"`) {
-		t.Fatalf("previous state winner_side was not normalized: %q", previous)
 	}
 }
 

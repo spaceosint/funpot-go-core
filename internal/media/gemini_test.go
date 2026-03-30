@@ -156,7 +156,7 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 	if !strings.Contains(requestBodies[1], "Continue the existing match chat session.") {
 		t.Fatalf("expected second request to include continuation marker, got %s", requestBodies[1])
 	}
-	if !strings.Contains(requestBodies[1], "Active state schema:") {
+	if !strings.Contains(requestBodies[1], "Expected response schema:") {
 		t.Fatalf("expected second request to include active state schema reminder, got %s", requestBodies[1])
 	}
 	if strings.Contains(requestBodies[1], "Previous persisted tracker state JSON:") {
@@ -457,11 +457,11 @@ func TestGeminiStageClassifierRejectsUnsupportedChunkMimeType(t *testing.T) {
 
 func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	instruction := buildGeminiInstruction(StageRequest{
-		StreamerID:  "str-42",
-		Stage:       "match_update",
-		Chunk:       ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
-		Prompt:      prompts.PromptVersion{Template: "Update the CS2 tracker state"},
-		StateSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
+		StreamerID:     "str-42",
+		Stage:          "match_update",
+		Chunk:          ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)},
+		Prompt:         prompts.PromptVersion{Template: "Update the CS2 tracker state"},
+		ResponseSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
 	})
 	for _, fragment := range []string{
 		"Streamer ID: str-42",
@@ -470,7 +470,7 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 		defaultTrackerState(),
 		"updated_state",
 		"next_needed_evidence",
-		"Active state schema:",
+		"Expected response schema:",
 		"state_schema[CS2 v1]",
 	} {
 		if !strings.Contains(instruction, fragment) {
@@ -479,17 +479,17 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	}
 }
 
-func TestBuildGeminiContinuationInstructionIncludesActiveStateSchema(t *testing.T) {
+func TestBuildGeminiContinuationInstructionIncludesExpectedResponseSchema(t *testing.T) {
 	instruction := buildGeminiContinuationInstruction(StageRequest{
-		StreamerID:  "str-42",
-		Stage:       "match_update",
-		Chunk:       ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 10, 0, time.UTC)},
-		Prompt:      prompts.PromptVersion{Template: "Update the CS2 tracker state"},
-		StateSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
+		StreamerID:     "str-42",
+		Stage:          "match_update",
+		Chunk:          ChunkRef{Reference: "/tmp/chunk.mp4", CapturedAt: time.Date(2025, 1, 1, 12, 0, 10, 0, time.UTC)},
+		Prompt:         prompts.PromptVersion{Template: "Update the CS2 tracker state"},
+		ResponseSchema: `state_schema[CS2 v1]: [{"key":"score.ct"}]`,
 	})
 	for _, fragment := range []string{
 		"Continue the existing match chat session.",
-		"Active state schema:",
+		"Expected response schema:",
 		`state_schema[CS2 v1]: [{"key":"score.ct"}]`,
 	} {
 		if !strings.Contains(instruction, fragment) {

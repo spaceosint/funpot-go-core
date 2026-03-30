@@ -32,7 +32,6 @@ type StageRequest struct {
 	Chunk           ChunkRef
 	Prompt          prompts.PromptVersion
 	PreviousState   string
-	StateSchema     string
 	ResponseSchema  string
 	SendPrompt      bool
 	ScenarioFolder  string
@@ -294,8 +293,7 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 
 func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
 	previousState := w.resolvePreviousState(ctx, streamerID)
-	stateSchema := w.resolveTrackerConfig(ctx)
-	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState, StateSchema: stateSchema}, activePrompt)
+	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState}, activePrompt)
 	if err != nil {
 		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
 		return streamers.LLMDecision{}, err
@@ -388,82 +386,7 @@ func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) st
 			return state
 		}
 	}
-	if initial := strings.TrimSpace(w.resolveInitialTrackerState(ctx)); initial != "" {
-		return initial
-	}
 	return defaultTrackerState()
-}
-
-func (w *Worker) resolveInitialTrackerState(ctx context.Context) string {
-	const gameSlug = "cs2"
-	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
-		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
-			if state := strings.TrimSpace(item.InitialStateJSON); state != "" && state != "{}" {
-				return normalizeInitialStateTemplateJSON(state)
-			}
-		}
-	}
-	return ""
-}
-
-func normalizeInitialStateTemplateJSON(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	var parsed any
-	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
-		return trimmed
-	}
-	normalized := normalizeTemplateValue(parsed)
-	body, err := json.Marshal(normalized)
-	if err != nil {
-		return trimmed
-	}
-	return strings.TrimSpace(string(body))
-}
-
-func normalizeTemplateValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			out[key] = normalizeTemplateValue(nested)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, normalizeTemplateValue(item))
-		}
-		return out
-	case string:
-		return resolveTemplateEnumString(typed)
-	default:
-		return value
-	}
-}
-
-func resolveTemplateEnumString(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if !strings.Contains(trimmed, "|") {
-		return trimmed
-	}
-	parts := strings.Split(trimmed, "|")
-	candidate := ""
-	for _, part := range parts {
-		token := strings.TrimSpace(part)
-		if token == "" {
-			continue
-		}
-		if strings.EqualFold(token, "unknown") {
-			return "unknown"
-		}
-		if candidate == "" {
-			candidate = token
-		}
-	}
-	return candidate
 }
 
 func normalizeDecisionLabel(result StageClassification, updatedStateJSON string) string {
@@ -722,35 +645,8 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-type activeStateSchemaResolver interface {
-	GetActiveStateSchema(ctx context.Context, gameSlug string) (prompts.StateSchemaVersion, error)
-}
-
 type llmModelConfigResolver interface {
 	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
-}
-
-func (w *Worker) resolveTrackerConfig(ctx context.Context) string {
-	const gameSlug = "cs2"
-	var stateSchema string
-	if resolver, ok := w.prompts.(activeStateSchemaResolver); ok {
-		if item, err := resolver.GetActiveStateSchema(ctx, gameSlug); err == nil {
-			schemaPayload := compactJSON(item.Fields)
-			stateSchema = fmt.Sprintf("state_schema[%s v%d]: %s", item.Name, item.Version, schemaPayload)
-		}
-	}
-	return stateSchema
-}
-
-func compactJSON(value any) string {
-	if value == nil {
-		return ""
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return ""
-	}
-	return string(data)
 }
 
 func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage) (streamers.LLMDecision, error) {
@@ -785,14 +681,12 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 			activePrompt.Model = strings.TrimSpace(cfg.Model)
 		}
 	}
-	stateSchema := w.resolveTrackerConfig(ctx)
 	result, err := w.classifyWithRetry(ctx, StageRequest{
 		StreamerID:      streamerID,
 		Stage:           step.ID,
 		Chunk:           chunk,
 		Prompt:          activePrompt,
 		PreviousState:   previousState,
-		StateSchema:     stateSchema,
 		ResponseSchema:  step.ResponseSchemaJSON,
 		SendPrompt:      entering,
 		ScenarioFolder:  step.Folder,
