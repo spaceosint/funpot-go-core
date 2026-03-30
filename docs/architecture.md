@@ -25,9 +25,9 @@ Each domain lives in a dedicated package under `internal/`:
 | events | Event creation from worker payloads, lifecycle, tracker version tracking |
 | votes | Vote ingestion, balance debits, totals aggregation, deduplication |
 | media | Clip metadata ingestion, association with games/events and match sessions |
-| prompts | Prompt versioning for match updates/finalization, rollout management |
+| prompts | Scenario-graph v2 package management (steps, contracts, transitions) |
 | realtime | WebSocket gateway, Redis pub/sub fan-out, backpressure |
-| admin | Admin CRUD for streamers/games/tracker schemas/rules/prompts, feature flags, manual replays |
+| admin | Admin CRUD for streamers/games/scenario-packages, feature flags, manual replays |
 | integrations | Telegram webhook, worker callbacks, Twitch viewer validator |
 | config | Feature flags, rate limits, cached configuration delivery |
 
@@ -64,4 +64,3 @@ Cross-cutting packages such as logging, tracing, rate limiting, and configuratio
 ## Future Evolution
 - Potential split of realtime subsystem into independent service when concurrent WS > 200k.
 - Multi-level betting, cross-streamer battles, off-chain pools, cache invalidation service, richer anti-fraud analytics.
-

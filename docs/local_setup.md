@@ -201,7 +201,8 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
 - `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages defined by ordered `steps` (no manual transition payload required) with per-game versioning and activation. Each step **must** set its own LLM `model`. Backend auto-links steps by ascending `order` and applies the target step `entryCondition` as the generated transition condition.
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
-- When PostgreSQL is enabled, admin-managed scenario graph configuration (`/api/admin/llm/scenario-packages`) is persisted in dedicated versioned tables and survives service restarts.
+- Legacy LLM admin surfaces (prompt versions, state schemas, rule sets, model configs) are removed from runtime; scenario-packages are now the only supported LLM control surface.
+- Current implementation keeps scenario-packages in process memory; persistence across restarts is intentionally not provided in this branch.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

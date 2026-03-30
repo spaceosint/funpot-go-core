@@ -54,10 +54,8 @@ business logic and immediate backend scope.
 - [x] Delete or refactor legacy detector/scenario-chain codepaths so only the new tracker model remains active.
 - [x] Narrow admin panel backend contracts to Scenario Package v2 only
   (`/api/admin/llm/scenario-packages` + activation + graph).
-- [ ] Remove legacy admin surfaces for prompt versions, state schemas, and rule sets across code + docs + DB migrations.
-- [x] Move tracker configuration storage from in-memory services to
-  database-backed repositories with audit-ready versioning for schemas, rules,
-  and prompt packages.
+- [x] Remove legacy admin surfaces for prompt versions, state schemas, rule sets, and model-config CRUD across code + docs.
+- [ ] Re-introduce scenario-package persistence in storage (PostgreSQL) after the scenario-only cleanup baseline stabilizes.
 - [ ] Implement stream capture worker pipeline:
   `streamlink -> media chunking -> previous_state + new_chunk -> updated_state`.
 - [ ] Implement match-session lifecycle so one detected match is tracked as one
@@ -77,7 +75,7 @@ business logic and immediate backend scope.
 - [x] Integrate refresh session store into auth refresh/login/logout flows
   (token pair issuance, rotation endpoint, and revoke-all/user-device controls).
 - [ ] Add observability: update/finalization latency, success ratio, token usage, conflict/unknown rates, and drift alerts for prompt regressions.
-- Exit Criteria: admin can tune the active tracker schema/rules/prompts, the worker pipeline produces persisted match state updates/final decisions for active streamers, and users observe near-real-time status updates on streamer pages.
+- Exit Criteria: admin can tune active scenario-packages only, the worker pipeline produces persisted match state updates/final decisions for active streamers, and users observe near-real-time status updates on streamer pages.
 
 ### M3 – Events Lifecycle & Realtime Delivery
 - [ ] Implement `/internal/worker/events` ingestion with validation, dedupe, and
