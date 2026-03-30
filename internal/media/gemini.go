@@ -286,7 +286,6 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		}
 		return StageClassification{}, err
 	}
-	parsed = normalizeGeminiTrackerResponse(input, parsed)
 	if parsed.Confidence < 0 || parsed.Confidence > 1 {
 		return StageClassification{}, ErrGeminiInvalidConfidence
 	}
@@ -432,25 +431,16 @@ Stage-specific behavior:
 - For close_current_session or match_finalize: no more chunks are currently available; do NOT assume the match finished and choose closure status only from accumulated evidence.
 
 Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
-Tracker responses must keep this required structure:
-{
-  "label": "state_updated | closure_evaluated | unknown",
-  "confidence": 0.0,
-  "updated_state": {},
-  "delta": [],
-  "next_needed_evidence": [],
-  "hard_conflicts": [],
-  "final_outcome": "win | loss | draw | unknown"
-}
+Do not add keys that are not present in the schema/template.
 
 Mandatory rules:
 1. Never infer match completion only because no more chunks are currently available.
 2. Never infer player victory/defeat from gameplay quality.
-3. Treat final outcome as validated ONLY when strong terminal evidence exists (final banner, final scoreboard, explicit post-match UI, or repeated strong terminal signals).
-4. If completion is not confirmed, keep player_result.is_final=false and final_outcome=unknown.
-5. If chunk stream appears cut during active gameplay, prefer session_status=likely_truncated.
+3. If schema contains final outcome semantics, validate them only from strong terminal evidence (final banner, final scoreboard, explicit post-match UI, or repeated strong terminal signals).
+4. If schema contains completion flags and completion is not confirmed, keep them in an unknown/non-final state.
+5. If chunk stream appears cut during active gameplay, reflect likely truncation if such field exists in schema.
 6. Preserve previously confirmed evidence unless clearly contradicted.
-7. Store contradictions in hard_conflicts instead of silently overwriting facts.
+7. Record contradictions only in schema-approved conflict fields.
 8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.ResponseSchema), previousState))
 }
 
@@ -464,9 +454,9 @@ Expected response schema:
 %s
 Do not repeat full state snapshots from earlier turns.
 Use only the expected response schema for this request and keep payload compact.
-Return ONLY concrete changes discovered in this chunk and keep delta minimal.
-If there are no concrete changes, return updated_state with the current known state and an empty delta.
-Return JSON that matches the admin-managed JSON template and include only changed fields when possible.
+Return ONLY concrete changes discovered in this chunk when the schema supports delta-style updates.
+If there are no concrete changes, return a schema-valid "no changes" response.
+Return JSON that matches the admin-managed JSON template exactly.
 Return ONLY valid JSON using the same schema as before.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.ResponseSchema)))
 }
 
@@ -652,7 +642,13 @@ func trimForLog(value string, max int) string {
 }
 
 func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
-	return strings.TrimSpace(parsed.Label) != "" || len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != ""
+	return strings.TrimSpace(parsed.Label) != "" ||
+		strings.TrimSpace(parsed.Summary) != "" ||
+		len(parsed.UpdatedState) > 0 ||
+		len(parsed.Delta) > 0 ||
+		len(parsed.NextNeededEvidence) > 0 ||
+		len(parsed.HardConflicts) > 0 ||
+		strings.TrimSpace(parsed.FinalOutcome) != ""
 }
 
 func rawMessageFromGenericValue(value any) json.RawMessage {
@@ -695,15 +691,6 @@ func validateGeminiTrackerResponse(stage string, parsed geminiStageResponse) err
 	if !isTrackerStage(stage) {
 		return nil
 	}
-	if len(parsed.UpdatedState) == 0 || strings.TrimSpace(string(parsed.UpdatedState)) == "null" {
-		return fmt.Errorf("gemini tracker response for %s must include updated_state", strings.TrimSpace(stage))
-	}
-	if len(parsed.Delta) == 0 || strings.TrimSpace(string(parsed.Delta)) == "null" {
-		return fmt.Errorf("gemini tracker response for %s must include delta", strings.TrimSpace(stage))
-	}
-	if len(parsed.NextNeededEvidence) == 0 || strings.TrimSpace(string(parsed.NextNeededEvidence)) == "null" {
-		return fmt.Errorf("gemini tracker response for %s must include next_needed_evidence", strings.TrimSpace(stage))
-	}
 	if strings.TrimSpace(parsed.FinalOutcome) != "" {
 		switch strings.TrimSpace(parsed.FinalOutcome) {
 		case "win", "loss", "draw", "unknown":
@@ -712,36 +699,4 @@ func validateGeminiTrackerResponse(stage string, parsed geminiStageResponse) err
 		}
 	}
 	return nil
-}
-
-func normalizeGeminiTrackerResponse(input StageRequest, parsed geminiStageResponse) geminiStageResponse {
-	if !isTrackerStage(input.Stage) || !isTrackerStartStage(input.Stage) {
-		return parsed
-	}
-	if len(parsed.UpdatedState) == 0 || strings.TrimSpace(string(parsed.UpdatedState)) == "null" {
-		fallbackState := strings.TrimSpace(input.PreviousState)
-		if fallbackState == "" {
-			fallbackState = defaultTrackerState()
-		}
-		parsed.UpdatedState = json.RawMessage(fallbackState)
-	}
-	if len(parsed.Delta) == 0 || strings.TrimSpace(string(parsed.Delta)) == "null" {
-		parsed.Delta = json.RawMessage("[]")
-	}
-	if len(parsed.NextNeededEvidence) == 0 || strings.TrimSpace(string(parsed.NextNeededEvidence)) == "null" {
-		parsed.NextNeededEvidence = json.RawMessage("[]")
-	}
-	if strings.TrimSpace(parsed.FinalOutcome) == "" {
-		parsed.FinalOutcome = "unknown"
-	}
-	return parsed
-}
-
-func isTrackerStartStage(stage string) bool {
-	switch strings.TrimSpace(strings.ToLower(stage)) {
-	case trackerStageDiscovery, "start", "discovery", "bootstrap", "initialize":
-		return true
-	default:
-		return false
-	}
 }
