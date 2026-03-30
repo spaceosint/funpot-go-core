@@ -468,8 +468,7 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 		"Chunk reference: /tmp/chunk.mp4",
 		"Previous persisted tracker state JSON:",
 		defaultTrackerState(),
-		"updated_state",
-		"next_needed_evidence",
+		"Do not add keys that are not present in the schema/template.",
 		"Expected response schema:",
 		"state_schema[CS2 v1]",
 	} {
@@ -553,7 +552,7 @@ func TestGeminiStageClassifierAcceptsTrackerResponseWithoutLabel(t *testing.T) {
 	}
 }
 
-func TestGeminiStageClassifierRejectsTrackerResponseWithoutStatePayload(t *testing.T) {
+func TestGeminiStageClassifierAcceptsSchemaDrivenTrackerPayloadWithoutLegacyStateFields(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
 	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
@@ -580,18 +579,24 @@ func TestGeminiStageClassifierRejectsTrackerResponseWithoutStatePayload(t *testi
 		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
 	}
 
-	_, err = classifier.Classify(context.Background(), StageRequest{
+	result, err := classifier.Classify(context.Background(), StageRequest{
 		StreamerID: "str-1",
 		Stage:      "match_update",
 		Chunk:      ChunkRef{Reference: chunkPath},
 		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
 	})
-	if err == nil || !strings.Contains(err.Error(), "updated_state") {
-		t.Fatalf("expected missing updated_state error, got %v", err)
+	if err != nil {
+		t.Fatalf("expected schema-driven tracker payload to pass, got %v", err)
+	}
+	if result.Label != "state_updated" {
+		t.Fatalf("expected label from response, got %q", result.Label)
+	}
+	if strings.TrimSpace(result.UpdatedStateJSON) != "" {
+		t.Fatalf("expected no legacy updated_state coercion, got %q", result.UpdatedStateJSON)
 	}
 }
 
-func TestGeminiStageClassifierBackfillsTrackerStartPayload(t *testing.T) {
+func TestGeminiStageClassifierDoesNotBackfillTrackerStartPayload(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
 	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
@@ -625,23 +630,23 @@ func TestGeminiStageClassifierBackfillsTrackerStartPayload(t *testing.T) {
 		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
 	})
 	if err != nil {
-		t.Fatalf("expected start stage fallback payload, got error %v", err)
+		t.Fatalf("expected start stage payload without backfill to pass, got error %v", err)
 	}
-	if strings.TrimSpace(result.UpdatedStateJSON) == "" {
-		t.Fatalf("expected updated_state fallback, got empty value")
+	if strings.TrimSpace(result.UpdatedStateJSON) != "" {
+		t.Fatalf("expected no updated_state fallback, got %q", result.UpdatedStateJSON)
 	}
-	if strings.TrimSpace(result.EvidenceDeltaJSON) != "[]" {
-		t.Fatalf("expected empty delta fallback, got %q", result.EvidenceDeltaJSON)
+	if strings.TrimSpace(result.EvidenceDeltaJSON) != "" {
+		t.Fatalf("expected no delta fallback, got %q", result.EvidenceDeltaJSON)
 	}
-	if strings.TrimSpace(result.NextEvidenceJSON) != "[]" {
-		t.Fatalf("expected empty next_needed_evidence fallback, got %q", result.NextEvidenceJSON)
+	if strings.TrimSpace(result.NextEvidenceJSON) != "" {
+		t.Fatalf("expected no next_needed_evidence fallback, got %q", result.NextEvidenceJSON)
 	}
-	if strings.TrimSpace(result.FinalOutcome) != "unknown" {
-		t.Fatalf("expected unknown final_outcome fallback, got %q", result.FinalOutcome)
+	if strings.TrimSpace(result.FinalOutcome) != "" {
+		t.Fatalf("expected no final_outcome fallback, got %q", result.FinalOutcome)
 	}
 }
 
-func TestGeminiStageClassifierBackfillsTrackerStartPayloadWithNullFinalOutcome(t *testing.T) {
+func TestGeminiStageClassifierKeepsNullFinalOutcomeEmptyWhenSchemaOmitsFallback(t *testing.T) {
 	dir := t.TempDir()
 	chunkPath := filepath.Join(dir, "chunk.mp4")
 	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
@@ -675,10 +680,10 @@ func TestGeminiStageClassifierBackfillsTrackerStartPayloadWithNullFinalOutcome(t
 		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
 	})
 	if err != nil {
-		t.Fatalf("expected null final_outcome to be normalized, got error %v", err)
+		t.Fatalf("expected null final_outcome to pass without normalization, got error %v", err)
 	}
-	if strings.TrimSpace(result.FinalOutcome) != "unknown" {
-		t.Fatalf("expected unknown final_outcome fallback, got %q", result.FinalOutcome)
+	if strings.TrimSpace(result.FinalOutcome) != "" {
+		t.Fatalf("expected empty final_outcome when model returns null, got %q", result.FinalOutcome)
 	}
 }
 
