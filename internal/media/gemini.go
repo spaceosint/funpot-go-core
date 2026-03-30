@@ -370,44 +370,10 @@ Use this admin-managed tracker prompt as the source of truth (including the expe
 %s
 Expected response schema:
 %s`
-	previousState := strings.TrimSpace(input.PreviousState)
-	if previousState == "" {
-		previousState = defaultTrackerState()
-	}
-	if !isTrackerStage(input.Stage) {
-		return strings.TrimSpace(fmt.Sprintf(base+`
-Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
-Do not include any keys that are not part of the admin-managed template.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.ResponseSchema)))
-	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
-Previous persisted tracker state JSON:
-%s
-
-You are a match state tracker for a single game session.
-
-Critical rule:
-The end of available video data is NOT the same as confirmed end of the match.
-
-Track two independent fields:
-- player_result.outcome = win | loss | draw | unknown
-- session_status.value = in_progress | likely_finished | confirmed_finished | likely_truncated | unknown
-
-Stage-specific behavior:
-- For match_update: update cumulative state using previous_state + new_chunk.
-- For close_current_session or match_finalize: no more chunks are currently available; do NOT assume the match finished and choose closure status only from accumulated evidence.
-
 Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
 Do not add keys that are not present in the schema/template.
-
-Mandatory rules:
-1. Never infer match completion only because no more chunks are currently available.
-2. Never infer player victory/defeat from gameplay quality.
-3. If schema contains final outcome semantics, validate them only from strong terminal evidence (final banner, final scoreboard, explicit post-match UI, or repeated strong terminal signals).
-4. If schema contains completion flags and completion is not confirmed, keep them in an unknown/non-final state.
-5. If chunk stream appears cut during active gameplay, reflect likely truncation if such field exists in schema.
-6. Preserve previously confirmed evidence unless clearly contradicted.
-7. Record contradictions only in schema-approved conflict fields.
-8. Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.ResponseSchema), previousState))
+Never emit narrative commentary outside JSON.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.ResponseSchema)))
 }
 
 func buildGeminiContinuationInstruction(input StageRequest) string {
