@@ -152,7 +152,6 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState:  `{"status":"discovering"}`,
 		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
@@ -390,7 +389,6 @@ func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState:  `{"status":"discovering"}`,
 		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
@@ -481,7 +479,6 @@ func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState:  `{"status":"discovering"}`,
 		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
@@ -593,9 +590,8 @@ func TestBuildGeminiInstructionUsesTrackerContract(t *testing.T) {
 	for _, fragment := range []string{
 		"Streamer ID: str-42",
 		"Chunk reference: /tmp/chunk.mp4",
-		"Previous persisted tracker state JSON:",
-		defaultTrackerState(),
 		"Do not add keys that are not present in the schema/template.",
+		"Never emit narrative commentary outside JSON.",
 		"Expected response schema:",
 		"state_schema[CS2 v1]",
 	} {

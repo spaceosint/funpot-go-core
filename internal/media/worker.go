@@ -31,7 +31,6 @@ type StageRequest struct {
 	Stage           string
 	Chunk           ChunkRef
 	Prompt          prompts.PromptVersion
-	PreviousState   string
 	ResponseSchema  string
 	SendPrompt      bool
 	ScenarioFolder  string
@@ -255,7 +254,7 @@ func isTrackerStage(stage string) bool {
 }
 
 func defaultTrackerState() string {
-	return `{"session_type":"single_match_single_chat","game":"cs2","mode":"unknown","session_status":{"value":"unknown","confidence":0,"reason":null},"focus_player":{"name":null,"team_side":"unknown","team_label":"unknown","confidence":0},"score_state":{"ct_score":null,"t_score":null,"source":"unknown","confidence":0},"round_tracking":{"observed_round_wins_ct":0,"observed_round_wins_t":0,"observed_round_history":[],"confidence":0},"winner_state":{"winner_side":"unknown","winner_team_label":"unknown","source":"unknown","confidence":0},"player_result":{"outcome":"unknown","confidence":0,"reason":"match ending not confirmed","is_final":false},"terminal_evidence":{"final_banner_seen":false,"final_banner_text":null,"final_scoreboard_seen":false,"final_scoreboard_text":null,"post_match_ui_seen":false,"return_to_lobby_seen":false,"strong_terminal_signals":[],"weak_terminal_signals":[]},"supporting_evidence":[],"open_uncertainties":[],"hard_conflicts":[],"next_needed_evidence":["clear final screen","clear final scoreboard","clear player team confirmation"]}`
+	return `{}`
 }
 
 func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {
@@ -658,7 +657,6 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		Stage:           step.ID,
 		Chunk:           chunk,
 		Prompt:          activePrompt,
-		PreviousState:   previousState,
 		ResponseSchema:  step.ResponseSchemaJSON,
 		SendPrompt:      entering,
 		ScenarioFolder:  step.Folder,
