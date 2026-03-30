@@ -12,6 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/prometheus/client_golang v1.19.0
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	go.opentelemetry.io/otel v1.26.0
 	go.opentelemetry.io/otel/exporters/prometheus v0.48.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.26.0
@@ -33,7 +34,6 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel/trace v1.26.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
