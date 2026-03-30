@@ -202,9 +202,11 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
 - `DELETE /api/admin/games/{gameId}` – admin-only endpoint deleting a game definition.
-- `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages defined by ordered `steps` (no manual transition payload required) with per-game versioning and activation. Each step **must** set its own LLM `model`. Backend auto-links steps by ascending `order` and applies the target step `entryCondition` as the generated transition condition.
+- `GET /api/admin/llm/model-configs` / `POST /api/admin/llm/model-configs` – admin CRUD entrypoints for reusable LLM model configs (model + execution params + free-form metadata JSON).
+- `PUT /api/admin/llm/model-configs/{id}` / `DELETE /api/admin/llm/model-configs/{id}` / `POST /api/admin/llm/model-configs/{id}/activate` – update, remove, and switch active model configuration.
+- `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages defined by ordered `steps` (no manual transition payload required) with per-game versioning and activation. Steps can define per-step `model`, or inherit model from `llmModelConfigId` at package level. Backend auto-links steps by ascending `order` and applies the target step `entryCondition` as the generated transition condition.
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
-- Legacy LLM admin surfaces (prompt versions, state schemas, rule sets, model configs) are removed from runtime; scenario-packages are now the only supported LLM control surface.
+- Legacy prompt-version/state-schema/rule-set admin surfaces are removed from runtime; scenario-packages + model-configs are the supported LLM control surfaces.
 - Current implementation keeps scenario-packages in process memory; persistence across restarts is intentionally not provided in this branch.
 
 When database connection fields are unset the server falls back to the in-memory

@@ -595,3 +595,33 @@ func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned
 		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
 	}
 }
+
+func TestWorkerProcessScenarioPackageUsesPackageModelConfigWhenStepModelMissing(t *testing.T) {
+	worker := NewWorker(
+		fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"root_detect": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-1",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "root_detect", Name: "Root", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if err != nil {
+		t.Fatalf("process streamer: %v", err)
+	}
+	if decision.Stage != "root_detect" {
+		t.Fatalf("expected root_detect stage, got %q", decision.Stage)
+	}
+}
