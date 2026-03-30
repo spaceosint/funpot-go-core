@@ -166,6 +166,12 @@ func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
 }
 
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
+	if s.scenarioStore != nil {
+		items, err := s.scenarioStore.List(ctx)
+		if err == nil {
+			return items
+		}
+	}
 	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -199,6 +205,18 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 			return ScenarioPackage{}, err
 		}
 	}
+	if s.scenarioStore != nil {
+		item := ScenarioPackage{
+			Name:             strings.TrimSpace(req.Name),
+			GameSlug:         gameSlug,
+			LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
+			Steps:            append([]ScenarioStep(nil), req.Steps...),
+			Transitions:      append([]ScenarioTransition(nil), normalizedTransitions...),
+			CreatedBy:        strings.TrimSpace(req.ActorID),
+			CreatedAt:        now,
+		}
+		return s.scenarioStore.Create(ctx, item)
+	}
 	_ = ctx
 
 	s.mu.Lock()
@@ -229,6 +247,13 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 }
 
 func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPackage, error) {
+	if s.scenarioStore != nil {
+		lookup := strings.TrimSpace(id)
+		if lookup == "" {
+			return ScenarioPackage{}, ErrScenarioPackageNotFound
+		}
+		return s.scenarioStore.GetByID(ctx, lookup)
+	}
 	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -259,6 +284,28 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
 			return ScenarioPackage{}, err
 		}
+	}
+	if s.scenarioStore != nil {
+		lookup := strings.TrimSpace(id)
+		if lookup == "" {
+			return ScenarioPackage{}, ErrScenarioPackageNotFound
+		}
+		current, err := s.scenarioStore.GetByID(ctx, lookup)
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		previousGameSlug := current.GameSlug
+		current.Name = strings.TrimSpace(req.Name)
+		current.GameSlug = targetGameSlug
+		current.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
+		current.Steps = append([]ScenarioStep(nil), req.Steps...)
+		current.Transitions = append([]ScenarioTransition(nil), normalizedTransitions...)
+		if current.GameSlug != previousGameSlug {
+			current.IsActive = false
+			current.ActivatedBy = ""
+			current.ActivatedAt = time.Time{}
+		}
+		return s.scenarioStore.Update(ctx, current)
 	}
 	_ = ctx
 	s.mu.Lock()
@@ -294,6 +341,13 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 }
 
 func (s *Service) DeleteScenarioPackage(ctx context.Context, id string) error {
+	if s.scenarioStore != nil {
+		lookup := strings.TrimSpace(id)
+		if lookup == "" {
+			return ErrScenarioPackageNotFound
+		}
+		return s.scenarioStore.Delete(ctx, lookup)
+	}
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -314,6 +368,13 @@ func (s *Service) DeleteScenarioPackage(ctx context.Context, id string) error {
 }
 
 func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID string) (ScenarioPackage, error) {
+	if s.scenarioStore != nil {
+		lookup := strings.TrimSpace(id)
+		if lookup == "" {
+			return ScenarioPackage{}, ErrScenarioPackageNotFound
+		}
+		return s.scenarioStore.SetActive(ctx, lookup, strings.TrimSpace(actorID), time.Now().UTC())
+	}
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -344,6 +405,13 @@ func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID strin
 }
 
 func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string) (ScenarioPackage, error) {
+	if s.scenarioStore != nil {
+		key := strings.TrimSpace(gameSlug)
+		if key == "" {
+			key = "global"
+		}
+		return s.scenarioStore.GetActiveByGameSlug(ctx, key)
+	}
 	_ = ctx
 	s.mu.RLock()
 	defer s.mu.RUnlock()
