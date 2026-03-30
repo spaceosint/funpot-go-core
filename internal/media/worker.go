@@ -384,7 +384,7 @@ func normalizeDecisionLabel(result StageClassification, updatedStateJSON string)
 }
 
 func normalizeStateSnapshot(previousState string, result StageClassification) string {
-	current := firstNonEmpty(strings.TrimSpace(result.UpdatedStateJSON), strings.TrimSpace(result.RawResponse))
+	current := strings.TrimSpace(result.UpdatedStateJSON)
 	if current == "" {
 		return strings.TrimSpace(previousState)
 	}

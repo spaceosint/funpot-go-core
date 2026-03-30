@@ -50,9 +50,9 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 				StatusCode: http.StatusOK,
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
-                    "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"cs_detected\",\"confidence\":0.93,\"summary\":\"Counter-Strike HUD visible\"}"}]}
-                    }],
+	                    "candidates": [{
+	                        "content": {"parts": [{"text": "{\"updated_state\":{\"game\":\"cs2\"}}"}]}
+	                    }],
                     "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
                 }`)),
 			}, nil
@@ -78,11 +78,11 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Classify() error = %v", err)
 	}
-	if result.Label != "cs_detected" {
-		t.Fatalf("expected label cs_detected, got %q", result.Label)
+	if result.Label != "state_updated" {
+		t.Fatalf("expected synthesized label state_updated, got %q", result.Label)
 	}
-	if result.Confidence != 0.93 {
-		t.Fatalf("expected confidence 0.93, got %v", result.Confidence)
+	if result.Confidence != 1 {
+		t.Fatalf("expected synthesized confidence 1, got %v", result.Confidence)
 	}
 	if result.TokensIn != 111 || result.TokensOut != 22 {
 		t.Fatalf("unexpected token usage: in=%d out=%d", result.TokensIn, result.TokensOut)
@@ -117,7 +117,7 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
                 }`)),
@@ -186,7 +186,7 @@ func TestGeminiStageClassifierSanitizesGenerationConfig(t *testing.T) {
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"cs_detected\",\"confidence\":0.93,\"summary\":\"Counter-Strike HUD visible\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"game\":\"cs2\"}}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 10}
                 }`)),
@@ -244,7 +244,7 @@ func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
                 }`)),
@@ -310,7 +310,7 @@ func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *
 					Header:     make(http.Header),
 					Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 120, "candidatesTokenCount": 30, "totalTokenCount": 150}
                 }`)),
@@ -334,7 +334,7 @@ func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.88,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"winner_seen\"],\"next_needed_evidence\":[],\"final_outcome\":\"win\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[\"winner_seen\"],\"next_needed_evidence\":[],\"final_outcome\":\"win\"}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 140, "candidatesTokenCount": 25, "totalTokenCount": 165}
                 }`)),
@@ -521,7 +521,7 @@ func TestGeminiStageClassifierAcceptsTrackerResponseWithoutLabel(t *testing.T) {
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[\"score_seen\"],\"next_needed_evidence\":[\"winner_banner\"],\"final_outcome\":\"unknown\"}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
                 }`)),
@@ -568,7 +568,7 @@ func TestGeminiStageClassifierAcceptsSchemaDrivenTrackerPayloadWithoutLegacyStat
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"}}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
                 }`)),
@@ -591,8 +591,8 @@ func TestGeminiStageClassifierAcceptsSchemaDrivenTrackerPayloadWithoutLegacyStat
 	if result.Label != "state_updated" {
 		t.Fatalf("expected label from response, got %q", result.Label)
 	}
-	if strings.TrimSpace(result.UpdatedStateJSON) != "" {
-		t.Fatalf("expected no legacy updated_state coercion, got %q", result.UpdatedStateJSON)
+	if result.UpdatedStateJSON != `{"status":"live"}` {
+		t.Fatalf("expected updated_state to be passed through, got %q", result.UpdatedStateJSON)
 	}
 }
 
@@ -612,7 +612,7 @@ func TestGeminiStageClassifierDoesNotBackfillTrackerStartPayload(t *testing.T) {
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"}}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
                 }`)),
@@ -632,8 +632,8 @@ func TestGeminiStageClassifierDoesNotBackfillTrackerStartPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected start stage payload without backfill to pass, got error %v", err)
 	}
-	if strings.TrimSpace(result.UpdatedStateJSON) != "" {
-		t.Fatalf("expected no updated_state fallback, got %q", result.UpdatedStateJSON)
+	if result.UpdatedStateJSON != `{"status":"live"}` {
+		t.Fatalf("expected updated_state to be preserved, got %q", result.UpdatedStateJSON)
 	}
 	if strings.TrimSpace(result.EvidenceDeltaJSON) != "" {
 		t.Fatalf("expected no delta fallback, got %q", result.EvidenceDeltaJSON)
@@ -662,7 +662,7 @@ func TestGeminiStageClassifierKeepsNullFinalOutcomeEmptyWhenSchemaOmitsFallback(
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
                     "candidates": [{
-                        "content": {"parts": [{"text": "{\"label\":\"state_updated\",\"confidence\":0.93,\"updated_state\":{\"status\":\"live\"},\"delta\":[],\"next_needed_evidence\":[],\"final_outcome\":null}"}]}
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"status\":\"live\"},\"delta\":[],\"next_needed_evidence\":[],\"final_outcome\":null}"}]}
                     }],
                     "usageMetadata": {"promptTokenCount": 111, "candidatesTokenCount": 22}
                 }`)),
@@ -726,8 +726,8 @@ func TestGeminiStageClassifierDoesNotCoerceNonTrackerStatePayload(t *testing.T) 
 			TimeoutMS: 1000,
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), ErrGeminiEmptyResponse.Error()) {
-		t.Fatalf("expected empty response error for non-tracker stage, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected strict-schema unknown field error for non-tracker stage, got %v", err)
 	}
 }
 
