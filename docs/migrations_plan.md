@@ -12,7 +12,9 @@
 > `migrations/0007_remove_streamer_llm_decision_history.up.sql`,
 > `migrations/0007_remove_streamer_llm_decision_history.down.sql`,
 > `migrations/0008_llm_model_configs_and_scenario_binding.up.sql`, and
-> `migrations/0008_llm_model_configs_and_scenario_binding.down.sql`.
+> `migrations/0008_llm_model_configs_and_scenario_binding.down.sql`,
+> `migrations/0009_remove_legacy_tracker_response_fields.up.sql`, and
+> `migrations/0009_remove_legacy_tracker_response_fields.down.sql`.
 >
 > Legacy duplicate-version migration files were removed so `golang-migrate`
 > sees a single `*.up.sql` and `*.down.sql` pair per version.

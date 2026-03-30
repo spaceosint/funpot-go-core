@@ -113,10 +113,12 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > active scenario step and sends chunk metadata/media with strict-JSON contract
 > expectations derived from that step.
 >
-> Legacy Gemini response coercion is disabled: tracker stages must return
+> Legacy Gemini response coercion is disabled: every stage must return
 > strict JSON that matches the active step `responseSchemaJson` exactly.
-> LLM response payload shape is fully defined by the active step
-> `responseSchemaJson`; extra keys are rejected by runtime.
+> Runtime no longer expects hardcoded tracker fields (`updated_state`, `delta`,
+> `next_needed_evidence`, `hard_conflicts`, `final_outcome`) as a built-in
+> contract. The full LLM JSON payload is treated as scenario-owned state data.
+> Extra keys outside the scenario schema are rejected by runtime.
 
 Update this table whenever you introduce a new configuration surface.
 
