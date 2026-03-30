@@ -618,12 +618,6 @@ func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, er
 
 	var generic map[string]any
 	if err := json.Unmarshal([]byte(cleaned), &generic); err != nil {
-		var arrayPayload []any
-		if arrayErr := json.Unmarshal([]byte(cleaned), &arrayPayload); arrayErr == nil {
-			if coerced, ok := coerceTrackerArrayResponse(stage, arrayPayload); ok {
-				return coerced, nil
-			}
-		}
 		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: %w", err)
 	}
 	parsed.Label = strings.TrimSpace(stringValue(generic["label"]))
@@ -644,38 +638,9 @@ func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, er
 	parsed.HardConflicts = rawMessageFromGenericValue(generic["hard_conflicts"])
 	parsed.FinalOutcome = strings.TrimSpace(stringValue(generic["final_outcome"]))
 	if !hasGeminiResponsePayload(parsed) {
-		if coerced, ok := coerceTrackerLegacyDeltaResponse(stage, generic); ok {
-			return coerced, nil
-		}
-		if coerced, ok := coerceTrackerStateObjectResponse(stage, generic); ok {
-			return coerced, nil
-		}
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
 	return parsed, nil
-}
-
-func coerceTrackerArrayResponse(stage string, payload []any) (geminiStageResponse, bool) {
-	if !isTrackerStage(stage) {
-		return geminiStageResponse{}, false
-	}
-	delta, err := json.Marshal(payload)
-	if err != nil {
-		return geminiStageResponse{}, false
-	}
-	updatedState := json.RawMessage("{}")
-	if isTrackerStartStage(stage) {
-		updatedState = json.RawMessage(defaultTrackerState())
-	}
-	return geminiStageResponse{
-		Label:              "state_updated",
-		Confidence:         0,
-		UpdatedState:       updatedState,
-		Delta:              json.RawMessage(delta),
-		NextNeededEvidence: json.RawMessage("[]"),
-		HardConflicts:      json.RawMessage("[]"),
-		FinalOutcome:       "unknown",
-	}, true
 }
 
 func trimForLog(value string, max int) string {
@@ -688,107 +653,6 @@ func trimForLog(value string, max int) string {
 
 func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
 	return strings.TrimSpace(parsed.Label) != "" || len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != ""
-}
-
-func coerceTrackerStateObjectResponse(stage string, payload map[string]any) (geminiStageResponse, bool) {
-	if !isTrackerStage(stage) || len(payload) == 0 {
-		return geminiStageResponse{}, false
-	}
-	if !looksLikeTrackerStatePayload(payload) {
-		return geminiStageResponse{}, false
-	}
-	confidence := confidenceFromGeneric(payload["confidence"])
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return geminiStageResponse{}, false
-	}
-	return geminiStageResponse{
-		Label:              "state_updated",
-		Confidence:         confidence,
-		UpdatedState:       json.RawMessage(body),
-		Delta:              json.RawMessage("[]"),
-		NextNeededEvidence: json.RawMessage("[]"),
-		HardConflicts:      json.RawMessage("[]"),
-		FinalOutcome:       "unknown",
-	}, true
-}
-
-func coerceTrackerLegacyDeltaResponse(stage string, payload map[string]any) (geminiStageResponse, bool) {
-	if !isTrackerStage(stage) || len(payload) == 0 {
-		return geminiStageResponse{}, false
-	}
-	stateChanges, hasStateChanges := payload["state_changes"]
-	newEvidence, hasNewEvidence := payload["new_evidence"]
-	if !hasStateChanges && !hasNewEvidence {
-		return geminiStageResponse{}, false
-	}
-
-	updatedState := rawMessageFromGenericValue(stateChanges)
-	if len(updatedState) == 0 || strings.TrimSpace(string(updatedState)) == "null" {
-		updatedState = json.RawMessage("{}")
-	}
-	delta := rawMessageFromGenericValue(newEvidence)
-	if len(delta) == 0 || strings.TrimSpace(string(delta)) == "null" {
-		delta = json.RawMessage("[]")
-	}
-	nextNeededEvidence := rawMessageFromGenericValue(payload["next_needed_evidence"])
-	if len(nextNeededEvidence) == 0 || strings.TrimSpace(string(nextNeededEvidence)) == "null" {
-		nextNeededEvidence = json.RawMessage("[]")
-	}
-	hardConflicts := rawMessageFromGenericValue(payload["hard_conflicts"])
-	if len(hardConflicts) == 0 || strings.TrimSpace(string(hardConflicts)) == "null" {
-		hardConflicts = json.RawMessage("[]")
-	}
-	finalOutcome := strings.TrimSpace(stringValue(payload["final_outcome"]))
-	if finalOutcome == "" {
-		finalOutcome = "unknown"
-	}
-
-	return geminiStageResponse{
-		Label:              "state_updated",
-		Confidence:         confidenceFromGeneric(payload["confidence"]),
-		UpdatedState:       updatedState,
-		Delta:              delta,
-		NextNeededEvidence: nextNeededEvidence,
-		HardConflicts:      hardConflicts,
-		FinalOutcome:       finalOutcome,
-	}, true
-}
-
-func confidenceFromGeneric(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case string:
-		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		if err == nil {
-			return parsed
-		}
-	}
-	return 0
-}
-
-func looksLikeTrackerStatePayload(payload map[string]any) bool {
-	for _, key := range []string{
-		"session_type",
-		"status",
-		"session_status",
-		"ct_score",
-		"t_score",
-		"mode",
-		"player_outcome",
-		"player_result",
-		"team_side",
-		"evidence_log",
-		"uncertainties",
-		"final_banner_seen",
-		"state",
-	} {
-		if _, ok := payload[key]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 func rawMessageFromGenericValue(value any) json.RawMessage {

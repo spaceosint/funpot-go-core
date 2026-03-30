@@ -12,17 +12,18 @@ import (
 )
 
 var (
-	ErrScenarioPackageNotFound = errors.New("scenario package not found")
-	ErrScenarioStepNotFound    = errors.New("scenario step not found")
-	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
-	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
-	ErrInvalidScenarioModelID  = errors.New("scenario package llmModelConfigId must not be empty")
-	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
+	ErrScenarioPackageNotFound  = errors.New("scenario package not found")
+	ErrScenarioStepNotFound     = errors.New("scenario step not found")
+	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
+	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty")
+	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
 )
 
 type ScenarioStep struct {
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
+	Model              string    `json:"model"`
 	GameSlug           string    `json:"gameSlug"`
 	Folder             string    `json:"folder"`
 	EntryCondition     string    `json:"entryCondition,omitempty"`
@@ -106,14 +107,14 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 	if len(req.Steps) == 0 {
 		return ErrInvalidScenarioPackage
 	}
-	if strings.TrimSpace(req.LLMModelConfigID) == "" {
-		return ErrInvalidScenarioModelID
-	}
 	seenSteps := make(map[string]struct{}, len(req.Steps))
 	for _, step := range req.Steps {
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
+		}
+		if strings.TrimSpace(step.Model) == "" {
+			return ErrInvalidScenarioStepModel
 		}
 		seenSteps[id] = struct{}{}
 	}
@@ -133,6 +134,7 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		if strings.TrimSpace(normalized[i].GameSlug) == "" {
 			normalized[i].GameSlug = fallbackGameSlug
 		}
+		normalized[i].Model = strings.TrimSpace(normalized[i].Model)
 	}
 	return normalized
 }
@@ -394,8 +396,7 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 		}
 		// Bootstrap fail-safe: if no initial candidate condition matches,
 		// still start from the first ordered initial/root step.
-		// This keeps scheduler cycles running when state payload is sparse
-		// or legacy entry conditions are too strict.
+		// This keeps scheduler cycles running when state payload is sparse.
 		if len(initial) > 0 {
 			return initial[0], true, nil
 		}
