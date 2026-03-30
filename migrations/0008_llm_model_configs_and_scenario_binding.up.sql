@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS llm_model_configs (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     model TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '',
     temperature DOUBLE PRECISION NOT NULL,
     max_tokens INTEGER NOT NULL,
     timeout_ms INTEGER NOT NULL,
