@@ -207,7 +207,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages defined by ordered `steps` (no manual transition payload required) with per-game versioning and activation. Steps can define per-step `model`, or inherit model from `llmModelConfigId` at package level. Backend auto-links steps by ascending `order` and applies the target step `entryCondition` as the generated transition condition.
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
 - Legacy prompt-version/state-schema/rule-set admin surfaces are removed from runtime; scenario-packages + model-configs are the supported LLM control surfaces.
-- Current implementation keeps scenario-packages in process memory; persistence across restarts is intentionally not provided in this branch.
+- Scenario-packages are persisted in PostgreSQL table `llm_scenario_packages` when DB is configured; when DB config is missing the service falls back to in-memory storage.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
