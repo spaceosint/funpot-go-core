@@ -71,10 +71,6 @@ type StageClassifier interface {
 }
 
 type PromptResolver interface {
-	ListActive(ctx context.Context) []prompts.PromptVersion
-}
-
-type activeScenarioPackageResolver interface {
 	GetActiveScenarioPackage(ctx context.Context, gameSlug string) (prompts.ScenarioPackage, error)
 }
 
@@ -241,13 +237,7 @@ func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID str
 		logger = zap.NewNop()
 	}
 
-	resolver, ok := w.prompts.(activeScenarioPackageResolver)
-	if !ok {
-		logger.Warn("scenario package resolver is not configured", zap.String("streamerID", streamerID))
-		return streamers.LLMDecision{}, prompts.ErrScenarioPackageNotFound
-	}
-
-	pkg, err := resolver.GetActiveScenarioPackage(ctx, "global")
+	pkg, err := w.prompts.GetActiveScenarioPackage(ctx, "global")
 	if err != nil {
 		logger.Error("active scenario package lookup failed", zap.String("streamerID", streamerID), zap.String("gameSlug", "global"), zap.Error(err))
 		return streamers.LLMDecision{}, err
@@ -289,16 +279,6 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 		}
 	}
 	return ChunkRef{}, lastErr
-}
-
-func (w *Worker) processStage(ctx context.Context, runID, streamerID string, chunk ChunkRef, activePrompt prompts.PromptVersion) (streamers.LLMDecision, error) {
-	previousState := w.resolvePreviousState(ctx, streamerID)
-	result, err := w.classifyWithRetry(ctx, StageRequest{StreamerID: streamerID, Stage: activePrompt.Stage, Chunk: chunk, Prompt: activePrompt, PreviousState: previousState}, activePrompt)
-	if err != nil {
-		w.metrics.recordFailure(ctx, streamerID, activePrompt.Stage)
-		return streamers.LLMDecision{}, err
-	}
-	return w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
 }
 
 func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID, previousState string) (streamers.LLMDecision, error) {
@@ -645,10 +625,6 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-type llmModelConfigResolver interface {
-	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
-}
-
 func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage) (streamers.LLMDecision, error) {
 	logger := w.logger
 	if logger == nil {
@@ -674,12 +650,8 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		ID:       step.ID,
 		Stage:    step.ID,
 		Template: step.PromptTemplate,
+		Model:    step.Model,
 		IsActive: true,
-	}
-	if resolver, ok := w.prompts.(llmModelConfigResolver); ok {
-		if cfg, resolveErr := resolver.GetLLMModelConfig(ctx, pkg.LLMModelConfigID); resolveErr == nil {
-			activePrompt.Model = strings.TrimSpace(cfg.Model)
-		}
 	}
 	result, err := w.classifyWithRetry(ctx, StageRequest{
 		StreamerID:      streamerID,

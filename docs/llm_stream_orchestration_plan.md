@@ -4,8 +4,8 @@
 Build a single orchestration model where admin-defined **scenario steps** drive the
 LLM analysis loop.
 
-The old linear prompt-chain / detector entrypoints are deprecated. Runtime should
-move to the model below:
+Legacy linear prompt-chain / detector entrypoints are removed from runtime.
+Current orchestration uses only the model below:
 
 1. One active **root step** (`initial=true`) for first entry.
 2. Per-game folders (for example `cs2/*`) that contain game-specific scenarios.

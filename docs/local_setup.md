@@ -112,6 +112,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > Tracker runtime is now Scenario Package v2-first: each cycle resolves the
 > active scenario step and sends chunk metadata/media with strict-JSON contract
 > expectations derived from that step.
+>
+> Legacy Gemini response coercion is disabled: tracker stages must return
+> canonical JSON fields (`updated_state`, `delta`, `next_needed_evidence`,
+> `hard_conflicts`, `final_outcome`) exactly as defined by the active step.
 
 Update this table whenever you introduce a new configuration surface.
 

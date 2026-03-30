@@ -50,12 +50,6 @@ type fakePromptResolver struct {
 	llmConfigErr   error
 }
 
-func (f fakePromptResolver) ListActive(_ context.Context) []prompts.PromptVersion {
-	out := make([]prompts.PromptVersion, len(f.prompts))
-	copy(out, f.prompts)
-	return out
-}
-
 func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string) (prompts.ScenarioPackage, error) {
 	if f.scenarioErr != nil {
 		return prompts.ScenarioPackage{}, f.scenarioErr
@@ -77,6 +71,7 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 		steps = append(steps, prompts.ScenarioStep{
 			ID:                 stepID,
 			Name:               stepID,
+			Model:              firstNonEmpty(prompt.Model, "gemini-2.0-flash"),
 			PromptTemplate:     prompt.Template,
 			ResponseSchemaJSON: "{}",
 			Initial:            i == 0,
@@ -275,53 +270,6 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 	}
 	if decisions.items[1].Stage != "root_detect" {
 		t.Fatalf("recorded stage = %q, want root_detect", decisions.items[1].Stage)
-	}
-}
-
-func TestWorkerProcessStageSkipsHistoryWhenStateDidNotChange(t *testing.T) {
-	decisions := &fakeDecisionStore{
-		items: []streamers.RecordDecisionRequest{
-			{
-				RunID:            "run-0",
-				StreamerID:       "str-1",
-				Stage:            "match_update",
-				Label:            "state_updated",
-				Confidence:       0.9,
-				UpdatedStateJSON: `{"session_status":{"value":"in_progress"}}`,
-			},
-		},
-	}
-	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
-		fakeClassifier{results: map[string]StageClassification{
-			"match_update": {
-				Label:             "state_updated",
-				Confidence:        0.9,
-				UpdatedStateJSON:  `{"session_status":{"value":"in_progress"}}`,
-				EvidenceDeltaJSON: `[]`,
-				NextEvidenceJSON:  `[]`,
-				FinalOutcome:      "unknown",
-			},
-		}},
-		fakePromptResolver{prompts: []prompts.PromptVersion{
-			{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000},
-		}},
-		&InMemoryRunStore{},
-		decisions,
-		NewInMemoryLocker(),
-		WorkerConfig{MinConfidence: 0.5},
-	)
-	decision, err := worker.processStage(context.Background(), "run-1", "str-1", ChunkRef{Reference: "chunk-1"}, prompts.PromptVersion{
-		ID: "tracker-1", Stage: "match_update", IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000,
-	})
-	if err != nil {
-		t.Fatalf("processStage() error = %v", err)
-	}
-	if decision.Label != "awaiting_changes" {
-		t.Fatalf("decision.Label = %q, want awaiting_changes", decision.Label)
-	}
-	if len(decisions.items) != 1 {
-		t.Fatalf("recorded %d decisions, want 1 (only seed state)", len(decisions.items))
 	}
 }
 
