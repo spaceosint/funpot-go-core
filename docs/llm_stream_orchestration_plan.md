@@ -37,6 +37,8 @@ Current orchestration uses only the model below:
 - Worker keeps compact persisted state per streamer/session.
 - Transition evaluation happens each cycle from current step + current state.
 - If no transition matches, worker stays on the same step.
+- Backend must not rely on any hardcoded response keys; the only valid payload
+  contract is the active step `responseSchemaJson`.
 
 ## Admin UX requirements
 - Scenario tree grouped by `gameSlug` and `folder` path.

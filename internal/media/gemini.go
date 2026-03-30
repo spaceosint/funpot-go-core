@@ -13,10 +13,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
 var (
@@ -24,6 +27,7 @@ var (
 	ErrGeminiChunkRequired   = errors.New("gemini chunk reference is required")
 	ErrGeminiChunkTooLarge   = errors.New("gemini chunk exceeds inline upload limit")
 	ErrGeminiEmptyResponse   = errors.New("gemini returned empty response")
+	ErrGeminiSchemaRequired  = errors.New("gemini response schema is required")
 	ErrGeminiUnsupportedMIME = errors.New("gemini does not support the chunk mime type")
 )
 
@@ -179,14 +183,6 @@ type geminiUsageMetadata struct {
 	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
-type geminiStageResponse struct {
-	UpdatedState       json.RawMessage `json:"updated_state,omitempty"`
-	Delta              json.RawMessage `json:"delta,omitempty"`
-	NextNeededEvidence json.RawMessage `json:"next_needed_evidence,omitempty"`
-	HardConflicts      json.RawMessage `json:"hard_conflicts,omitempty"`
-	FinalOutcome       string          `json:"final_outcome,omitempty"`
-}
-
 func (c *GeminiStageClassifier) Classify(ctx context.Context, input StageRequest) (StageClassification, error) {
 	return c.classify(ctx, input, false)
 }
@@ -275,37 +271,25 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s force_bootstrap=%t", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), forceBootstrap)
 	}
 
-	parsed, err := parseGeminiStageResponse(rawText)
+	parsedPayload, err := parseGeminiStageResponse(rawText, input.ResponseSchema)
 	if err != nil {
 		if errors.Is(err, ErrGeminiEmptyResponse) {
 			return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s raw_text=%s", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), strconv.Quote(trimForLog(rawText, 512)))
 		}
 		return StageClassification{}, err
 	}
-	if err := validateGeminiTrackerResponse(input.Stage, parsed); err != nil {
-		return StageClassification{}, err
-	}
 	c.storeSessionResponse(sessionKey, promptFingerprint, contents, payload, rawText)
 
-	label := "state_updated"
-	if outcome := strings.TrimSpace(parsed.FinalOutcome); outcome != "" && !strings.EqualFold(outcome, "unknown") {
-		label = strings.TrimSpace(parsed.FinalOutcome)
-	}
 	return StageClassification{
-		Label:             label,
-		Confidence:        1,
-		RawResponse:       strings.TrimSpace(rawText),
-		RequestRef:        endpoint,
-		ResponseRef:       strconv.Itoa(resp.StatusCode),
-		TokensIn:          payload.UsageMetadata.PromptTokenCount,
-		TokensOut:         payload.UsageMetadata.CandidatesTokenCount,
-		Latency:           time.Since(started),
-		NormalizedOutcome: strings.TrimSpace(parsed.FinalOutcome),
-		UpdatedStateJSON:  marshalRawMessage(parsed.UpdatedState),
-		EvidenceDeltaJSON: marshalRawMessage(parsed.Delta),
-		NextEvidenceJSON:  marshalRawMessage(parsed.NextNeededEvidence),
-		ConflictsJSON:     marshalRawMessage(parsed.HardConflicts),
-		FinalOutcome:      strings.TrimSpace(parsed.FinalOutcome),
+		Label:            "state_updated",
+		Confidence:       1,
+		RawResponse:      strings.TrimSpace(rawText),
+		RequestRef:       endpoint,
+		ResponseRef:      strconv.Itoa(resp.StatusCode),
+		TokensIn:         payload.UsageMetadata.PromptTokenCount,
+		TokensOut:        payload.UsageMetadata.CandidatesTokenCount,
+		Latency:          time.Since(started),
+		UpdatedStateJSON: parsedPayload,
 	}, nil
 }
 
@@ -574,23 +558,121 @@ func geminiBlockedSafetyCategories(ratings []geminiSafetyRating) []string {
 	return categories
 }
 
-func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
+func parseGeminiStageResponse(raw, responseSchema string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return "", ErrGeminiEmptyResponse
+	}
+	if strings.TrimSpace(responseSchema) == "" {
+		return "", ErrGeminiSchemaRequired
+	}
 
-	var parsed geminiStageResponse
+	if err := validateGeminiResponseSchema(cleaned, responseSchema); err != nil {
+		return "", err
+	}
+
+	var payload any
 	decoder := json.NewDecoder(strings.NewReader(cleaned))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&parsed); err != nil {
-		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: %w", err)
+	if err := decoder.Decode(&payload); err != nil {
+		return "", fmt.Errorf("parse gemini stage response: %w", err)
 	}
 	if decoder.More() {
-		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: unexpected trailing tokens")
+		return "", fmt.Errorf("parse gemini stage response: unexpected trailing tokens")
 	}
-	parsed.FinalOutcome = strings.TrimSpace(parsed.FinalOutcome)
-	if !hasGeminiResponsePayload(parsed) {
-		return geminiStageResponse{}, ErrGeminiEmptyResponse
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("normalize gemini stage response: %w", err)
 	}
-	return parsed, nil
+	cleaned = strings.TrimSpace(string(normalized))
+	if cleaned == "" || cleaned == "null" {
+		return "", ErrGeminiEmptyResponse
+	}
+	return cleaned, nil
+}
+
+func validateGeminiResponseSchema(responseRaw, responseSchema string) error {
+	schemaRaw := strings.TrimSpace(responseSchema)
+	if schemaRaw == "" {
+		return nil
+	}
+
+	var schemaDoc any
+	if err := json.Unmarshal([]byte(schemaRaw), &schemaDoc); err != nil {
+		return fmt.Errorf("invalid responseSchemaJson: %w", err)
+	}
+	normalizedSchema := normalizeResponseSchema(schemaDoc)
+	schemaBody, err := json.Marshal(normalizedSchema)
+	if err != nil {
+		return fmt.Errorf("marshal response schema: %w", err)
+	}
+
+	var payload any
+	if err := json.Unmarshal([]byte(responseRaw), &payload); err != nil {
+		return fmt.Errorf("parse gemini stage response: %w", err)
+	}
+
+	compiler := jsonschema.NewCompiler()
+	const schemaURL = "inmemory://response-schema.json"
+	if err := compiler.AddResource(schemaURL, strings.NewReader(string(schemaBody))); err != nil {
+		return fmt.Errorf("load response schema: %w", err)
+	}
+	compiled, err := compiler.Compile(schemaURL)
+	if err != nil {
+		return fmt.Errorf("compile response schema: %w", err)
+	}
+	if err := compiled.Validate(payload); err != nil {
+		return fmt.Errorf("gemini response does not match responseSchemaJson: %w", err)
+	}
+	return nil
+}
+
+func normalizeResponseSchema(schemaDoc any) any {
+	object, ok := schemaDoc.(map[string]any)
+	if !ok {
+		return schemaDoc
+	}
+	if _, hasType := object["type"]; hasType {
+		return schemaDoc
+	}
+	return templateValueToSchema(schemaDoc)
+}
+
+func templateValueToSchema(value any) map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		properties := make(map[string]any, len(typed))
+		required := make([]string, 0, len(typed))
+		for key, item := range typed {
+			properties[key] = templateValueToSchema(item)
+			required = append(required, key)
+		}
+		sort.Strings(required)
+		return map[string]any{
+			"type":                 "object",
+			"properties":           properties,
+			"required":             required,
+			"additionalProperties": false,
+		}
+	case []any:
+		schema := map[string]any{"type": "array"}
+		if len(typed) > 0 {
+			schema["items"] = templateValueToSchema(typed[0])
+		}
+		return schema
+	case string:
+		return map[string]any{"type": "string"}
+	case bool:
+		return map[string]any{"type": "boolean"}
+	case nil:
+		return map[string]any{"type": "null"}
+	case float64:
+		if float64(int64(typed)) == typed {
+			return map[string]any{"type": "integer"}
+		}
+		return map[string]any{"type": "number"}
+	default:
+		return map[string]any{}
+	}
 }
 
 func trimForLog(value string, max int) string {
@@ -599,14 +681,6 @@ func trimForLog(value string, max int) string {
 		return trimmed
 	}
 	return trimmed[:max] + "..."
-}
-
-func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
-	return len(parsed.UpdatedState) > 0 ||
-		len(parsed.Delta) > 0 ||
-		len(parsed.NextNeededEvidence) > 0 ||
-		len(parsed.HardConflicts) > 0 ||
-		strings.TrimSpace(parsed.FinalOutcome) != ""
 }
 
 func normalizeGeminiModel(model string) string {
@@ -624,26 +698,4 @@ func validateGeminiMIMEType(mimeType string) error {
 	default:
 		return fmt.Errorf("%w: %s (convert Streamlink .ts chunks to a supported format such as video/mp4 before calling Gemini)", ErrGeminiUnsupportedMIME, mimeType)
 	}
-}
-
-func marshalRawMessage(value json.RawMessage) string {
-	trimmed := strings.TrimSpace(string(value))
-	if trimmed == "" || trimmed == "null" {
-		return ""
-	}
-	return trimmed
-}
-
-func validateGeminiTrackerResponse(stage string, parsed geminiStageResponse) error {
-	if !isTrackerStage(stage) {
-		return nil
-	}
-	if strings.TrimSpace(parsed.FinalOutcome) != "" {
-		switch strings.TrimSpace(parsed.FinalOutcome) {
-		case "win", "loss", "draw", "unknown":
-		default:
-			return fmt.Errorf("gemini tracker response for %s has invalid final_outcome %q", strings.TrimSpace(stage), parsed.FinalOutcome)
-		}
-	}
-	return nil
 }

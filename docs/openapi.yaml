@@ -1009,16 +1009,16 @@ components:
           type: string
         updatedStateJson:
           type: string
-          description: Canonical tracker `updated_state` JSON snapshot persisted after this step.
+          description: Scenario-defined strict-JSON payload returned by the active step and persisted as current state snapshot.
         evidenceDeltaJson:
           type: string
-          description: Canonical tracker `delta` JSON payload persisted after this step.
+          description: Deprecated legacy field retained for backward compatibility; new runtime does not require a dedicated delta key.
         conflictsJson:
           type: string
-          description: Canonical tracker `hard_conflicts` JSON payload persisted after this step.
+          description: Deprecated legacy field retained for backward compatibility; new runtime does not require a dedicated conflicts key.
         finalOutcome:
           type: string
-          description: Canonical tracker `final_outcome` value (`win|loss|draw|unknown`).
+          description: Deprecated legacy field retained for backward compatibility; scenario schema defines any terminal outcome semantics.
         createdAt:
           type: string
           format: date-time

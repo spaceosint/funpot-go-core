@@ -20,6 +20,19 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+const strictTrackerResponseSchema = `{
+	"type":"object",
+	"additionalProperties": false,
+	"required":["updated_state"],
+	"properties":{
+		"updated_state":{"type":"object"},
+		"delta":{"type":["array","object","null"]},
+		"next_needed_evidence":{"type":["array","object","null"]},
+		"hard_conflicts":{"type":["array","object","null"]},
+		"final_outcome":{"type":["string","null"]}
+	}
+}`
+
 func TestNewGeminiStageClassifierRequiresAPIKey(t *testing.T) {
 	if _, err := NewGeminiStageClassifier(GeminiClassifierConfig{}); err == nil {
 		t.Fatal("expected missing api key error")
@@ -74,6 +87,7 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 			MaxTokens:   128,
 			TimeoutMS:   1000,
 		},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("Classify() error = %v", err)
@@ -138,7 +152,8 @@ func TestGeminiStageClassifierReusesChatSessionWithoutResendingPrompt(t *testing
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState: `{"status":"discovering"}`,
+		PreviousState:  `{"status":"discovering"}`,
+		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
 		t.Fatalf("first Classify() error = %v", err)
@@ -209,6 +224,7 @@ func TestGeminiStageClassifierSanitizesGenerationConfig(t *testing.T) {
 			MaxTokens:   geminiMaxOutputTokensLimit + 1,
 			TimeoutMS:   1000,
 		},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("Classify() error = %v", err)
@@ -218,6 +234,115 @@ func TestGeminiStageClassifierSanitizesGenerationConfig(t *testing.T) {
 	}
 	if strings.Contains(gotBody, `"maxOutputTokens":`) {
 		t.Fatalf("expected oversized maxOutputTokens to be omitted from generation config: %s", gotBody)
+	}
+}
+
+func TestGeminiStageClassifierValidatesResponseAgainstJSONSchema(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"game\":\"cs2\"},\"delta\":[],\"next_needed_evidence\":[],\"hard_conflicts\":[],\"final_outcome\":\"unknown\",\"unexpected\":true}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 8}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	_, err = classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt: prompts.PromptVersion{
+			Stage:    "match_update",
+			Template: "Update the game state",
+			Model:    "gemini",
+		},
+		ResponseSchema: `{
+            "type":"object",
+            "additionalProperties": false,
+            "required":["updated_state","delta","next_needed_evidence","hard_conflicts","final_outcome"],
+            "properties":{
+                "updated_state":{"type":"object"},
+                "delta":{"type":"array"},
+                "next_needed_evidence":{"type":"array"},
+                "hard_conflicts":{"type":"array"},
+                "final_outcome":{"type":"string"}
+            }
+        }`,
+	})
+	if err == nil {
+		t.Fatal("expected schema validation error for unexpected key")
+	}
+	if !strings.Contains(err.Error(), "responseSchemaJson") {
+		t.Fatalf("expected schema validation error details, got %v", err)
+	}
+}
+
+func TestGeminiStageClassifierValidatesResponseAgainstTemplateContract(t *testing.T) {
+	dir := t.TempDir()
+	chunkPath := filepath.Join(dir, "chunk.mp4")
+	if err := os.WriteFile(chunkPath, []byte("fake transport stream"), 0o644); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	classifier, err := NewGeminiStageClassifier(GeminiClassifierConfig{
+		APIKey:  "gemini-key",
+		BaseURL: "https://gemini.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+                    "candidates": [{
+                        "content": {"parts": [{"text": "{\"updated_state\":{\"game\":\"cs2\"},\"delta\":[],\"next_needed_evidence\":[],\"hard_conflicts\":[],\"final_outcome\":\"unknown\"}"}]}
+                    }],
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 8}
+                }`)),
+			}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatalf("NewGeminiStageClassifier() error = %v", err)
+	}
+
+	result, err := classifier.Classify(context.Background(), StageRequest{
+		StreamerID: "str-1",
+		Stage:      "match_update",
+		Chunk:      ChunkRef{Reference: chunkPath},
+		Prompt: prompts.PromptVersion{
+			Stage:    "match_update",
+			Template: "Update the game state",
+			Model:    "gemini",
+		},
+		ResponseSchema: `{
+            "updated_state": {"game": ""},
+            "delta": [],
+            "next_needed_evidence": [],
+            "hard_conflicts": [],
+            "final_outcome": ""
+        }`,
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if result.FinalOutcome != "" {
+		t.Fatalf("expected final outcome to remain empty without dedicated extraction, got %q", result.FinalOutcome)
 	}
 }
 
@@ -265,7 +390,8 @@ func TestGeminiStageClassifierRotatesChatWhenTokenBudgetReached(t *testing.T) {
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState: `{"status":"discovering"}`,
+		PreviousState:  `{"status":"discovering"}`,
+		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
 		t.Fatalf("first Classify() error = %v", err)
@@ -355,7 +481,8 @@ func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *
 			Template: "Update the game state",
 			Model:    "gemini",
 		},
-		PreviousState: `{"status":"discovering"}`,
+		PreviousState:  `{"status":"discovering"}`,
+		ResponseSchema: strictTrackerResponseSchema,
 	}
 	if _, err := classifier.Classify(context.Background(), req); err != nil {
 		t.Fatalf("first Classify() error = %v", err)
@@ -373,8 +500,8 @@ func TestGeminiStageClassifierDoesNotResetSessionOnEmptyContinuationResponse(t *
 	if err != nil {
 		t.Fatalf("third Classify() error = %v", err)
 	}
-	if result.FinalOutcome != "win" {
-		t.Fatalf("expected recovered outcome win, got %q", result.FinalOutcome)
+	if result.FinalOutcome != "" {
+		t.Fatalf("expected recovered outcome to remain empty without dedicated extraction, got %q", result.FinalOutcome)
 	}
 	if len(requestBodies) != 3 {
 		t.Fatalf("expected 3 requests, got %d", len(requestBodies))
@@ -533,10 +660,11 @@ func TestGeminiStageClassifierAcceptsTrackerResponseWithoutLabel(t *testing.T) {
 	}
 
 	result, err := classifier.Classify(context.Background(), StageRequest{
-		StreamerID: "str-1",
-		Stage:      "match_update",
-		Chunk:      ChunkRef{Reference: chunkPath},
-		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		StreamerID:     "str-1",
+		Stage:          "match_update",
+		Chunk:          ChunkRef{Reference: chunkPath},
+		Prompt:         prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("Classify() error = %v", err)
@@ -544,11 +672,11 @@ func TestGeminiStageClassifierAcceptsTrackerResponseWithoutLabel(t *testing.T) {
 	if result.Label != "state_updated" {
 		t.Fatalf("expected synthesized label state_updated, got %q", result.Label)
 	}
-	if result.UpdatedStateJSON != `{"status":"live"}` {
-		t.Fatalf("expected updated state payload, got %s", result.UpdatedStateJSON)
+	if result.UpdatedStateJSON != `{"delta":["score_seen"],"final_outcome":"unknown","next_needed_evidence":["winner_banner"],"updated_state":{"status":"live"}}` {
+		t.Fatalf("expected scenario-defined payload, got %s", result.UpdatedStateJSON)
 	}
-	if result.FinalOutcome != "unknown" {
-		t.Fatalf("expected final outcome unknown, got %q", result.FinalOutcome)
+	if result.FinalOutcome != "" {
+		t.Fatalf("expected final outcome to stay empty without dedicated extraction, got %q", result.FinalOutcome)
 	}
 }
 
@@ -580,10 +708,11 @@ func TestGeminiStageClassifierAcceptsSchemaDrivenTrackerPayloadWithoutLegacyStat
 	}
 
 	result, err := classifier.Classify(context.Background(), StageRequest{
-		StreamerID: "str-1",
-		Stage:      "match_update",
-		Chunk:      ChunkRef{Reference: chunkPath},
-		Prompt:     prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		StreamerID:     "str-1",
+		Stage:          "match_update",
+		Chunk:          ChunkRef{Reference: chunkPath},
+		Prompt:         prompts.PromptVersion{Stage: "match_update", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("expected schema-driven tracker payload to pass, got %v", err)
@@ -591,8 +720,8 @@ func TestGeminiStageClassifierAcceptsSchemaDrivenTrackerPayloadWithoutLegacyStat
 	if result.Label != "state_updated" {
 		t.Fatalf("expected label from response, got %q", result.Label)
 	}
-	if result.UpdatedStateJSON != `{"status":"live"}` {
-		t.Fatalf("expected updated_state to be passed through, got %q", result.UpdatedStateJSON)
+	if result.UpdatedStateJSON != `{"updated_state":{"status":"live"}}` {
+		t.Fatalf("expected scenario-defined payload to pass through, got %q", result.UpdatedStateJSON)
 	}
 }
 
@@ -624,16 +753,17 @@ func TestGeminiStageClassifierDoesNotBackfillTrackerStartPayload(t *testing.T) {
 	}
 
 	result, err := classifier.Classify(context.Background(), StageRequest{
-		StreamerID: "str-1",
-		Stage:      "Start",
-		Chunk:      ChunkRef{Reference: chunkPath},
-		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		StreamerID:     "str-1",
+		Stage:          "Start",
+		Chunk:          ChunkRef{Reference: chunkPath},
+		Prompt:         prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("expected start stage payload without backfill to pass, got error %v", err)
 	}
-	if result.UpdatedStateJSON != `{"status":"live"}` {
-		t.Fatalf("expected updated_state to be preserved, got %q", result.UpdatedStateJSON)
+	if result.UpdatedStateJSON != `{"updated_state":{"status":"live"}}` {
+		t.Fatalf("expected scenario-defined payload to be preserved, got %q", result.UpdatedStateJSON)
 	}
 	if strings.TrimSpace(result.EvidenceDeltaJSON) != "" {
 		t.Fatalf("expected no delta fallback, got %q", result.EvidenceDeltaJSON)
@@ -674,10 +804,11 @@ func TestGeminiStageClassifierKeepsNullFinalOutcomeEmptyWhenSchemaOmitsFallback(
 	}
 
 	result, err := classifier.Classify(context.Background(), StageRequest{
-		StreamerID: "str-1",
-		Stage:      "Start",
-		Chunk:      ChunkRef{Reference: chunkPath},
-		Prompt:     prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		StreamerID:     "str-1",
+		Stage:          "Start",
+		Chunk:          ChunkRef{Reference: chunkPath},
+		Prompt:         prompts.PromptVersion{Stage: "Start", Template: "Update the game state", Model: "gemini", MaxTokens: 128, TimeoutMS: 1000},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err != nil {
 		t.Fatalf("expected null final_outcome to pass without normalization, got error %v", err)
@@ -725,9 +856,10 @@ func TestGeminiStageClassifierDoesNotCoerceNonTrackerStatePayload(t *testing.T) 
 			MaxTokens: 128,
 			TimeoutMS: 1000,
 		},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("expected strict-schema unknown field error for non-tracker stage, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "does not match responseSchemaJson") {
+		t.Fatalf("expected schema validation error for non-tracker stage, got %v", err)
 	}
 }
 
@@ -847,16 +979,14 @@ func TestGeminiStageClassifierReportsEmptyParsedPayloadDiagnostics(t *testing.T)
 			MaxTokens: 128,
 			TimeoutMS: 1000,
 		},
+		ResponseSchema: strictTrackerResponseSchema,
 	})
 	if err == nil {
 		t.Fatal("expected parsed empty response diagnostics error")
 	}
 	for _, fragment := range []string{
-		ErrGeminiEmptyResponse.Error(),
-		"stage=Start",
-		"streamer_id=str-1",
-		"prompt_id=prompt-start",
-		`raw_text="{}"`,
+		"does not match responseSchemaJson",
+		"missing properties: 'updated_state'",
 	} {
 		if !strings.Contains(err.Error(), fragment) {
 			t.Fatalf("expected error to contain %q, got %v", fragment, err)
