@@ -71,6 +71,7 @@ type StageClassifier interface {
 
 type PromptResolver interface {
 	GetActiveScenarioPackage(ctx context.Context, gameSlug string) (prompts.ScenarioPackage, error)
+	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
 }
 
 type RunStore interface {
@@ -645,11 +646,19 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 			return streamers.LLMDecision{}, err
 		}
 	}
+	model := strings.TrimSpace(step.Model)
+	if model == "" && strings.TrimSpace(pkg.LLMModelConfigID) != "" {
+		config, err := w.prompts.GetLLMModelConfig(ctx, pkg.LLMModelConfigID)
+		if err != nil {
+			return streamers.LLMDecision{}, err
+		}
+		model = strings.TrimSpace(config.Model)
+	}
 	activePrompt := prompts.PromptVersion{
 		ID:       step.ID,
 		Stage:    step.ID,
 		Template: step.PromptTemplate,
-		Model:    step.Model,
+		Model:    model,
 		IsActive: true,
 	}
 	result, err := w.classifyWithRetry(ctx, StageRequest{

@@ -10,10 +10,9 @@ func TestScenarioPackageResolveStep(t *testing.T) {
 
 	svc := NewService()
 	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:             "cs2 flow",
-		GameSlug:         "global",
-		ActorID:          "admin-1",
-		LLMModelConfigID: "cfg-1",
+		Name:     "cs2 flow",
+		GameSlug: "global",
+		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
 			{ID: "game_detect", Name: "Game detect", Model: "gemini-2.5-flash", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 			{ID: "cs2_mode", Name: "CS2 mode", Model: "gemini-2.5-flash", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
@@ -156,10 +155,9 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 
 	svc := NewService()
 	created, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:             "global flow",
-		GameSlug:         "global",
-		ActorID:          "admin-1",
-		LLMModelConfigID: "cfg-1",
+		Name:     "global flow",
+		GameSlug: "global",
+		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
 			{ID: "root_detect", Name: "Root", Model: "gemini-2.5-flash", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
 		},
@@ -172,10 +170,9 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 	}
 
 	updated, err := svc.UpdateScenarioPackage(context.Background(), created.ID, ScenarioPackageCreateRequest{
-		Name:             "cs2 flow",
-		GameSlug:         "cs2",
-		ActorID:          "admin-1",
-		LLMModelConfigID: "cfg-1",
+		Name:     "cs2 flow",
+		GameSlug: "cs2",
+		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
 			{ID: "cs2_mode", Name: "Mode", Model: "gemini-2.5-flash", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
 		},
@@ -202,10 +199,9 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 
 	svc := NewService()
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:             "auto transitions",
-		GameSlug:         "global",
-		ActorID:          "admin-1",
-		LLMModelConfigID: "cfg-1",
+		Name:     "auto transitions",
+		GameSlug: "global",
+		ActorID:  "admin-1",
 		Steps: []ScenarioStep{
 			{ID: "step_a", Name: "Step A", Model: "gemini-2.5-flash", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 			{ID: "step_b", Name: "Step B", Model: "gemini-2.5-flash", PromptTemplate: "b", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
@@ -243,7 +239,7 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	}
 }
 
-func TestScenarioPackageCreateRequiresStepModel(t *testing.T) {
+func TestScenarioPackageCreateRequiresStepModelWithoutPackageModelConfig(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
@@ -275,5 +271,34 @@ func TestScenarioPackageCreateRequiresStepModel(t *testing.T) {
 	}
 	if got := item.Steps[0].Model; got != "gemini-2.5-pro" {
 		t.Fatalf("expected scenario step model to be preserved, got %q", got)
+	}
+}
+
+func TestScenarioPackageCreateAllowsMissingStepModelWhenPackageConfigIsSet(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config, err := svc.CreateLLMModelConfig(context.Background(), LLMModelConfigUpsertRequest{
+		Name:    "default",
+		Model:   "gemini-2.5-flash",
+		ActorID: "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("create llm config: %v", err)
+	}
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "config driven",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "step_package_default", Name: "Package default", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if got := item.Steps[0].Model; got != "" {
+		t.Fatalf("expected scenario step model to remain empty and resolve from package config at runtime, got %q", got)
 	}
 }

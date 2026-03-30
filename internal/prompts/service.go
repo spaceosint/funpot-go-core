@@ -1,21 +1,31 @@
 package prompts
 
-import "sync"
+import (
+	"database/sql"
+	"sync"
+)
 
-// Service stores only scenario-graph v2 configuration in memory.
-// Legacy prompt/version, tracker schema, rule-set, and model-config surfaces were removed.
+// Service stores scenario-graph v2 configuration in memory and model configs in configured store.
 type Service struct {
 	mu               sync.RWMutex
 	counter          int
+	configCounter    int
 	scenarioPackages map[string][]ScenarioPackage
+	modelConfigs     map[string]LLMModelConfig
+	modelConfigStore modelConfigStore
 }
 
 func NewService() *Service {
-	return &Service{scenarioPackages: map[string][]ScenarioPackage{}}
+	return &Service{
+		scenarioPackages: map[string][]ScenarioPackage{},
+		modelConfigs:     map[string]LLMModelConfig{},
+	}
 }
 
-// NewPostgresService keeps the constructor shape for callers but intentionally
-// runs scenario storage in-memory only.
-func NewPostgresService(_ any) *Service {
-	return NewService()
+func NewPostgresService(db *sql.DB) *Service {
+	svc := NewService()
+	if db != nil {
+		svc.modelConfigStore = NewPostgresModelConfigStore(db)
+	}
+	return svc
 }

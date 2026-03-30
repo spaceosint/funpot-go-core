@@ -16,7 +16,7 @@ var (
 	ErrScenarioStepNotFound     = errors.New("scenario step not found")
 	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
 	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
-	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty")
+	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty when package model config is not set")
 	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
 )
 
@@ -108,12 +108,13 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		return ErrInvalidScenarioPackage
 	}
 	seenSteps := make(map[string]struct{}, len(req.Steps))
+	hasPackageModel := strings.TrimSpace(req.LLMModelConfigID) != ""
 	for _, step := range req.Steps {
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
 		}
-		if strings.TrimSpace(step.Model) == "" {
+		if strings.TrimSpace(step.Model) == "" && !hasPackageModel {
 			return ErrInvalidScenarioStepModel
 		}
 		seenSteps[id] = struct{}{}
@@ -193,6 +194,11 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
 	req.Steps = normalizedSteps
+	if strings.TrimSpace(req.LLMModelConfigID) != "" {
+		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
+			return ScenarioPackage{}, err
+		}
+	}
 	_ = ctx
 
 	s.mu.Lock()
@@ -249,6 +255,11 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
 	req.Steps = normalizedSteps
+	if strings.TrimSpace(req.LLMModelConfigID) != "" {
+		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
+			return ScenarioPackage{}, err
+		}
+	}
 	_ = ctx
 	s.mu.Lock()
 	defer s.mu.Unlock()
