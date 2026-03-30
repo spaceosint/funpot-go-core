@@ -115,9 +115,8 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 >
 > Legacy Gemini response coercion is disabled: tracker stages must return
 > strict JSON that matches the active step `responseSchemaJson` exactly.
-> Canonical fields like `updated_state`, `delta`, `next_needed_evidence`,
-> `hard_conflicts`, `final_outcome` are now schema-driven and only required
-> when present in the active step contract.
+> LLM response payload shape is fully defined by the active step
+> `responseSchemaJson`; extra keys are rejected by runtime.
 
 Update this table whenever you introduce a new configuration surface.
 

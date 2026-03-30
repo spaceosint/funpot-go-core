@@ -527,7 +527,7 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	}
 }
 
-func TestWorkerProcessStreamerNormalizesLegacyStatePayloads(t *testing.T) {
+func TestWorkerProcessStreamerIgnoresRawResponseStatePayloads(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
 		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
@@ -535,13 +535,13 @@ func TestWorkerProcessStreamerNormalizesLegacyStatePayloads(t *testing.T) {
 			"start": {
 				Confidence: 0.91,
 				RawResponse: `{
-					"state": {
-						"mode": {"value": "competitive", "confidence": 0.9},
-						"ct_score": {"value": 8, "confidence": 0.9},
-						"t_score": {"value": 5, "confidence": 0.9}
-					},
-					"final_outcome": "unknown"
-				}`,
+						"state": {
+							"mode": {"value": "competitive", "confidence": 0.9},
+							"ct_score": {"value": 8, "confidence": 0.9},
+							"t_score": {"value": 5, "confidence": 0.9}
+						},
+						"final_outcome": "unknown"
+					}`,
 			},
 		}},
 		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "start", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
@@ -557,7 +557,7 @@ func TestWorkerProcessStreamerNormalizesLegacyStatePayloads(t *testing.T) {
 	if len(decisions.items) != 1 {
 		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
-	if got := decisions.items[0].UpdatedStateJSON; !strings.Contains(got, `"state":{"ct_score":8,"mode":"competitive","t_score":5}`) || !strings.Contains(got, `"final_outcome":"unknown"`) {
+	if got := decisions.items[0].UpdatedStateJSON; got != defaultTrackerState() {
 		t.Fatalf("updated state = %q", decisions.items[0].UpdatedStateJSON)
 	}
 }

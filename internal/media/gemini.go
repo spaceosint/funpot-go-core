@@ -20,12 +20,11 @@ import (
 )
 
 var (
-	ErrGeminiAPIKeyRequired    = errors.New("gemini api key is required")
-	ErrGeminiChunkRequired     = errors.New("gemini chunk reference is required")
-	ErrGeminiChunkTooLarge     = errors.New("gemini chunk exceeds inline upload limit")
-	ErrGeminiEmptyResponse     = errors.New("gemini returned empty response")
-	ErrGeminiInvalidConfidence = errors.New("gemini confidence must be between 0 and 1")
-	ErrGeminiUnsupportedMIME   = errors.New("gemini does not support the chunk mime type")
+	ErrGeminiAPIKeyRequired  = errors.New("gemini api key is required")
+	ErrGeminiChunkRequired   = errors.New("gemini chunk reference is required")
+	ErrGeminiChunkTooLarge   = errors.New("gemini chunk exceeds inline upload limit")
+	ErrGeminiEmptyResponse   = errors.New("gemini returned empty response")
+	ErrGeminiUnsupportedMIME = errors.New("gemini does not support the chunk mime type")
 )
 
 const geminiMaxOutputTokensLimit = 8192
@@ -181,9 +180,6 @@ type geminiUsageMetadata struct {
 }
 
 type geminiStageResponse struct {
-	Label              string          `json:"label"`
-	Confidence         float64         `json:"confidence"`
-	Summary            string          `json:"summary,omitempty"`
 	UpdatedState       json.RawMessage `json:"updated_state,omitempty"`
 	Delta              json.RawMessage `json:"delta,omitempty"`
 	NextNeededEvidence json.RawMessage `json:"next_needed_evidence,omitempty"`
@@ -279,42 +275,32 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s force_bootstrap=%t", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), forceBootstrap)
 	}
 
-	parsed, err := parseGeminiStageResponse(rawText, input.Stage)
+	parsed, err := parseGeminiStageResponse(rawText)
 	if err != nil {
 		if errors.Is(err, ErrGeminiEmptyResponse) {
 			return StageClassification{}, fmt.Errorf("%v; stage=%s streamer_id=%s session_key=%s prompt_id=%s raw_text=%s", err, strings.TrimSpace(input.Stage), strings.TrimSpace(input.StreamerID), sessionKey, strings.TrimSpace(input.Prompt.ID), strconv.Quote(trimForLog(rawText, 512)))
 		}
 		return StageClassification{}, err
 	}
-	if parsed.Confidence < 0 || parsed.Confidence > 1 {
-		return StageClassification{}, ErrGeminiInvalidConfidence
-	}
 	if err := validateGeminiTrackerResponse(input.Stage, parsed); err != nil {
 		return StageClassification{}, err
 	}
 	c.storeSessionResponse(sessionKey, promptFingerprint, contents, payload, rawText)
 
-	label := strings.TrimSpace(parsed.Label)
-	if label == "" && len(parsed.UpdatedState) > 0 {
-		label = "state_updated"
-	}
-	if label == "" && strings.TrimSpace(parsed.FinalOutcome) != "" {
+	label := "state_updated"
+	if outcome := strings.TrimSpace(parsed.FinalOutcome); outcome != "" && !strings.EqualFold(outcome, "unknown") {
 		label = strings.TrimSpace(parsed.FinalOutcome)
-	}
-	confidence := parsed.Confidence
-	if confidence == 0 && (len(parsed.UpdatedState) > 0 || strings.TrimSpace(parsed.FinalOutcome) != "") {
-		confidence = 1
 	}
 	return StageClassification{
 		Label:             label,
-		Confidence:        confidence,
+		Confidence:        1,
 		RawResponse:       strings.TrimSpace(rawText),
 		RequestRef:        endpoint,
 		ResponseRef:       strconv.Itoa(resp.StatusCode),
 		TokensIn:          payload.UsageMetadata.PromptTokenCount,
 		TokensOut:         payload.UsageMetadata.CandidatesTokenCount,
 		Latency:           time.Since(started),
-		NormalizedOutcome: firstNonEmpty(strings.TrimSpace(parsed.FinalOutcome), label),
+		NormalizedOutcome: strings.TrimSpace(parsed.FinalOutcome),
 		UpdatedStateJSON:  marshalRawMessage(parsed.UpdatedState),
 		EvidenceDeltaJSON: marshalRawMessage(parsed.Delta),
 		NextEvidenceJSON:  marshalRawMessage(parsed.NextNeededEvidence),
@@ -407,10 +393,6 @@ Expected response schema:
 	if !isTrackerStage(input.Stage) {
 		return strings.TrimSpace(fmt.Sprintf(base+`
 Return ONLY valid JSON that matches the admin-managed JSON template from the prompt above.
-For detector stages, the JSON must include keys: label, confidence, summary.
-- label: short snake_case decision for this stage.
-- confidence: number between 0 and 1.
-- summary: short rationale.
 Do not include any keys that are not part of the admin-managed template.`, input.Stage, strings.TrimSpace(input.StreamerID), formatChunkCapturedAt(input.Chunk.CapturedAt), formatChunkReference(input.Chunk.Reference), strings.TrimSpace(input.Prompt.Template), strings.TrimSpace(input.ResponseSchema)))
 	}
 	return strings.TrimSpace(fmt.Sprintf(base+`
@@ -592,41 +574,19 @@ func geminiBlockedSafetyCategories(ratings []geminiSafetyRating) []string {
 	return categories
 }
 
-func parseGeminiStageResponse(raw string, stage string) (geminiStageResponse, error) {
+func parseGeminiStageResponse(raw string) (geminiStageResponse, error) {
 	cleaned := strings.TrimSpace(raw)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
 
 	var parsed geminiStageResponse
-	if err := json.Unmarshal([]byte(cleaned), &parsed); err == nil {
-		if hasGeminiResponsePayload(parsed) {
-			return parsed, nil
-		}
-	}
-
-	var generic map[string]any
-	if err := json.Unmarshal([]byte(cleaned), &generic); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(cleaned))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&parsed); err != nil {
 		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: %w", err)
 	}
-	parsed.Label = strings.TrimSpace(stringValue(generic["label"]))
-	parsed.Summary = strings.TrimSpace(stringValue(generic["summary"]))
-	switch value := generic["confidence"].(type) {
-	case float64:
-		parsed.Confidence = value
-	case string:
-		confidence, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil {
-			return geminiStageResponse{}, fmt.Errorf("parse gemini confidence: %w", err)
-		}
-		parsed.Confidence = confidence
+	if decoder.More() {
+		return geminiStageResponse{}, fmt.Errorf("parse gemini stage response: unexpected trailing tokens")
 	}
-	parsed.UpdatedState = rawMessageFromGenericValue(generic["updated_state"])
-	parsed.Delta = rawMessageFromGenericValue(generic["delta"])
-	parsed.NextNeededEvidence = rawMessageFromGenericValue(generic["next_needed_evidence"])
-	parsed.HardConflicts = rawMessageFromGenericValue(generic["hard_conflicts"])
-	parsed.FinalOutcome = strings.TrimSpace(stringValue(generic["final_outcome"]))
+	parsed.FinalOutcome = strings.TrimSpace(parsed.FinalOutcome)
 	if !hasGeminiResponsePayload(parsed) {
 		return geminiStageResponse{}, ErrGeminiEmptyResponse
 	}
@@ -642,24 +602,11 @@ func trimForLog(value string, max int) string {
 }
 
 func hasGeminiResponsePayload(parsed geminiStageResponse) bool {
-	return strings.TrimSpace(parsed.Label) != "" ||
-		strings.TrimSpace(parsed.Summary) != "" ||
-		len(parsed.UpdatedState) > 0 ||
+	return len(parsed.UpdatedState) > 0 ||
 		len(parsed.Delta) > 0 ||
 		len(parsed.NextNeededEvidence) > 0 ||
 		len(parsed.HardConflicts) > 0 ||
 		strings.TrimSpace(parsed.FinalOutcome) != ""
-}
-
-func rawMessageFromGenericValue(value any) json.RawMessage {
-	if value == nil {
-		return nil
-	}
-	body, err := json.Marshal(value)
-	if err != nil {
-		return nil
-	}
-	return json.RawMessage(body)
 }
 
 func normalizeGeminiModel(model string) string {
