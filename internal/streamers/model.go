@@ -36,6 +36,8 @@ type LLMDecision struct {
 	ChunkRef           string  `json:"chunkRef,omitempty"`
 	RequestRef         string  `json:"requestRef,omitempty"`
 	ResponseRef        string  `json:"responseRef,omitempty"`
+	RequestPayload     string  `json:"requestPayload,omitempty"`
+	ResponsePayload    string  `json:"responsePayload,omitempty"`
 	RawResponse        string  `json:"rawResponse,omitempty"`
 	TokensIn           int     `json:"tokensIn,omitempty"`
 	TokensOut          int     `json:"tokensOut,omitempty"`
@@ -61,6 +63,7 @@ type LLMStatus struct {
 	DetectedGameKey   string        `json:"detectedGameKey,omitempty"`
 	UpdatedAt         string        `json:"updatedAt,omitempty"`
 	LatestByStage     []LLMDecision `json:"latestByStage"`
+	History           []LLMDecision `json:"history"`
 }
 
 type RecordDecisionRequest struct {
@@ -79,6 +82,8 @@ type RecordDecisionRequest struct {
 	ChunkCapturedAt    time.Time
 	RequestRef         string
 	ResponseRef        string
+	RequestPayload     string
+	ResponsePayload    string
 	RawResponse        string
 	TokensIn           int
 	TokensOut          int

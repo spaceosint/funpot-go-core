@@ -286,6 +286,8 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		RawResponse:      strings.TrimSpace(rawText),
 		RequestRef:       endpoint,
 		ResponseRef:      strconv.Itoa(resp.StatusCode),
+		RequestPayload:   string(bodyBytes),
+		ResponsePayload:  string(responseBody),
 		TokensIn:         payload.UsageMetadata.PromptTokenCount,
 		TokensOut:        payload.UsageMetadata.CandidatesTokenCount,
 		Latency:          time.Since(started),

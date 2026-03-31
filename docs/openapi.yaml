@@ -1023,7 +1023,7 @@ components:
 
     LLMStatus:
       type: object
-      required: [streamerId, state, latestByStage]
+      required: [streamerId, state, latestByStage, history]
       properties:
         streamerId:
           type: string
@@ -1046,6 +1046,11 @@ components:
           format: date-time
         latestByStage:
           type: array
+          items:
+            $ref: '#/components/schemas/LLMDecision'
+        history:
+          type: array
+          description: Full chronological LLM decision history for the streamer, including per-call request/response payloads.
           items:
             $ref: '#/components/schemas/LLMDecision'
 
@@ -1086,6 +1091,12 @@ components:
           type: string
         responseRef:
           type: string
+        requestPayload:
+          type: string
+          description: JSON payload sent to the upstream LLM provider for this decision.
+        responsePayload:
+          type: string
+          description: Raw HTTP response body returned by the upstream LLM provider.
         rawResponse:
           type: string
           description: Raw strict-JSON payload returned by the active scenario step.

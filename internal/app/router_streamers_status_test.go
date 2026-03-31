@@ -64,6 +64,10 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 	if !ok || len(latestByStage) != 2 {
 		t.Fatalf("expected two latest stage snapshots, got %#v", got["latestByStage"])
 	}
+	history, ok := got["history"].([]any)
+	if !ok || len(history) != 2 {
+		t.Fatalf("expected full history with two decisions, got %#v", got["history"])
+	}
 }
 
 func TestStreamerStatusReturnsIdleWhenNoDecisionsYet(t *testing.T) {
@@ -96,6 +100,10 @@ func TestStreamerStatusReturnsIdleWhenNoDecisionsYet(t *testing.T) {
 	}
 	if got["state"] != "idle" {
 		t.Fatalf("expected idle state, got %#v", got)
+	}
+	history, ok := got["history"].([]any)
+	if !ok || len(history) != 0 {
+		t.Fatalf("expected empty history in idle status, got %#v", got["history"])
 	}
 }
 

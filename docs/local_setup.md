@@ -194,7 +194,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/streamers` – returns streamer catalog with optional `query` and `page` filters.
 - `POST /api/streamers` – submits a Twitch streamer nickname for moderation/validation, then immediately starts the per-streamer Streamlink analysis scheduler when background orchestration is configured.
 - When Streamlink reports that a Twitch URL has no playable streams (for example, the stream ended or is offline), the scheduler treats that cycle as a graceful skip instead of a hard worker failure and retries on the next 10-second window.
-- `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM match-session / state-tracker status for a streamer.
+- `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM match-session / state-tracker status for a streamer, including full chronological LLM call history (`history`) with request/response payloads per decision.
 - `DELETE /api/streamers/{streamerId}/tracking` – stops the active Streamlink/LLM tracking loop for a streamer and returns the updated `stopped` status so the client can disable the tracking button immediately.
 - Decision history REST endpoints were removed as part of scenario-graph v2 cleanup; `/api/streamers/{streamerId}/status` remains the supported read model.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
