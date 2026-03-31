@@ -12,18 +12,17 @@ import (
 )
 
 var (
-	ErrScenarioPackageNotFound  = errors.New("scenario package not found")
-	ErrScenarioStepNotFound     = errors.New("scenario step not found")
-	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
-	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
-	ErrInvalidScenarioStepModel = errors.New("scenario step model must not be empty when package model config is not set")
-	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
+	ErrScenarioPackageNotFound = errors.New("scenario package not found")
+	ErrScenarioStepNotFound    = errors.New("scenario step not found")
+	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
+	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioModelRef = errors.New("scenario package llmModelConfigId must not be empty")
+	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
 )
 
 type ScenarioStep struct {
 	ID                 string    `json:"id"`
 	Name               string    `json:"name"`
-	Model              string    `json:"model"`
 	GameSlug           string    `json:"gameSlug"`
 	Folder             string    `json:"folder"`
 	EntryCondition     string    `json:"entryCondition,omitempty"`
@@ -104,18 +103,17 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 	if strings.TrimSpace(req.Name) == "" {
 		return ErrInvalidScenarioName
 	}
+	if strings.TrimSpace(req.LLMModelConfigID) == "" {
+		return ErrInvalidScenarioModelRef
+	}
 	if len(req.Steps) == 0 {
 		return ErrInvalidScenarioPackage
 	}
 	seenSteps := make(map[string]struct{}, len(req.Steps))
-	hasPackageModel := strings.TrimSpace(req.LLMModelConfigID) != ""
 	for _, step := range req.Steps {
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
-		}
-		if strings.TrimSpace(step.Model) == "" && !hasPackageModel {
-			return ErrInvalidScenarioStepModel
 		}
 		seenSteps[id] = struct{}{}
 	}
@@ -135,7 +133,6 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		if strings.TrimSpace(normalized[i].GameSlug) == "" {
 			normalized[i].GameSlug = fallbackGameSlug
 		}
-		normalized[i].Model = strings.TrimSpace(normalized[i].Model)
 	}
 	return normalized
 }

@@ -1207,13 +1207,11 @@ components:
               nullable: true
     ScenarioStep:
       type: object
-      required: [id, name, model, promptTemplate, responseSchemaJson, initial, order]
+      required: [id, name, promptTemplate, responseSchemaJson, initial, order]
       properties:
         id:
           type: string
         name:
-          type: string
-        model:
           type: string
         gameSlug:
           type: string
@@ -1246,7 +1244,7 @@ components:
           minimum: 1
     ScenarioPackageCreateRequest:
       type: object
-      required: [gameSlug, name, steps]
+      required: [gameSlug, name, llmModelConfigId, steps]
       properties:
         gameSlug:
           type: string

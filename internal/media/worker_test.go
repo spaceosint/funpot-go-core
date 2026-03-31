@@ -71,7 +71,6 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 		steps = append(steps, prompts.ScenarioStep{
 			ID:                 stepID,
 			Name:               stepID,
-			Model:              firstNonEmpty(prompt.Model, "gemini-2.0-flash"),
 			PromptTemplate:     prompt.Template,
 			ResponseSchemaJSON: "{}",
 			Initial:            i == 0,
@@ -243,9 +242,10 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 			"root_detect": {Label: "cs2_detected", Confidence: 0.99, UpdatedStateJSON: `{"game":"cs2"}`},
 		}},
 		fakePromptResolver{scenario: prompts.ScenarioPackage{
-			ID:       "scenario-v2",
-			GameSlug: "global",
-			Name:     "v2",
+			ID:               "scenario-v2",
+			GameSlug:         "global",
+			Name:             "v2",
+			LLMModelConfigID: "cfg-test",
 			Steps: []prompts.ScenarioStep{
 				{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 				{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
@@ -254,7 +254,7 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 				{FromStepID: "root_detect", ToStepID: "cs2_mode", Condition: `$.game == "cs2"`, Priority: 1},
 			},
 			IsActive: true,
-		}},
+		}, llmModelConfig: prompts.LLMModelConfig{ID: "cfg-test", Model: "gemini-2.5-flash"}},
 		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
 	)
 

@@ -61,7 +61,6 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 		steps = append(steps, prompts.ScenarioStep{
 			ID:                 step.ID,
 			Name:               step.Name,
-			Model:              step.Model,
 			GameSlug:           step.GameSlug,
 			Folder:             step.Folder,
 			EntryCondition:     step.EntryCondition,
@@ -100,7 +99,6 @@ type gameUpsertRequest struct {
 type scenarioStepRequest struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
-	Model              string `json:"model"`
 	GameSlug           string `json:"gameSlug"`
 	Folder             string `json:"folder"`
 	EntryCondition     string `json:"entryCondition"`

@@ -646,14 +646,14 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 			return streamers.LLMDecision{}, err
 		}
 	}
-	model := strings.TrimSpace(step.Model)
-	if model == "" && strings.TrimSpace(pkg.LLMModelConfigID) != "" {
-		config, err := w.prompts.GetLLMModelConfig(ctx, pkg.LLMModelConfigID)
-		if err != nil {
-			return streamers.LLMDecision{}, err
-		}
-		model = strings.TrimSpace(config.Model)
+	if strings.TrimSpace(pkg.LLMModelConfigID) == "" {
+		return streamers.LLMDecision{}, prompts.ErrInvalidScenarioModelRef
 	}
+	config, err := w.prompts.GetLLMModelConfig(ctx, pkg.LLMModelConfigID)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	model := strings.TrimSpace(config.Model)
 	activePrompt := prompts.PromptVersion{
 		ID:       step.ID,
 		Stage:    step.ID,
