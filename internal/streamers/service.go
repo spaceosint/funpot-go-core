@@ -320,6 +320,8 @@ func (s *Service) RecordLLMDecision(ctx context.Context, req RecordDecisionReque
 		ChunkRef:           strings.TrimSpace(req.ChunkRef),
 		RequestRef:         strings.TrimSpace(req.RequestRef),
 		ResponseRef:        strings.TrimSpace(req.ResponseRef),
+		RequestPayload:     strings.TrimSpace(req.RequestPayload),
+		ResponsePayload:    strings.TrimSpace(req.ResponsePayload),
 		RawResponse:        strings.TrimSpace(req.RawResponse),
 		TokensIn:           req.TokensIn,
 		TokensOut:          req.TokensOut,
@@ -411,7 +413,7 @@ func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit
 
 func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus {
 	key := strings.TrimSpace(streamerID)
-	status := LLMStatus{StreamerID: key, State: "idle", LatestByStage: []LLMDecision{}}
+	status := LLMStatus{StreamerID: key, State: "idle", LatestByStage: []LLMDecision{}, History: []LLMDecision{}}
 	if key == "" {
 		return status
 	}
@@ -445,6 +447,7 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 	if len(items) == 0 {
 		return status
 	}
+	status.History = items
 
 	latest := items[len(items)-1]
 	status.CurrentRunID = latest.RunID

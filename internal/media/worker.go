@@ -50,6 +50,8 @@ type StageClassification struct {
 	RawResponse       string
 	RequestRef        string
 	ResponseRef       string
+	RequestPayload    string
+	ResponsePayload   string
 	TokensIn          int
 	TokensOut         int
 	Latency           time.Duration
@@ -323,6 +325,8 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 		ChunkRef:          chunk.Reference,
 		RequestRef:        result.RequestRef,
 		ResponseRef:       result.ResponseRef,
+		RequestPayload:    result.RequestPayload,
+		ResponsePayload:   result.ResponsePayload,
 		RawResponse:       result.RawResponse,
 		TokensIn:          result.TokensIn,
 		TokensOut:         result.TokensOut,

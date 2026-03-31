@@ -106,6 +106,8 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 		ChunkRef:           "streamlink://str-1/123",
 		RequestRef:         "gemini-request-1",
 		ResponseRef:        "gemini-response-1",
+		RequestPayload:     "{\"contents\":[{\"role\":\"user\"}]}",
+		ResponsePayload:    "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{}\"}]}}]}",
 		RawResponse:        "{\"label\":\"competitive\"}",
 		TokensIn:           144,
 		TokensOut:          27,
@@ -125,7 +127,7 @@ func TestRecordAndListLLMDecisions(t *testing.T) {
 	if items[0].ID != second.ID {
 		t.Fatalf("expected latest decision first, got %s", items[0].ID)
 	}
-	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 || items[0].RequestRef == "" || items[0].TransitionToStep != "wait_for_result" {
+	if items[0].PromptVersionID != "prompt-2" || items[0].ChunkRef == "" || items[0].LatencyMS != 180 || items[0].RequestRef == "" || items[0].RequestPayload == "" || items[0].ResponsePayload == "" || items[0].TransitionToStep != "wait_for_result" {
 		t.Fatalf("expected metadata to be persisted, got %#v", items[0])
 	}
 	if items[0].ID == "" || items[0].ID[:4] != "llm_" {
