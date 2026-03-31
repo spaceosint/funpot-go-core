@@ -102,7 +102,6 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 			{
 				"id":                 "root_detect",
 				"name":               "Root detect",
-				"model":              "gemini-2.5-pro",
 				"gameSlug":           "global",
 				"promptTemplate":     "detect-v2",
 				"responseSchemaJson": "{}",
@@ -117,6 +116,31 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	handler.ServeHTTP(updateRes, updateReq)
 	if updateRes.Code != http.StatusOK {
 		t.Fatalf("scenario package update status = %d body=%s", updateRes.Code, updateRes.Body.String())
+	}
+
+	invalidBody, _ := json.Marshal(map[string]any{
+		"gameSlug":         "global",
+		"name":             "default graph invalid",
+		"llmModelConfigId": configID,
+		"steps": []map[string]any{
+			{
+				"id":                 "root_detect",
+				"name":               "Root detect",
+				"llmModelConfigId":   "step-level-not-allowed",
+				"gameSlug":           "global",
+				"promptTemplate":     "detect-v3",
+				"responseSchemaJson": "{}",
+				"initial":            true,
+				"order":              1,
+			},
+		},
+	})
+	invalidReq := httptest.NewRequest(http.MethodPut, "/api/admin/llm/scenario-packages/"+packageID, bytes.NewReader(invalidBody))
+	invalidReq.Header.Set("Authorization", "Bearer "+adminToken)
+	invalidRes := httptest.NewRecorder()
+	handler.ServeHTTP(invalidRes, invalidReq)
+	if invalidRes.Code != http.StatusBadRequest {
+		t.Fatalf("scenario package update with unknown step field status = %d body=%s", invalidRes.Code, invalidRes.Body.String())
 	}
 }
 

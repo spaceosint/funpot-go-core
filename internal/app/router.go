@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -727,7 +728,7 @@ func NewHandler(
 						return
 					}
 					var req scenarioPackageCreateRequest
-					if err := json.Unmarshal(body, &req); err != nil {
+					if err := decodeJSONStrict(body, &req); err != nil {
 						writeError(w, http.StatusBadRequest, "invalid request body")
 						return
 					}
@@ -813,7 +814,7 @@ func NewHandler(
 						return
 					}
 					var req scenarioPackageCreateRequest
-					if err := json.Unmarshal(body, &req); err != nil {
+					if err := decodeJSONStrict(body, &req); err != nil {
 						writeError(w, http.StatusBadRequest, "invalid request body")
 						return
 					}
@@ -891,4 +892,10 @@ func writeError(w http.ResponseWriter, status int, message string) {
 		"error":     message,
 		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
 	})
+}
+
+func decodeJSONStrict(body []byte, out any) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(out)
 }

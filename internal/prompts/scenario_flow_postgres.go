@@ -270,6 +270,7 @@ func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error
 			return ScenarioPackage{}, fmt.Errorf("unmarshal transitions_json: %w", err)
 		}
 	}
+	item.Transitions = cloneScenarioTransitions(item.Transitions)
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
 	}
