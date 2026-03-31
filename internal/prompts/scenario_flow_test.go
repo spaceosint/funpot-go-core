@@ -5,18 +5,33 @@ import (
 	"testing"
 )
 
+func mustCreateModelConfig(t *testing.T, svc *Service) LLMModelConfig {
+	t.Helper()
+	cfg, err := svc.CreateLLMModelConfig(context.Background(), LLMModelConfigUpsertRequest{
+		Name:    "default",
+		Model:   "gemini-2.5-flash",
+		ActorID: "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("create llm config: %v", err)
+	}
+	return cfg
+}
+
 func TestScenarioPackageResolveStep(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
 	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "cs2 flow",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "cs2 flow",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "game_detect", Name: "Game detect", Model: "gemini-2.5-flash", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "cs2_mode", Name: "CS2 mode", Model: "gemini-2.5-flash", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
-			{ID: "cs2_faceit", Name: "Faceit", Model: "gemini-2.5-flash", Folder: "cs2/faceit", EntryCondition: "mode == faceit", PromptTemplate: "faceit", ResponseSchemaJSON: `{}`, Order: 3},
+			{ID: "game_detect", Name: "Game detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", EntryCondition: "game == cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "cs2_faceit", Name: "Faceit", Folder: "cs2/faceit", EntryCondition: "mode == faceit", PromptTemplate: "faceit", ResponseSchemaJSON: `{}`, Order: 3},
 		},
 	})
 	if err != nil {
@@ -154,12 +169,14 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 	t.Parallel()
 
 	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
 	created, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "global flow",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "global flow",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "root_detect", Name: "Root", Model: "gemini-2.5-flash", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
+			{ID: "root_detect", Name: "Root", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true},
 		},
 	})
 	if err != nil {
@@ -170,11 +187,12 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 	}
 
 	updated, err := svc.UpdateScenarioPackage(context.Background(), created.ID, ScenarioPackageCreateRequest{
-		Name:     "cs2 flow",
-		GameSlug: "cs2",
-		ActorID:  "admin-1",
+		Name:             "cs2 flow",
+		GameSlug:         "cs2",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "cs2_mode", Name: "Mode", Model: "gemini-2.5-flash", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
+			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
 		},
 	})
 	if err != nil {
@@ -198,14 +216,16 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "auto transitions",
-		GameSlug: "global",
-		ActorID:  "admin-1",
+		Name:             "auto transitions",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "step_a", Name: "Step A", Model: "gemini-2.5-flash", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "step_b", Name: "Step B", Model: "gemini-2.5-flash", PromptTemplate: "b", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
-			{ID: "step_c", Name: "Step C", Model: "gemini-2.5-flash", PromptTemplate: "c", ResponseSchemaJSON: `{}`, Order: 3},
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_b", Name: "Step B", PromptTemplate: "b", ResponseSchemaJSON: `{}`, EntryCondition: "mode == faceit", Order: 2},
+			{ID: "step_c", Name: "Step C", PromptTemplate: "c", ResponseSchemaJSON: `{}`, Order: 3},
 		},
 	})
 	if err != nil {
@@ -239,7 +259,7 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	}
 }
 
-func TestScenarioPackageCreateRequiresStepModelWithoutPackageModelConfig(t *testing.T) {
+func TestScenarioPackageCreateRequiresPackageModelConfig(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
@@ -252,53 +272,31 @@ func TestScenarioPackageCreateRequiresStepModelWithoutPackageModelConfig(t *test
 		},
 	})
 	if err == nil {
-		t.Fatalf("expected missing scenario step model validation error")
+		t.Fatalf("expected missing scenario package model config validation error")
 	}
-	if err != ErrInvalidScenarioStepModel {
-		t.Fatalf("expected ErrInvalidScenarioStepModel, got %v", err)
-	}
-
-	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:     "config configured",
-		GameSlug: "global",
-		ActorID:  "admin-1",
-		Steps: []ScenarioStep{
-			{ID: "step_custom_model", Name: "Custom model", Model: "gemini-2.5-pro", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-		},
-	})
-	if err != nil {
-		t.Fatalf("create scenario package: %v", err)
-	}
-	if got := item.Steps[0].Model; got != "gemini-2.5-pro" {
-		t.Fatalf("expected scenario step model to be preserved, got %q", got)
+	if err != ErrInvalidScenarioModelRef {
+		t.Fatalf("expected ErrInvalidScenarioModelRef, got %v", err)
 	}
 }
 
-func TestScenarioPackageCreateAllowsMissingStepModelWhenPackageConfigIsSet(t *testing.T) {
+func TestScenarioPackageCreateDoesNotUseStepModel(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
-	config, err := svc.CreateLLMModelConfig(context.Background(), LLMModelConfigUpsertRequest{
-		Name:    "default",
-		Model:   "gemini-2.5-flash",
-		ActorID: "admin-1",
-	})
-	if err != nil {
-		t.Fatalf("create llm config: %v", err)
-	}
+	config := mustCreateModelConfig(t, svc)
 	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:             "config driven",
+		Name:             "config configured",
 		GameSlug:         "global",
 		ActorID:          "admin-1",
 		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "step_package_default", Name: "Package default", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_custom_model", Name: "Custom model", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 		},
 	})
 	if err != nil {
 		t.Fatalf("create scenario package: %v", err)
 	}
-	if got := item.Steps[0].Model; got != "" {
-		t.Fatalf("expected scenario step model to remain empty and resolve from package config at runtime, got %q", got)
+	if item.LLMModelConfigID != config.ID {
+		t.Fatalf("expected package model config ID %q, got %q", config.ID, item.LLMModelConfigID)
 	}
 }

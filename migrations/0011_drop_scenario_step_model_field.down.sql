@@ -1,0 +1,1 @@
+-- no-op: removed redundant step-level `model` key from steps_json.
