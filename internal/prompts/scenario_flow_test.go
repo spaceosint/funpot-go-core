@@ -2,6 +2,7 @@ package prompts
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -256,6 +257,46 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	}
 	if !entered || step.ID != "step_b" {
 		t.Fatalf("expected auto transition to step_b, got entered=%v step=%s", entered, step.ID)
+	}
+}
+
+func TestScenarioPackageCreateReturnsEmptyTransitionArrayForSingleStep(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "single step",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if item.Transitions == nil {
+		t.Fatalf("expected transitions to be empty array, got nil")
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal scenario package: %v", err)
+	}
+	if string(raw) == "" {
+		t.Fatalf("unexpected empty json payload")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("unmarshal scenario package: %v", err)
+	}
+	transitions, ok := parsed["transitions"].([]any)
+	if !ok {
+		t.Fatalf("expected transitions array in json, got %#v", parsed["transitions"])
+	}
+	if len(transitions) != 0 {
+		t.Fatalf("expected empty transitions array in json, got %#v", transitions)
 	}
 }
 

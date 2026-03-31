@@ -30,7 +30,7 @@ type ScenarioStep struct {
 	ResponseSchemaJSON string    `json:"responseSchemaJson"`
 	Initial            bool      `json:"initial"`
 	Order              int       `json:"order"`
-	CreatedAt          time.Time `json:"createdAt"`
+	CreatedAt          time.Time `json:"-"`
 }
 
 type ScenarioTransition struct {
@@ -139,7 +139,7 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 
 func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
 	if len(steps) < 2 {
-		return nil
+		return []ScenarioTransition{}
 	}
 	ordered := make([]ScenarioStep, len(steps))
 	copy(ordered, steps)
@@ -160,6 +160,10 @@ func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
 		})
 	}
 	return autowired
+}
+
+func cloneScenarioTransitions(transitions []ScenarioTransition) []ScenarioTransition {
+	return append([]ScenarioTransition{}, transitions...)
 }
 
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
@@ -208,7 +212,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 			GameSlug:         gameSlug,
 			LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
 			Steps:            append([]ScenarioStep(nil), req.Steps...),
-			Transitions:      append([]ScenarioTransition(nil), normalizedTransitions...),
+			Transitions:      cloneScenarioTransitions(normalizedTransitions),
 			CreatedBy:        strings.TrimSpace(req.ActorID),
 			CreatedAt:        now,
 		}
@@ -230,7 +234,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		GameSlug:         gameSlug,
 		LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
 		Steps:            append([]ScenarioStep(nil), req.Steps...),
-		Transitions:      append([]ScenarioTransition(nil), normalizedTransitions...),
+		Transitions:      cloneScenarioTransitions(normalizedTransitions),
 		CreatedBy:        strings.TrimSpace(req.ActorID),
 		CreatedAt:        now,
 	}
@@ -296,7 +300,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 		current.GameSlug = targetGameSlug
 		current.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
 		current.Steps = append([]ScenarioStep(nil), req.Steps...)
-		current.Transitions = append([]ScenarioTransition(nil), normalizedTransitions...)
+		current.Transitions = cloneScenarioTransitions(normalizedTransitions)
 		if current.GameSlug != previousGameSlug {
 			current.IsActive = false
 			current.ActivatedBy = ""
@@ -318,7 +322,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated.GameSlug = targetGameSlug
 			updated.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
 			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
-			updated.Transitions = append([]ScenarioTransition(nil), normalizedTransitions...)
+			updated.Transitions = cloneScenarioTransitions(normalizedTransitions)
 			if updated.GameSlug != gameSlug {
 				updated.IsActive = false
 				updated.ActivatedBy = ""
