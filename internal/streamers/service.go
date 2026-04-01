@@ -447,9 +447,10 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 	if len(items) == 0 {
 		return status
 	}
-	status.History = items
+	publicItems := statusDecisionsWithStaticVideoData(items)
+	status.History = publicItems
 
-	latest := items[len(items)-1]
+	latest := publicItems[len(publicItems)-1]
 	status.CurrentRunID = latest.RunID
 	status.CurrentStage = latest.Stage
 	status.CurrentLabel = latest.Label
@@ -458,12 +459,12 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 		status.UpdatedAt = latest.CreatedAt
 		status.State = "active"
 	}
-	status.DetectedGameKey = inferDetectedGameKey(items)
+	status.DetectedGameKey = inferDetectedGameKey(publicItems)
 
 	orderedStages := make([]string, 0)
 	seenStages := make(map[string]struct{})
 	latestByStage := make(map[string]LLMDecision)
-	for _, item := range items {
+	for _, item := range publicItems {
 		if _, exists := seenStages[item.Stage]; !exists {
 			orderedStages = append(orderedStages, item.Stage)
 			seenStages[item.Stage] = struct{}{}
@@ -477,6 +478,18 @@ func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus
 	}
 	status.LatestByStage = ordered
 	return status
+}
+
+func statusDecisionsWithStaticVideoData(items []LLMDecision) []LLMDecision {
+	if len(items) == 0 {
+		return []LLMDecision{}
+	}
+	result := make([]LLMDecision, 0, len(items))
+	for _, item := range items {
+		item.ChunkRef = "video-data"
+		result = append(result, item)
+	}
+	return result
 }
 
 func (s *Service) MarkAnalysisActive(streamerID string) {

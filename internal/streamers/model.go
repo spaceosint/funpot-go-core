@@ -33,7 +33,7 @@ type LLMDecision struct {
 	Temperature        float64 `json:"temperature,omitempty"`
 	MaxTokens          int     `json:"maxTokens,omitempty"`
 	TimeoutMS          int     `json:"timeoutMs,omitempty"`
-	ChunkRef           string  `json:"chunkRef,omitempty"`
+	ChunkRef           string  `json:"videoData,omitempty"`
 	RequestRef         string  `json:"requestRef,omitempty"`
 	ResponseRef        string  `json:"responseRef,omitempty"`
 	RequestPayload     string  `json:"requestPayload,omitempty"`
