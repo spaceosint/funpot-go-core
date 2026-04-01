@@ -16,6 +16,7 @@ var (
 	ErrScenarioStepNotFound    = errors.New("scenario step not found")
 	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
 	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioCondition = errors.New("scenario step entry condition is invalid")
 	ErrInvalidScenarioModelRef = errors.New("scenario package llmModelConfigId must not be empty")
 	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
 )
@@ -114,6 +115,9 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
+		}
+		if err := validateScenarioCondition(step.EntryCondition); err != nil {
+			return fmt.Errorf("%w: step %s: %v", ErrInvalidScenarioCondition, id, err)
 		}
 		seenSteps[id] = struct{}{}
 	}
@@ -673,4 +677,9 @@ func lookupJSONPath(payload map[string]any, path string) (any, bool) {
 		}
 	}
 	return current, true
+}
+
+func validateScenarioCondition(condition string) error {
+	_, err := evaluateCondition(condition, map[string]any{})
+	return err
 }
