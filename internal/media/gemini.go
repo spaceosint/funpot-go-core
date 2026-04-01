@@ -286,7 +286,7 @@ func (c *GeminiStageClassifier) classify(ctx context.Context, input StageRequest
 		RawResponse:      strings.TrimSpace(rawText),
 		RequestRef:       endpoint,
 		ResponseRef:      strconv.Itoa(resp.StatusCode),
-		RequestPayload:   string(bodyBytes),
+		RequestPayload:   sanitizeGeminiRequestPayload(requestBody),
 		ResponsePayload:  string(responseBody),
 		TokensIn:         payload.UsageMetadata.PromptTokenCount,
 		TokensOut:        payload.UsageMetadata.CandidatesTokenCount,
@@ -306,6 +306,35 @@ func sanitizeGeminiGenerationConfig(temperature float64, maxTokens int) geminiGe
 		cfg.MaxOutputTokens = maxTokens
 	}
 	return cfg
+}
+
+func sanitizeGeminiRequestPayload(request geminiGenerateContentRequest) string {
+	safe := geminiGenerateContentRequest{
+		GenerationConfig: request.GenerationConfig,
+		Contents:         make([]geminiContent, 0, len(request.Contents)),
+	}
+	for _, content := range request.Contents {
+		safeContent := geminiContent{
+			Role:  content.Role,
+			Parts: make([]geminiPart, 0, len(content.Parts)),
+		}
+		for _, part := range content.Parts {
+			safePart := geminiPart{Text: part.Text}
+			if part.InlineData != nil {
+				safePart.InlineData = &geminiInlineData{
+					MimeType: part.InlineData.MimeType,
+					Data:     "video data",
+				}
+			}
+			safeContent.Parts = append(safeContent.Parts, safePart)
+		}
+		safe.Contents = append(safe.Contents, safeContent)
+	}
+	payload, err := json.Marshal(safe)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }
 
 func geminiSessionKey(input StageRequest) string {

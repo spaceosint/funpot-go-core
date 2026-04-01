@@ -1,6 +1,7 @@
 package media
 
 import (
+	"encoding/base64"
 	"context"
 	"fmt"
 	"io"
@@ -106,6 +107,12 @@ func TestGeminiStageClassifierClassify(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, "Detect the game being played") {
 		t.Fatalf("expected prompt template in request body: %s", gotBody)
+	}
+	if !strings.Contains(result.RequestPayload, `"data":"video data"`) {
+		t.Fatalf("expected sanitized video data placeholder in request payload: %s", result.RequestPayload)
+	}
+	if strings.Contains(result.RequestPayload, base64.StdEncoding.EncodeToString([]byte("fake transport stream"))) {
+		t.Fatalf("request payload should not include base64 video bytes: %s", result.RequestPayload)
 	}
 }
 
