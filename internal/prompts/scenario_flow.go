@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	ErrScenarioPackageNotFound = errors.New("scenario package not found")
-	ErrScenarioStepNotFound    = errors.New("scenario step not found")
-	ErrInvalidScenarioPackage  = errors.New("scenario package must contain at least one step")
-	ErrInvalidScenarioStepID   = errors.New("scenario step id must not be empty")
+	ErrScenarioPackageNotFound  = errors.New("scenario package not found")
+	ErrScenarioStepNotFound     = errors.New("scenario step not found")
+	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
+	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
 	ErrInvalidScenarioCondition = errors.New("scenario step entry condition is invalid")
-	ErrInvalidScenarioModelRef = errors.New("scenario package llmModelConfigId must not be empty")
-	ErrInvalidScenarioName     = errors.New("scenario package name must not be empty")
+	ErrInvalidScenarioModelRef  = errors.New("scenario package llmModelConfigId must not be empty")
+	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
 )
 
 type ScenarioStep struct {
