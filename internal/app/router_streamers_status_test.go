@@ -68,6 +68,16 @@ func TestStreamerStatusReturnsAggregatedLLMState(t *testing.T) {
 	if !ok || len(history) != 2 {
 		t.Fatalf("expected full history with two decisions, got %#v", got["history"])
 	}
+	firstDecision, ok := history[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first history decision object, got %#v", history[0])
+	}
+	if firstDecision["videoData"] != "video-data" {
+		t.Fatalf("expected videoData placeholder, got %#v", firstDecision["videoData"])
+	}
+	if _, exists := firstDecision["chunkRef"]; exists {
+		t.Fatalf("did not expect chunkRef in API response, got %#v", firstDecision["chunkRef"])
+	}
 }
 
 func TestStreamerStatusReturnsIdleWhenNoDecisionsYet(t *testing.T) {

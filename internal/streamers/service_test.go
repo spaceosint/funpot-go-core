@@ -237,4 +237,10 @@ func TestRecordLLMDecisionAllowsCustomStageAndStatusIncludesIt(t *testing.T) {
 	if status.LatestByStage[0].Stage != "ranked_mode" {
 		t.Fatalf("stage = %q, want ranked_mode", status.LatestByStage[0].Stage)
 	}
+	if status.LatestByStage[0].ChunkRef != "video-data" {
+		t.Fatalf("videoData = %q, want video-data", status.LatestByStage[0].ChunkRef)
+	}
+	if status.History[0].ChunkRef != "video-data" {
+		t.Fatalf("history videoData = %q, want video-data", status.History[0].ChunkRef)
+	}
 }

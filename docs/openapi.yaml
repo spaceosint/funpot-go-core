@@ -1085,8 +1085,9 @@ components:
           type: integer
         timeoutMs:
           type: integer
-        chunkRef:
+        videoData:
           type: string
+          description: Static placeholder string `video-data` returned for each decision entry.
         requestRef:
           type: string
         responseRef:
