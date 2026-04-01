@@ -3,6 +3,7 @@ package prompts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -367,6 +368,29 @@ func TestScenarioPackageCreateRequiresPackageModelConfig(t *testing.T) {
 	}
 	if err != ErrInvalidScenarioModelRef {
 		t.Fatalf("expected ErrInvalidScenarioModelRef, got %v", err)
+	}
+}
+
+func TestScenarioPackageCreateRejectsInvalidEntryCondition(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "invalid entry condition",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "matchmaking_5v5", Name: "Matchmaking 5v5", EntryCondition: "matchmaking-5vs5", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Order: 2},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid entry condition validation error")
+	}
+	if !errors.Is(err, ErrInvalidScenarioCondition) {
+		t.Fatalf("expected ErrInvalidScenarioCondition, got %v", err)
 	}
 }
 
