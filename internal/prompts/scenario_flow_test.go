@@ -107,7 +107,9 @@ func TestEvaluateCondition(t *testing.T) {
 		want bool
 	}{
 		{name: "equals", expr: "game == cs2", want: true},
+		{name: "equals jsonpath root", expr: "$.game == cs2", want: true},
 		{name: "not equals", expr: "mode != premier", want: true},
+		{name: "exists jsonpath root", expr: "exists($.nested.value)", want: true},
 		{name: "exists", expr: "exists(nested.value)", want: true},
 		{name: "not_exists", expr: "not_exists(nested.missing)", want: true},
 	}

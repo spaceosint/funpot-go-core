@@ -641,7 +641,11 @@ func parseJSONMap(raw string) map[string]any {
 }
 
 func lookupJSONPath(payload map[string]any, path string) (any, bool) {
-	parts := strings.Split(strings.TrimSpace(path), ".")
+	cleanPath := strings.TrimSpace(path)
+	cleanPath = strings.TrimPrefix(cleanPath, "$.")
+	cleanPath = strings.TrimPrefix(cleanPath, "$")
+	cleanPath = strings.TrimPrefix(cleanPath, ".")
+	parts := strings.Split(cleanPath, ".")
 	var current any = payload
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
