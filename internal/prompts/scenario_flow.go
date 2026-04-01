@@ -597,6 +597,9 @@ func scenarioStepLevel(step ScenarioStep) int {
 
 func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 	expr := strings.TrimSpace(condition)
+	if len(expr) >= 3 && strings.EqualFold(expr[:3], "if ") {
+		expr = strings.TrimSpace(expr[3:])
+	}
 	if expr == "" {
 		return true, nil
 	}
@@ -610,7 +613,7 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 		_, ok := lookupJSONPath(payload, path)
 		return !ok, nil
 	}
-	for _, op := range []string{"!=", "=="} {
+	for _, op := range []string{"!=", "==", "="} {
 		if idx := strings.Index(expr, op); idx > 0 {
 			left := strings.TrimSpace(expr[:idx])
 			right := strings.TrimSpace(expr[idx+len(op):])
@@ -620,7 +623,7 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 			}
 			leftValue := fmt.Sprint(raw)
 			rightValue := strings.Trim(right, "'\"")
-			if op == "==" {
+			if op == "==" || op == "=" {
 				return strings.EqualFold(leftValue, rightValue), nil
 			}
 			return !strings.EqualFold(leftValue, rightValue), nil

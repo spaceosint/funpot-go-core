@@ -107,6 +107,8 @@ func TestEvaluateCondition(t *testing.T) {
 		want bool
 	}{
 		{name: "equals", expr: "game == cs2", want: true},
+		{name: "single equals", expr: "game = cs2", want: true},
+		{name: "if prefix", expr: "if game = cs2", want: true},
 		{name: "equals jsonpath root", expr: "$.game == cs2", want: true},
 		{name: "not equals", expr: "mode != premier", want: true},
 		{name: "exists jsonpath root", expr: "exists($.nested.value)", want: true},
@@ -299,6 +301,52 @@ func TestScenarioPackageCreateReturnsEmptyTransitionArrayForSingleStep(t *testin
 	}
 	if len(transitions) != 0 {
 		t.Fatalf("expected empty transitions array in json, got %#v", transitions)
+	}
+}
+
+func TestScenarioPackageCreateSupportsEntryConditionExpressionSyntax(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "entry condition expressions",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "cs2_mode", Name: "CS2 mode", Folder: "cs2", EntryCondition: "if game = cs2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "matchmaking_5v5", Name: "Matchmaking 5v5", Folder: "cs2/matchmaking", EntryCondition: "mode = matchmaking-5vs5", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if len(item.Transitions) != 2 {
+		t.Fatalf("expected 2 auto transitions, got %#v", item.Transitions)
+	}
+	if item.Transitions[0].Condition != "if game = cs2" {
+		t.Fatalf("expected first transition condition to preserve entry condition expression, got %#v", item.Transitions[0])
+	}
+	if item.Transitions[1].Condition != "mode = matchmaking-5vs5" {
+		t.Fatalf("expected second transition condition to preserve entry condition expression, got %#v", item.Transitions[1])
+	}
+
+	step, entered, err := item.ResolveStep("root_detect", `{"game":"cs2"}`)
+	if err != nil {
+		t.Fatalf("resolve entry condition game transition: %v", err)
+	}
+	if !entered || step.ID != "cs2_mode" {
+		t.Fatalf("expected transition to cs2_mode, got entered=%v step=%s", entered, step.ID)
+	}
+
+	step, entered, err = item.ResolveStep("cs2_mode", `{"game":"cs2","mode":"matchmaking-5vs5"}`)
+	if err != nil {
+		t.Fatalf("resolve entry condition mode transition: %v", err)
+	}
+	if !entered || step.ID != "matchmaking_5v5" {
+		t.Fatalf("expected transition to matchmaking_5v5, got entered=%v step=%s", entered, step.ID)
 	}
 }
 
