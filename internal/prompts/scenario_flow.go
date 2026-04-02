@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -633,6 +634,12 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 			return !strings.EqualFold(leftValue, rightValue), nil
 		}
 	}
+	if isScenarioConditionShorthandLiteral(expr) {
+		if modeRaw, ok := payload["mode"]; ok {
+			return strings.EqualFold(fmt.Sprint(modeRaw), expr), nil
+		}
+		return false, nil
+	}
 	return false, fmt.Errorf("unsupported condition: %s", expr)
 }
 
@@ -680,6 +687,20 @@ func lookupJSONPath(payload map[string]any, path string) (any, bool) {
 }
 
 func validateScenarioCondition(condition string) error {
-	_, err := evaluateCondition(condition, map[string]any{})
+	expr := strings.TrimSpace(condition)
+	if isScenarioConditionShorthandLiteral(expr) {
+		return nil
+	}
+	_, err := evaluateCondition(expr, map[string]any{})
 	return err
+}
+
+var scenarioConditionLiteralPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func isScenarioConditionShorthandLiteral(expr string) bool {
+	clean := strings.TrimSpace(expr)
+	if clean == "" {
+		return false
+	}
+	return scenarioConditionLiteralPattern.MatchString(clean)
 }

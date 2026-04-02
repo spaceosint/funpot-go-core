@@ -115,6 +115,7 @@ func TestEvaluateCondition(t *testing.T) {
 		{name: "exists jsonpath root", expr: "exists($.nested.value)", want: true},
 		{name: "exists", expr: "exists(nested.value)", want: true},
 		{name: "not_exists", expr: "not_exists(nested.missing)", want: true},
+		{name: "shorthand mode literal", expr: "faceit", want: true},
 	}
 
 	for _, tc := range cases {
@@ -128,6 +129,13 @@ func TestEvaluateCondition(t *testing.T) {
 				t.Fatalf("evaluateCondition(%q)=%v, want %v", tc.expr, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateScenarioConditionAllowsShorthandLiteral(t *testing.T) {
+	t.Parallel()
+	if err := validateScenarioCondition("matchmaking-5vs5"); err != nil {
+		t.Fatalf("expected shorthand entry condition to be accepted: %v", err)
 	}
 }
 
@@ -383,7 +391,7 @@ func TestScenarioPackageCreateRejectsInvalidEntryCondition(t *testing.T) {
 		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
 			{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
-			{ID: "matchmaking_5v5", Name: "Matchmaking 5v5", EntryCondition: "matchmaking-5vs5", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "matchmaking_5v5", Name: "Matchmaking 5v5", EntryCondition: "mode >< matchmaking-5vs5", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Order: 2},
 		},
 	})
 	if err == nil {
