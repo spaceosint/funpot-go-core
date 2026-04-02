@@ -116,6 +116,8 @@ func TestEvaluateCondition(t *testing.T) {
 		{name: "exists", expr: "exists(nested.value)", want: true},
 		{name: "not_exists", expr: "not_exists(nested.missing)", want: true},
 		{name: "shorthand mode literal", expr: "faceit", want: true},
+		{name: "logical and", expr: "game = cs2 & mode = faceit", want: true},
+		{name: "logical or with parens", expr: "mode = matchmaking-5vs5 & (ct_score >= 5 | t_score < 3)", want: false},
 	}
 
 	for _, tc := range cases {
@@ -129,6 +131,32 @@ func TestEvaluateCondition(t *testing.T) {
 				t.Fatalf("evaluateCondition(%q)=%v, want %v", tc.expr, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestEvaluateConditionSupportsComplexLogicalExpressions(t *testing.T) {
+	t.Parallel()
+	payload := map[string]any{
+		"game":     "cs2",
+		"mode":     "matchmaking-5vs5",
+		"ct_score": 6,
+		"t_score":  4,
+	}
+
+	matched, err := evaluateCondition("mode=matchmaking-5vs5 & game=cs2", payload)
+	if err != nil {
+		t.Fatalf("evaluateCondition simple conjunction error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected simple conjunction to match")
+	}
+
+	matched, err = evaluateCondition("mode=matchmaking-5vs5 & (ct_score >= 5 | t_score < 3)", payload)
+	if err != nil {
+		t.Fatalf("evaluateCondition nested logical expression error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("expected nested expression to match")
 	}
 }
 
