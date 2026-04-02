@@ -608,6 +608,42 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 	if expr == "" {
 		return true, nil
 	}
+	return evaluateBooleanExpression(expr, payload)
+}
+
+func evaluateBooleanExpression(expr string, payload map[string]any) (bool, error) {
+	trimmed := trimConditionParentheses(expr)
+	if trimmed == "" {
+		return false, fmt.Errorf("unsupported condition: %s", expr)
+	}
+	if segments, ok := splitConditionByTopLevelOperator(trimmed, []string{"||", "|"}); ok {
+		for _, segment := range segments {
+			matched, err := evaluateBooleanExpression(segment, payload)
+			if err != nil {
+				return false, err
+			}
+			if matched {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if segments, ok := splitConditionByTopLevelOperator(trimmed, []string{"&&", "&"}); ok {
+		for _, segment := range segments {
+			matched, err := evaluateBooleanExpression(segment, payload)
+			if err != nil {
+				return false, err
+			}
+			if !matched {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return evaluateAtomicCondition(trimmed, payload)
+}
+
+func evaluateAtomicCondition(expr string, payload map[string]any) (bool, error) {
 	if strings.HasPrefix(expr, "exists(") && strings.HasSuffix(expr, ")") {
 		path := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(expr, "exists("), ")"))
 		_, ok := lookupJSONPath(payload, path)
@@ -618,20 +654,48 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 		_, ok := lookupJSONPath(payload, path)
 		return !ok, nil
 	}
-	for _, op := range []string{"!=", "==", "="} {
-		if idx := strings.Index(expr, op); idx > 0 {
-			left := strings.TrimSpace(expr[:idx])
-			right := strings.TrimSpace(expr[idx+len(op):])
-			raw, ok := lookupJSONPath(payload, left)
+	for _, op := range []string{">=", "<=", "!=", "==", "=", ">", "<"} {
+		idx := strings.Index(expr, op)
+		if idx <= 0 {
+			continue
+		}
+		left := strings.TrimSpace(expr[:idx])
+		right := strings.TrimSpace(expr[idx+len(op):])
+		if left == "" || right == "" || strings.ContainsAny(right[:1], "<>!=") {
+			return false, fmt.Errorf("unsupported condition: %s", expr)
+		}
+		raw, ok := lookupJSONPath(payload, left)
+		if !ok {
+			return false, nil
+		}
+		switch op {
+		case "=", "==", "!=":
+			leftValue := fmt.Sprint(raw)
+			rightValue := strings.Trim(right, "'\"")
+			matched := strings.EqualFold(leftValue, rightValue)
+			if op == "!=" {
+				return !matched, nil
+			}
+			return matched, nil
+		case ">", "<", ">=", "<=":
+			leftNumber, ok := conditionNumber(raw)
 			if !ok {
 				return false, nil
 			}
-			leftValue := fmt.Sprint(raw)
-			rightValue := strings.Trim(right, "'\"")
-			if op == "==" || op == "=" {
-				return strings.EqualFold(leftValue, rightValue), nil
+			rightNumber, ok := conditionNumber(strings.Trim(right, "'\""))
+			if !ok {
+				return false, fmt.Errorf("unsupported condition: %s", expr)
 			}
-			return !strings.EqualFold(leftValue, rightValue), nil
+			switch op {
+			case ">":
+				return leftNumber > rightNumber, nil
+			case "<":
+				return leftNumber < rightNumber, nil
+			case ">=":
+				return leftNumber >= rightNumber, nil
+			default:
+				return leftNumber <= rightNumber, nil
+			}
 		}
 	}
 	if isScenarioConditionShorthandLiteral(expr) {
@@ -641,6 +705,113 @@ func evaluateCondition(condition string, payload map[string]any) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("unsupported condition: %s", expr)
+}
+
+func conditionNumber(raw any) (float64, bool) {
+	switch typed := raw.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int16:
+		return float64(typed), true
+	case int8:
+		return float64(typed), true
+	case uint:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	case uint16:
+		return float64(typed), true
+	case uint8:
+		return float64(typed), true
+	case string:
+		v, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+func trimConditionParentheses(expr string) string {
+	trimmed := strings.TrimSpace(expr)
+	for strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
+		depth := 0
+		validOuter := true
+		for idx, ch := range trimmed {
+			switch ch {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth < 0 {
+					return strings.TrimSpace(expr)
+				}
+				if depth == 0 && idx < len(trimmed)-1 {
+					validOuter = false
+				}
+			}
+		}
+		if !validOuter || depth != 0 {
+			break
+		}
+		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+	}
+	return trimmed
+}
+
+func splitConditionByTopLevelOperator(expr string, operators []string) ([]string, bool) {
+	parts := make([]string, 0, 2)
+	start := 0
+	depth := 0
+	matched := false
+	for idx := 0; idx < len(expr); idx++ {
+		switch expr[idx] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return nil, false
+			}
+		}
+		if depth != 0 {
+			continue
+		}
+		for _, op := range operators {
+			if strings.HasPrefix(expr[idx:], op) {
+				segment := strings.TrimSpace(expr[start:idx])
+				if segment == "" {
+					return nil, false
+				}
+				parts = append(parts, segment)
+				start = idx + len(op)
+				idx += len(op) - 1
+				matched = true
+				break
+			}
+		}
+	}
+	if !matched || depth != 0 {
+		return nil, false
+	}
+	last := strings.TrimSpace(expr[start:])
+	if last == "" {
+		return nil, false
+	}
+	parts = append(parts, last)
+	return parts, true
 }
 
 func parseJSONMap(raw string) map[string]any {
