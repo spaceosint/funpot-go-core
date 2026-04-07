@@ -328,6 +328,67 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestScenarioPackageCreateUsesExplicitTransitionsForGraphRouting(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "graph transitions",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "step_b", Name: "Step B", PromptTemplate: "b", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "step_c", Name: "Step C", PromptTemplate: "c", ResponseSchemaJSON: `{}`, Order: 3},
+		},
+		Transitions: []ScenarioTransition{
+			{FromStepID: "step_a", ToStepID: "step_b", Condition: "mode = matchmaking-5vs5", Priority: 1},
+			{FromStepID: "step_a", ToStepID: "step_c", Condition: "ct_score >= 12 | t_score >= 12", Priority: 5},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if len(item.Transitions) != 2 {
+		t.Fatalf("expected explicit transition graph to be preserved, got %#v", item.Transitions)
+	}
+
+	step, entered, err := item.ResolveStep("step_a", `{"ct_score":8,"t_score":12,"mode":"matchmaking-5vs5"}`)
+	if err != nil {
+		t.Fatalf("resolve explicit graph transition: %v", err)
+	}
+	if !entered || step.ID != "step_c" {
+		t.Fatalf("expected explicit graph routing to step_c, got entered=%v step=%s", entered, step.ID)
+	}
+}
+
+func TestScenarioPackageCreateRejectsTransitionWithUnknownStep(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "invalid transition",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "step_a", Name: "Step A", PromptTemplate: "a", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		Transitions: []ScenarioTransition{
+			{FromStepID: "step_a", ToStepID: "step_missing", Condition: "mode = matchmaking-5vs5", Priority: 1},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected validation error for transition to unknown step")
+	}
+	if !errors.Is(err, ErrInvalidScenarioStepID) {
+		t.Fatalf("expected ErrInvalidScenarioStepID, got %v", err)
+	}
+}
+
 func TestScenarioPackageCreateReturnsEmptyTransitionArrayForSingleStep(t *testing.T) {
 	t.Parallel()
 

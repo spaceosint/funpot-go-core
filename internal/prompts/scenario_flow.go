@@ -98,6 +98,7 @@ type ScenarioPackageCreateRequest struct {
 	GameSlug         string
 	LLMModelConfigID string
 	Steps            []ScenarioStep
+	Transitions      []ScenarioTransition
 	ActorID          string
 }
 
@@ -122,6 +123,22 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		}
 		seenSteps[id] = struct{}{}
 	}
+	for _, transition := range req.Transitions {
+		from := strings.TrimSpace(transition.FromStepID)
+		to := strings.TrimSpace(transition.ToStepID)
+		if from == "" || to == "" {
+			return ErrInvalidScenarioStepID
+		}
+		if _, ok := seenSteps[from]; !ok {
+			return fmt.Errorf("%w: unknown transition fromStepId %s", ErrInvalidScenarioStepID, from)
+		}
+		if _, ok := seenSteps[to]; !ok {
+			return fmt.Errorf("%w: unknown transition toStepId %s", ErrInvalidScenarioStepID, to)
+		}
+		if err := validateScenarioCondition(transition.Condition); err != nil {
+			return fmt.Errorf("%w: transition %s -> %s: %v", ErrInvalidScenarioCondition, from, to, err)
+		}
+	}
 	return nil
 }
 
@@ -142,7 +159,23 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 	return normalized
 }
 
-func normalizeScenarioTransitions(steps []ScenarioStep) []ScenarioTransition {
+func normalizeScenarioTransitions(steps []ScenarioStep, transitions []ScenarioTransition) []ScenarioTransition {
+	if len(transitions) > 0 {
+		normalized := make([]ScenarioTransition, 0, len(transitions))
+		for _, tr := range transitions {
+			normalizedTransition := ScenarioTransition{
+				FromStepID: strings.TrimSpace(tr.FromStepID),
+				ToStepID:   strings.TrimSpace(tr.ToStepID),
+				Condition:  strings.TrimSpace(tr.Condition),
+				Priority:   tr.Priority,
+			}
+			if normalizedTransition.Priority <= 0 {
+				normalizedTransition.Priority = 1
+			}
+			normalized = append(normalized, normalizedTransition)
+		}
+		return normalized
+	}
 	if len(steps) < 2 {
 		return []ScenarioTransition{}
 	}
@@ -204,7 +237,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	}
 	now := time.Now().UTC()
 	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
-	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
+	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -284,7 +317,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	}
 	now := time.Now().UTC()
 	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
-	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps)
+	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {

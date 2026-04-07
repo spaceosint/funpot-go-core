@@ -71,11 +71,21 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 			Order:              step.Order,
 		})
 	}
+	transitions := make([]prompts.ScenarioTransition, 0, len(req.Transitions))
+	for _, transition := range req.Transitions {
+		transitions = append(transitions, prompts.ScenarioTransition{
+			FromStepID: transition.FromStepID,
+			ToStepID:   transition.ToStepID,
+			Condition:  transition.Condition,
+			Priority:   transition.Priority,
+		})
+	}
 	return prompts.ScenarioPackageCreateRequest{
 		Name:             req.Name,
 		GameSlug:         req.GameSlug,
 		LLMModelConfigID: req.LLMModelConfigID,
 		Steps:            steps,
+		Transitions:      transitions,
 		ActorID:          actorID,
 	}
 }
@@ -109,11 +119,19 @@ type scenarioStepRequest struct {
 	Order              int    `json:"order"`
 }
 
+type scenarioTransitionRequest struct {
+	FromStepID string `json:"fromStepId"`
+	ToStepID   string `json:"toStepId"`
+	Condition  string `json:"condition"`
+	Priority   int    `json:"priority"`
+}
+
 type scenarioPackageCreateRequest struct {
-	Name             string                `json:"name"`
-	GameSlug         string                `json:"gameSlug"`
-	LLMModelConfigID string                `json:"llmModelConfigId"`
-	Steps            []scenarioStepRequest `json:"steps"`
+	Name             string                      `json:"name"`
+	GameSlug         string                      `json:"gameSlug"`
+	LLMModelConfigID string                      `json:"llmModelConfigId"`
+	Steps            []scenarioStepRequest       `json:"steps"`
+	Transitions      []scenarioTransitionRequest `json:"transitions"`
 }
 
 type llmModelConfigUpsertRequest struct {
