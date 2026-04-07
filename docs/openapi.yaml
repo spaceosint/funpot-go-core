@@ -1269,6 +1269,11 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/ScenarioStep'
+        transitions:
+          type: array
+          description: Optional explicit graph edges for branching scenario flow. When omitted, backend auto-generates linear transitions by `order`.
+          items:
+            $ref: '#/components/schemas/ScenarioTransition'
     ScenarioPackageVersion:
       allOf:
         - $ref: '#/components/schemas/ScenarioPackageCreateRequest'
@@ -1282,7 +1287,7 @@ components:
               type: boolean
             transitions:
               type: array
-              description: Auto-generated transitions derived from step ordering and target-step `entryCondition`.
+              description: Effective transitions used by runtime (explicit admin-defined edges or backend auto-generated linear edges when omitted in create/update payload).
               items:
                 $ref: '#/components/schemas/ScenarioTransition'
             createdBy:
