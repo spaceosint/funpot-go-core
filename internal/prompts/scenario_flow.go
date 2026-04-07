@@ -481,7 +481,7 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 			transitions = append(transitions, item)
 		}
 	}
-	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority < transitions[j].Priority })
+	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
 	for _, tr := range transitions {
 		ok, err := evaluateCondition(tr.Condition, state)
 		if err != nil || !ok {

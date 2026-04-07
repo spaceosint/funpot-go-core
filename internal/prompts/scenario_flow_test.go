@@ -98,6 +98,33 @@ func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches
 	}
 }
 
+func TestScenarioPackageResolveStepUsesHighestPriorityTransition(t *testing.T) {
+	t.Parallel()
+
+	pkg := ScenarioPackage{
+		ID:       "pkg-1",
+		Name:     "priority flow",
+		GameSlug: "global",
+		Steps: []ScenarioStep{
+			{ID: "step_a", Name: "Step A", Initial: true, Order: 1},
+			{ID: "step_b", Name: "Step B", Order: 2},
+			{ID: "step_c", Name: "Step C", Order: 3},
+		},
+		Transitions: []ScenarioTransition{
+			{FromStepID: "step_a", ToStepID: "step_b", Condition: "mode=matchmaking-5vs5", Priority: 1},
+			{FromStepID: "step_a", ToStepID: "step_c", Condition: "ct_score >= 12 | t_score >= 12", Priority: 5},
+		},
+	}
+
+	step, entered, err := pkg.ResolveStep("step_a", `{"ct_score":8,"t_score":12,"mode":"matchmaking-5vs5"}`)
+	if err != nil {
+		t.Fatalf("resolve priority transition: %v", err)
+	}
+	if !entered || step.ID != "step_c" {
+		t.Fatalf("expected transition to step_c by highest priority, got entered=%v step=%s", entered, step.ID)
+	}
+}
+
 func TestEvaluateCondition(t *testing.T) {
 	t.Parallel()
 	payload := map[string]any{"game": "cs2", "mode": "faceit", "nested": map[string]any{"value": "x"}}
