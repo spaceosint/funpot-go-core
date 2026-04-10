@@ -290,6 +290,57 @@ paths:
           description: Game deleted
         default:
           $ref: '#/components/responses/Error'
+  /api/admin/streamers/{streamerId}/llm-history:
+    get:
+      summary: Get streamer LLM history (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        '200':
+          description: Paginated streamer LLM history with uploaded videos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStreamerLLMHistoryResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Clear streamer LLM history (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: streamerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Streamer history and uploaded videos cleanup result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStreamerHistoryDeleteResponse'
+        default:
+          $ref: '#/components/responses/Error'
   /api/admin/llm/model-configs:
     get:
       summary: List LLM model configs (admin)
@@ -1130,6 +1181,65 @@ components:
         createdAt:
           type: string
           format: date-time
+    UploadedVideo:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
+    AdminHistoryEvent:
+      allOf:
+        - $ref: '#/components/schemas/LLMDecision'
+        - type: object
+          properties:
+            eventTime:
+              type: string
+              format: date-time
+            stepName:
+              type: string
+            llmResponse:
+              type: string
+            globalStateDelta:
+              type: string
+            confidence:
+              type: number
+    AdminStreamerLLMHistoryResponse:
+      type: object
+      required: [streamerId, page, pageSize, total, items, videos]
+      properties:
+        streamerId:
+          type: string
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminHistoryEvent'
+        videos:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadedVideo'
+    AdminStreamerHistoryDeleteResponse:
+      type: object
+      required: [streamerId, deletedDecisions, deletedBunnyVideos]
+      properties:
+        streamerId:
+          type: string
+        deletedDecisions:
+          type: integer
+        deletedBunnyVideos:
+          type: integer
     GameUpsertRequest:
       type: object
       required: [slug, title, status]
