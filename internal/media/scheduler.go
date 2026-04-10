@@ -178,6 +178,11 @@ func (s *Scheduler) runCycle(ctx context.Context, streamerID string) {
 	}
 	logger.Info("scheduler cycle triggered", zap.String("streamerID", streamerID), zap.Time("windowStart", windowStart), zap.String("windowKey", windowKey))
 	if err := s.processor.ProcessStreamer(ctx, streamerID); err != nil {
+		if errors.Is(err, ErrTrackingStop) {
+			logger.Info("scheduler stopping tracking after processor requested shutdown", zap.String("streamerID", streamerID))
+			s.Stop(streamerID)
+			return
+		}
 		logger.Error("scheduler cycle failed", zap.String("streamerID", streamerID), zap.Error(err))
 		return
 	}

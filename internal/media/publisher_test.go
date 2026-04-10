@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,7 @@ func (f *fakePublishRunner) Run(_ context.Context, _ io.Writer, _ io.Writer, nam
 	return nil
 }
 
-func TestBunnyChunkPublisherAggregatesAndUploadsWhenBatchReady(t *testing.T) {
+func TestBunnyChunkPublisherUploadsOnlyOnFinalize(t *testing.T) {
 	uploadCalls := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -101,8 +102,18 @@ func TestBunnyChunkPublisherAggregatesAndUploadsWhenBatchReady(t *testing.T) {
 	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("publish second chunk: %v", err)
 	}
+	if uploadCalls != 0 {
+		t.Fatalf("uploadCalls = %d, want 0 before finalize", uploadCalls)
+	}
+	if err := publisher.Finalize(context.Background(), "str-1", time.Now().UTC()); err != nil {
+		t.Fatalf("finalize stream: %v", err)
+	}
 	if uploadCalls != 1 {
-		t.Fatalf("uploadCalls = %d, want 1 after batch ready", uploadCalls)
+		t.Fatalf("uploadCalls = %d, want 1 after finalize", uploadCalls)
+	}
+	segmentsDir := filepath.Join(dir, "str-1", "segments")
+	if _, err := os.Stat(segmentsDir); !os.IsNotExist(err) {
+		t.Fatalf("segments dir should be removed after finalize, stat err=%v", err)
 	}
 }
 
@@ -163,6 +174,9 @@ func TestBunnyChunkPublisherConcatListUsesAbsolutePaths(t *testing.T) {
 	}
 	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("publish second chunk: %v", err)
+	}
+	if err := publisher.Finalize(context.Background(), "str-1", time.Now().UTC()); err != nil {
+		t.Fatalf("finalize stream: %v", err)
 	}
 	if uploadCalls != 1 {
 		t.Fatalf("uploadCalls = %d, want 1", uploadCalls)
@@ -265,5 +279,57 @@ func TestParseSegmentIndex(t *testing.T) {
 	}
 	if got := parseSegmentIndex("legacy.mp4"); got != 0 {
 		t.Fatalf("parseSegmentIndex() = %d, want 0", got)
+	}
+}
+
+func TestBunnyChunkPublisherCreateVideoTitleIncludesStreamerAndDayFolders(t *testing.T) {
+	var title string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			if raw, ok := payload["title"].(string); ok {
+				title = raw
+			}
+			_, _ = w.Write([]byte(`{"guid":"video-1"}`))
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/videos/video-1"):
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+
+	runner := &fakePublishRunner{}
+	dir := t.TempDir()
+	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
+		OutputDir:    dir,
+		FFmpegBinary: "ffmpeg",
+		Runner:       runner,
+		BaseURL:      api.URL,
+		LibraryID:    "lib-1",
+		APIKey:       "key",
+		UsernameResolver: func(_ context.Context, _ string) (string, error) {
+			return "best_streamer", nil
+		},
+		HTTPTimeout: time.Second,
+	})
+
+	chunkA := filepath.Join(dir, "a.mp4")
+	if err := os.WriteFile(chunkA, []byte("A"), 0o644); err != nil {
+		t.Fatalf("write chunkA: %v", err)
+	}
+	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("publish chunk: %v", err)
+	}
+	at := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	if err := publisher.Finalize(context.Background(), "str-1", at); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	if !strings.HasPrefix(title, "str-1_best_streamer/2026-04-10/") {
+		t.Fatalf("title = %q, want folder prefix", title)
 	}
 }

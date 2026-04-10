@@ -21,14 +21,15 @@ const (
 )
 
 type BunnyChunkPublisherConfig struct {
-	OutputDir      string
-	FFmpegBinary   string
-	Runner         StreamlinkCommandRunner
-	AggregateCount int
-	BaseURL        string
-	LibraryID      string
-	APIKey         string
-	HTTPTimeout    time.Duration
+	OutputDir        string
+	FFmpegBinary     string
+	Runner           StreamlinkCommandRunner
+	AggregateCount   int
+	BaseURL          string
+	LibraryID        string
+	APIKey           string
+	HTTPTimeout      time.Duration
+	UsernameResolver func(ctx context.Context, streamerID string) (string, error)
 }
 
 type BunnyChunkPublisher struct {
@@ -83,32 +84,50 @@ func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, ch
 		return err
 	}
 
-	segments, err := p.listSegments(segmentsDir)
-	if err != nil {
-		return err
-	}
-	if len(segments) < p.cfg.AggregateCount {
+	return nil
+}
+
+func (p *BunnyChunkPublisher) Finalize(ctx context.Context, streamerID string, capturedAt time.Time) error {
+	if p == nil {
 		return nil
 	}
-
-	selected := segments[:p.cfg.AggregateCount]
-	windowPath, err := p.concatSegments(ctx, streamerID, segmentsDir, selected)
+	if strings.TrimSpace(p.cfg.LibraryID) == "" || strings.TrimSpace(p.cfg.APIKey) == "" {
+		return nil
+	}
+	segmentsDir := filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID), "segments")
+	segments, err := p.listSegments(segmentsDir)
+	if err != nil {
+		if errorsIsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(segments) == 0 {
+		return nil
+	}
+	windowPath, err := p.concatSegments(ctx, streamerID, segmentsDir, segments)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(windowPath) //nolint:errcheck
 
-	videoID, err := p.createVideo(ctx, streamerID, chunk.CapturedAt)
+	videoID, err := p.createVideo(ctx, streamerID, capturedAt)
 	if err != nil {
 		return err
 	}
 	if err := p.uploadVideo(ctx, videoID, windowPath); err != nil {
 		return err
 	}
-	for _, segment := range selected {
+	for _, segment := range segments {
 		_ = os.Remove(segment)
 	}
+	_ = os.RemoveAll(segmentsDir)
+	_ = os.Remove(filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID)))
 	return nil
+}
+
+func errorsIsNotExist(err error) bool {
+	return err != nil && os.IsNotExist(err)
 }
 
 func (p *BunnyChunkPublisher) listSegments(segmentsDir string) ([]string, error) {
@@ -238,7 +257,7 @@ type bunnyCreateVideoResponse struct {
 }
 
 func (p *BunnyChunkPublisher) createVideo(ctx context.Context, streamerID string, capturedAt time.Time) (string, error) {
-	title := fmt.Sprintf("%s-%s", sanitizeToken(streamerID), sanitizeToken(capturedAt.UTC().Format(time.RFC3339Nano)))
+	title := p.buildRemoteVideoPath(ctx, streamerID, capturedAt)
 	payload, err := json.Marshal(bunnyCreateVideoRequest{Title: title})
 	if err != nil {
 		return "", err
@@ -294,4 +313,18 @@ func (p *BunnyChunkPublisher) uploadVideo(ctx context.Context, videoID, videoPat
 		return fmt.Errorf("upload bunny video failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	return nil
+}
+
+func (p *BunnyChunkPublisher) buildRemoteVideoPath(ctx context.Context, streamerID string, capturedAt time.Time) string {
+	day := capturedAt.UTC().Format("2006-01-02")
+	if day == "0001-01-01" {
+		day = time.Now().UTC().Format("2006-01-02")
+	}
+	streamerFolder := sanitizeToken(streamerID)
+	if p.cfg.UsernameResolver != nil {
+		if username, err := p.cfg.UsernameResolver(ctx, streamerID); err == nil && strings.TrimSpace(username) != "" {
+			streamerFolder = sanitizeToken(streamerID + "_" + username)
+		}
+	}
+	return fmt.Sprintf("%s/%s/%s", streamerFolder, day, sanitizeToken(time.Now().UTC().Format(time.RFC3339Nano)))
 }

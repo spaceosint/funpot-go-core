@@ -19,6 +19,7 @@ import (
 var (
 	ErrStreamerIDRequired = errors.New("streamerID is required")
 	ErrStreamerBusy       = errors.New("streamer is already being processed")
+	ErrTrackingStop       = errors.New("stream tracking should stop")
 )
 
 type ChunkRef struct {
@@ -92,6 +93,10 @@ type Locker interface {
 
 type ChunkPublisher interface {
 	Publish(ctx context.Context, streamerID string, chunk ChunkRef) error
+}
+
+type ChunkFinalizer interface {
+	Finalize(ctx context.Context, streamerID string, capturedAt time.Time) error
 }
 
 type Worker struct {
@@ -193,9 +198,17 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 			return streamers.LLMDecision{}, nil
 		}
 		if errors.Is(err, ErrStreamlinkStreamEnded) {
+			if finalizer, ok := w.chunkPublisher.(ChunkFinalizer); ok {
+				if finalizeErr := finalizer.Finalize(ctx, id, time.Now().UTC()); finalizeErr != nil {
+					logger.Error("finalize stream video failed after stream end", zap.String("streamerID", id), zap.Error(finalizeErr))
+					w.metrics.recordFailure(ctx, id, "finalize_stream")
+					w.metrics.recordCycle(ctx, id, "failed")
+					return streamers.LLMDecision{}, finalizeErr
+				}
+			}
 			logger.Info("stream chunk capture skipped because stream has ended or is unavailable", zap.String("streamerID", id), zap.Error(err))
 			w.metrics.recordCycle(ctx, id, "stream_unavailable")
-			return streamers.LLMDecision{}, nil
+			return streamers.LLMDecision{}, ErrTrackingStop
 		}
 		logger.Error("stream chunk capture failed", zap.String("streamerID", id), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "capture")
