@@ -385,6 +385,39 @@ func (s *Service) ListAllLLMDecisions(ctx context.Context, streamerID string) []
 	return items
 }
 
+func (s *Service) ListLLMDecisionsPage(ctx context.Context, streamerID string, page, pageSize int) ([]LLMDecision, int) {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return []LLMDecision{}, 0
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	items := s.ListAllLLMDecisions(ctx, key)
+	total := len(items)
+	if total == 0 {
+		return []LLMDecision{}, 0
+	}
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []LLMDecision{}, total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	out := make([]LLMDecision, end-start)
+	copy(out, items[start:end])
+	return out, total
+}
+
 func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit int) []LLMDecision {
 	key := strings.TrimSpace(streamerID)
 	if key == "" {
@@ -409,6 +442,27 @@ func (s *Service) ListLLMDecisions(ctx context.Context, streamerID string, limit
 		return []LLMDecision{}
 	}
 	return items
+}
+
+func (s *Service) ClearLLMHistory(ctx context.Context, streamerID string) int {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return 0
+	}
+	s.mu.RLock()
+	repo := s.decisionRepo
+	s.mu.RUnlock()
+	if repo == nil {
+		return 0
+	}
+	deleted, err := repo.DeleteAllLLMDecisions(ctx, key)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to clear llm history", zap.String("streamerID", key), zap.Error(err))
+		}
+		return 0
+	}
+	return deleted
 }
 
 func (s *Service) GetLLMStatus(ctx context.Context, streamerID string) LLMStatus {

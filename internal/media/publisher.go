@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,8 +34,17 @@ type BunnyChunkPublisherConfig struct {
 }
 
 type BunnyChunkPublisher struct {
-	cfg    BunnyChunkPublisherConfig
-	client *http.Client
+	cfg              BunnyChunkPublisherConfig
+	client           *http.Client
+	uploadedMu       sync.RWMutex
+	uploadedByStream map[string][]UploadedVideo
+}
+
+type UploadedVideo struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	CreatedAt string `json:"createdAt"`
 }
 
 func NewBunnyChunkPublisher(cfg BunnyChunkPublisherConfig) *BunnyChunkPublisher {
@@ -56,7 +66,11 @@ func NewBunnyChunkPublisher(cfg BunnyChunkPublisherConfig) *BunnyChunkPublisher 
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = 2 * time.Minute
 	}
-	return &BunnyChunkPublisher{cfg: cfg, client: &http.Client{Timeout: cfg.HTTPTimeout}}
+	return &BunnyChunkPublisher{
+		cfg:              cfg,
+		client:           &http.Client{Timeout: cfg.HTTPTimeout},
+		uploadedByStream: make(map[string][]UploadedVideo),
+	}
 }
 
 func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, chunk ChunkRef) error {
@@ -111,13 +125,19 @@ func (p *BunnyChunkPublisher) Finalize(ctx context.Context, streamerID string, c
 	}
 	defer os.Remove(windowPath) //nolint:errcheck
 
-	videoID, err := p.createVideo(ctx, streamerID, capturedAt)
+	videoID, title, err := p.createVideo(ctx, streamerID, capturedAt)
 	if err != nil {
 		return err
 	}
 	if err := p.uploadVideo(ctx, videoID, windowPath); err != nil {
 		return err
 	}
+	p.appendUploadedVideo(streamerID, UploadedVideo{
+		ID:        videoID,
+		Title:     title,
+		URL:       strings.TrimRight(p.cfg.BaseURL, "/") + "/library/" + p.cfg.LibraryID + "/videos/" + videoID,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
 	for _, segment := range segments {
 		_ = os.Remove(segment)
 	}
@@ -256,37 +276,104 @@ type bunnyCreateVideoResponse struct {
 	GUID string `json:"guid"`
 }
 
-func (p *BunnyChunkPublisher) createVideo(ctx context.Context, streamerID string, capturedAt time.Time) (string, error) {
+func (p *BunnyChunkPublisher) createVideo(ctx context.Context, streamerID string, capturedAt time.Time) (string, string, error) {
 	title := p.buildRemoteVideoPath(ctx, streamerID, capturedAt)
 	payload, err := json.Marshal(bunnyCreateVideoRequest{Title: title})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/library/" + p.cfg.LibraryID + "/videos"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("AccessKey", p.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("create bunny video failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		return "", "", fmt.Errorf("create bunny video failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	var decoded bunnyCreateVideoResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if strings.TrimSpace(decoded.GUID) == "" {
-		return "", fmt.Errorf("create bunny video: empty guid")
+		return "", "", fmt.Errorf("create bunny video: empty guid")
 	}
-	return decoded.GUID, nil
+	return decoded.GUID, title, nil
+}
+
+func (p *BunnyChunkPublisher) ListUploadedVideos(streamerID string) []UploadedVideo {
+	if p == nil {
+		return []UploadedVideo{}
+	}
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return []UploadedVideo{}
+	}
+	p.uploadedMu.RLock()
+	defer p.uploadedMu.RUnlock()
+	items := p.uploadedByStream[key]
+	out := make([]UploadedVideo, len(items))
+	copy(out, items)
+	return out
+}
+
+func (p *BunnyChunkPublisher) DeleteStreamerVideos(ctx context.Context, streamerID string) (int, error) {
+	if p == nil {
+		return 0, nil
+	}
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return 0, nil
+	}
+	items := p.ListUploadedVideos(key)
+	deleted := 0
+	for _, item := range items {
+		if err := p.deleteVideo(ctx, item.ID); err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	p.uploadedMu.Lock()
+	delete(p.uploadedByStream, key)
+	p.uploadedMu.Unlock()
+	return deleted, nil
+}
+
+func (p *BunnyChunkPublisher) appendUploadedVideo(streamerID string, item UploadedVideo) {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return
+	}
+	p.uploadedMu.Lock()
+	p.uploadedByStream[key] = append(p.uploadedByStream[key], item)
+	p.uploadedMu.Unlock()
+}
+
+func (p *BunnyChunkPublisher) deleteVideo(ctx context.Context, videoID string) error {
+	endpoint := strings.TrimRight(p.cfg.BaseURL, "/") + "/library/" + p.cfg.LibraryID + "/videos/" + videoID
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("AccessKey", p.cfg.APIKey)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("delete bunny video failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return nil
 }
 
 func (p *BunnyChunkPublisher) uploadVideo(ctx context.Context, videoID, videoPath string) error {

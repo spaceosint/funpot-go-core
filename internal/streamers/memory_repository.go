@@ -64,3 +64,15 @@ func (r *InMemoryDecisionRepository) ListAllLLMDecisions(_ context.Context, stre
 	copy(out, items)
 	return out, nil
 }
+
+func (r *InMemoryDecisionRepository) DeleteAllLLMDecisions(_ context.Context, streamerID string) (int, error) {
+	key := strings.TrimSpace(streamerID)
+	if key == "" {
+		return 0, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count := len(r.items[key])
+	delete(r.items, key)
+	return count, nil
+}
