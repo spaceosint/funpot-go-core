@@ -118,7 +118,7 @@ func main() {
 		configurableCapture.SetLogger(logger.Named("stream_capture"))
 	}
 
-	chunkPublisher := buildChunkPublisher(cfg, streamersService)
+	chunkPublisher := buildChunkPublisher(cfg, db, streamersService)
 	streamWorker := media.NewWorker(
 		streamCapture,
 		buildStageClassifier(logger, cfg),
@@ -199,7 +199,7 @@ func main() {
 		streamersService,
 		gamesService,
 		promptsService,
-		nil,
+		chunkPublisher,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
 	)
@@ -262,9 +262,13 @@ func streamWorkerLockTTL(cfg config.Config) time.Duration {
 	return interval + 5*time.Second
 }
 
-func buildChunkPublisher(cfg config.Config, streamersService *streamers.Service) media.ChunkPublisher {
+func buildChunkPublisher(cfg config.Config, db *sql.DB, streamersService *streamers.Service) media.ChunkPublisher {
 	if cfg.Streamlink.BunnyLibraryID == "" || cfg.Streamlink.BunnyAPIKey == "" {
 		return nil
+	}
+	var videoStore media.UploadedVideoStore
+	if db != nil {
+		videoStore = media.NewPostgresUploadedVideoStore(db)
 	}
 	return media.NewBunnyChunkPublisher(media.BunnyChunkPublisherConfig{
 		OutputDir:      cfg.Streamlink.OutputDir,
@@ -279,6 +283,7 @@ func buildChunkPublisher(cfg config.Config, streamersService *streamers.Service)
 			}
 			return streamersService.ResolveStreamlinkChannel(ctx, streamerID)
 		},
+		VideoStore: videoStore,
 	})
 }
 
