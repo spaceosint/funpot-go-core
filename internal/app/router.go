@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/config"
 	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/games"
+	"github.com/funpot/funpot-go-core/internal/media"
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
@@ -152,6 +154,35 @@ type meResponse struct {
 	IsAdmin bool `json:"isAdmin"`
 }
 
+type adminHistoryEvent struct {
+	EventTime        string  `json:"eventTime"`
+	StepName         string  `json:"stepName"`
+	LLMResponse      string  `json:"llmResponse"`
+	GlobalStateDelta string  `json:"globalStateDelta,omitempty"`
+	Confidence       float64 `json:"confidence"`
+	streamers.LLMDecision
+}
+
+type adminStreamerLLMHistoryResponse struct {
+	StreamerID string                `json:"streamerId"`
+	Page       int                   `json:"page"`
+	PageSize   int                   `json:"pageSize"`
+	Total      int                   `json:"total"`
+	Items      []adminHistoryEvent   `json:"items"`
+	Videos     []media.UploadedVideo `json:"videos"`
+}
+
+type adminStreamerHistoryDeleteResponse struct {
+	StreamerID        string `json:"streamerId"`
+	DeletedDecisions  int    `json:"deletedDecisions"`
+	DeletedBunnyVideo int    `json:"deletedBunnyVideos"`
+}
+
+type adminStreamerVideoManager interface {
+	ListUploadedVideos(streamerID string) []media.UploadedVideo
+	DeleteStreamerVideos(ctx context.Context, streamerID string) (int, error)
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
@@ -163,7 +194,7 @@ func NewHandler(
 	streamersService *streamers.Service,
 	gamesService *games.Service,
 	promptsService *prompts.Service,
-	_ any,
+	streamerVideoManager any,
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
 ) http.Handler {
@@ -471,6 +502,74 @@ func NewHandler(
 					writeJSON(w, http.StatusOK, streamersService.GetLLMStatus(r.Context(), streamerID))
 				default:
 					writeError(w, http.StatusNotFound, "streamer route not found")
+				}
+			})))
+
+			videoManager, _ := streamerVideoManager.(adminStreamerVideoManager)
+			mux.Handle("/api/admin/streamers/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/streamers/"), "/")
+				parts := strings.Split(path, "/")
+				if len(parts) != 2 || strings.TrimSpace(parts[1]) != "llm-history" {
+					writeError(w, http.StatusNotFound, "admin streamer route not found")
+					return
+				}
+				streamerID := strings.TrimSpace(parts[0])
+				if streamerID == "" {
+					writeError(w, http.StatusBadRequest, "streamer id is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					page := parsePositiveIntDefault(r.URL.Query().Get("page"), 1)
+					pageSize := parsePositiveIntDefault(r.URL.Query().Get("pageSize"), 20)
+					items, total := streamersService.ListLLMDecisionsPage(r.Context(), streamerID, page, pageSize)
+					events := make([]adminHistoryEvent, 0, len(items))
+					for _, item := range items {
+						eventTime := firstNonEmpty(item.CreatedAt, item.ChunkCapturedAt)
+						events = append(events, adminHistoryEvent{
+							EventTime:        eventTime,
+							StepName:         item.Stage,
+							LLMResponse:      item.Label,
+							GlobalStateDelta: item.UpdatedStateJSON,
+							Confidence:       item.Confidence,
+							LLMDecision:      item,
+						})
+					}
+					videos := []media.UploadedVideo{}
+					if videoManager != nil {
+						videos = videoManager.ListUploadedVideos(streamerID)
+					}
+					writeJSON(w, http.StatusOK, adminStreamerLLMHistoryResponse{
+						StreamerID: streamerID,
+						Page:       page,
+						PageSize:   pageSize,
+						Total:      total,
+						Items:      events,
+						Videos:     videos,
+					})
+				case http.MethodDelete:
+					deletedDecisions := streamersService.ClearLLMHistory(r.Context(), streamerID)
+					deletedVideos := 0
+					if videoManager != nil {
+						count, err := videoManager.DeleteStreamerVideos(r.Context(), streamerID)
+						if err != nil {
+							logger.Error("failed to delete bunny videos for streamer history cleanup", zap.String("streamerID", streamerID), zap.Error(err))
+							writeError(w, http.StatusBadGateway, "failed to delete bunny videos")
+							return
+						}
+						deletedVideos = count
+					}
+					writeJSON(w, http.StatusOK, adminStreamerHistoryDeleteResponse{
+						StreamerID:        streamerID,
+						DeletedDecisions:  deletedDecisions,
+						DeletedBunnyVideo: deletedVideos,
+					})
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
 				}
 			})))
 		}
@@ -916,4 +1015,21 @@ func decodeJSONStrict(body []byte, out any) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(out)
+}
+
+func parsePositiveIntDefault(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
