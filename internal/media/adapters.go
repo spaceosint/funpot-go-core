@@ -328,19 +328,30 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex+1))
 		nextInfo, nextErr := os.Stat(nextSegmentPath)
 		segmentFinalized := nextErr == nil && nextInfo.Size() > 0
+		finalizedByStability := false
 		if statErr == nil && info.Size() > 0 {
 			if info.Size() != lastObservedSize {
 				lastObservedSize = info.Size()
 				lastSizeChangedAt = time.Now()
 			}
-			if !segmentFinalized && !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow {
+			stableByObservedSize := !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow
+			stableByModTime := time.Since(info.ModTime()) >= continuousSegmentStabilityWindow
+			nearDeadline := time.Until(deadline) <= continuousSegmentStabilityWindow
+			if !segmentFinalized && stableByObservedSize && stableByModTime && nearDeadline {
 				segmentFinalized = true
+				finalizedByStability = true
 			}
 		}
 		if statErr == nil && info.Size() > 0 && segmentFinalized {
 			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.mp4", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
-			if err := os.Rename(segmentPath, chunkPath); err != nil {
-				return ChunkRef{}, err
+			if finalizedByStability {
+				if err := copyFile(segmentPath, chunkPath); err != nil {
+					return ChunkRef{}, err
+				}
+			} else {
+				if err := os.Rename(segmentPath, chunkPath); err != nil {
+					return ChunkRef{}, err
+				}
 			}
 			session.nextIndex++
 			return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
@@ -484,6 +495,25 @@ func sanitizeToken(value string) string {
 		return "unknown"
 	}
 	return replaced
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close() //nolint:errcheck
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close() //nolint:errcheck
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 func normalizeStreamlinkQuality(value string) string {
