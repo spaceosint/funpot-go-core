@@ -367,7 +367,44 @@ func TestStreamlinkCaptureAdapterContinuousAcceptsStableSegmentWithoutNextChunk(
 	if filepath.Base(chunk.Reference) != "000000001.mp4" {
 		t.Fatalf("chunk path = %q, want renamed stable segment", chunk.Reference)
 	}
-	if _, err := os.Stat(segmentPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected source segment to be moved, err=%v", err)
+	if _, err := os.Stat(segmentPath); err != nil {
+		t.Fatalf("expected source segment to remain for in-progress writer, err=%v", err)
+	}
+}
+
+func TestStreamlinkCaptureAdapterContinuousStableSegmentWaitsNearDeadline(t *testing.T) {
+	outDir := t.TempDir()
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir: outDir,
+	}, nil, nil)
+	adapter.cfg.CaptureTimeout = 10 * time.Second
+
+	segmentsDir := filepath.Join(outDir, "str_live", "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	segmentPath := filepath.Join(segmentsDir, "000000001.mp4")
+	if err := os.WriteFile(segmentPath, []byte("segment-bytes"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	past := time.Now().Add(-3 * time.Second)
+	if err := os.Chtimes(segmentPath, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+
+	adapter.sessions["str_live"] = &continuousCaptureSession{
+		streamerID:  "str_live",
+		channel:     "live_channel",
+		segmentsDir: segmentsDir,
+		nextIndex:   1,
+		started:     true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := adapter.captureContinuous(ctx, "str_live")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("captureContinuous() error = %v, want context deadline exceeded while far from capture deadline", err)
 	}
 }
