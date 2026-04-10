@@ -333,3 +333,15 @@ func TestBunnyChunkPublisherCreateVideoTitleIncludesStreamerAndDayFolders(t *tes
 		t.Fatalf("title = %q, want folder prefix", title)
 	}
 }
+
+func TestBunnyPlaybackURL(t *testing.T) {
+	if got := bunnyPlaybackURL("625785", "ddd765cf-8d71-4c55-b6a7-103fce69726a"); got != "https://player.mediadelivery.net/play/625785/ddd765cf-8d71-4c55-b6a7-103fce69726a" {
+		t.Fatalf("bunnyPlaybackURL() = %q", got)
+	}
+	if got := bunnyPlaybackURL("", "video-1"); got != "" {
+		t.Fatalf("bunnyPlaybackURL() = %q, want empty for missing library", got)
+	}
+	if got := bunnyPlaybackURL("lib-1", ""); got != "" {
+		t.Fatalf("bunnyPlaybackURL() = %q, want empty for missing video", got)
+	}
+}
