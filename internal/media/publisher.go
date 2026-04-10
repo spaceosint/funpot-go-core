@@ -18,6 +18,7 @@ import (
 
 const (
 	defaultBunnyBaseURL          = "https://video.bunnycdn.com"
+	defaultBunnyPlaybackBaseURL  = "https://player.mediadelivery.net"
 	defaultChunkPublishBatchSize = 5
 )
 
@@ -136,7 +137,7 @@ func (p *BunnyChunkPublisher) Finalize(ctx context.Context, streamerID string, c
 	p.appendUploadedVideo(ctx, streamerID, UploadedVideo{
 		ID:        videoID,
 		Title:     title,
-		URL:       strings.TrimRight(p.cfg.BaseURL, "/") + "/library/" + p.cfg.LibraryID + "/videos/" + videoID,
+		URL:       bunnyPlaybackURL(p.cfg.LibraryID, videoID),
 		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	for _, segment := range segments {
@@ -432,4 +433,13 @@ func (p *BunnyChunkPublisher) buildRemoteVideoPath(ctx context.Context, streamer
 		}
 	}
 	return fmt.Sprintf("%s/%s/%s", streamerFolder, day, sanitizeToken(time.Now().UTC().Format(time.RFC3339Nano)))
+}
+
+func bunnyPlaybackURL(libraryID, videoID string) string {
+	library := strings.TrimSpace(libraryID)
+	video := strings.TrimSpace(videoID)
+	if library == "" || video == "" {
+		return ""
+	}
+	return strings.TrimRight(defaultBunnyPlaybackBaseURL, "/") + "/play/" + library + "/" + video
 }
