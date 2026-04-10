@@ -31,6 +31,7 @@ type BunnyChunkPublisherConfig struct {
 	APIKey           string
 	HTTPTimeout      time.Duration
 	UsernameResolver func(ctx context.Context, streamerID string) (string, error)
+	VideoStore       UploadedVideoStore
 }
 
 type BunnyChunkPublisher struct {
@@ -132,7 +133,7 @@ func (p *BunnyChunkPublisher) Finalize(ctx context.Context, streamerID string, c
 	if err := p.uploadVideo(ctx, videoID, windowPath); err != nil {
 		return err
 	}
-	p.appendUploadedVideo(streamerID, UploadedVideo{
+	p.appendUploadedVideo(ctx, streamerID, UploadedVideo{
 		ID:        videoID,
 		Title:     title,
 		URL:       strings.TrimRight(p.cfg.BaseURL, "/") + "/library/" + p.cfg.LibraryID + "/videos/" + videoID,
@@ -317,6 +318,12 @@ func (p *BunnyChunkPublisher) ListUploadedVideos(streamerID string) []UploadedVi
 	if key == "" {
 		return []UploadedVideo{}
 	}
+	if p.cfg.VideoStore != nil {
+		items, err := p.cfg.VideoStore.ListByStreamer(context.Background(), key)
+		if err == nil {
+			return items
+		}
+	}
 	p.uploadedMu.RLock()
 	defer p.uploadedMu.RUnlock()
 	items := p.uploadedByStream[key]
@@ -341,16 +348,27 @@ func (p *BunnyChunkPublisher) DeleteStreamerVideos(ctx context.Context, streamer
 		}
 		deleted++
 	}
+	if p.cfg.VideoStore != nil {
+		if err := p.cfg.VideoStore.DeleteByStreamer(ctx, key); err != nil {
+			return deleted, err
+		}
+		return deleted, nil
+	}
 	p.uploadedMu.Lock()
 	delete(p.uploadedByStream, key)
 	p.uploadedMu.Unlock()
 	return deleted, nil
 }
 
-func (p *BunnyChunkPublisher) appendUploadedVideo(streamerID string, item UploadedVideo) {
+func (p *BunnyChunkPublisher) appendUploadedVideo(ctx context.Context, streamerID string, item UploadedVideo) {
 	key := strings.TrimSpace(streamerID)
 	if key == "" {
 		return
+	}
+	if p.cfg.VideoStore != nil {
+		if err := p.cfg.VideoStore.Save(ctx, key, item); err == nil {
+			return
+		}
 	}
 	p.uploadedMu.Lock()
 	p.uploadedByStream[key] = append(p.uploadedByStream[key], item)
