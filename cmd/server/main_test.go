@@ -122,7 +122,7 @@ func TestStreamWorkerLockTTLIncludesBuffer(t *testing.T) {
 }
 
 func TestBuildChunkPublisherReturnsNilWhenBunnyNotConfigured(t *testing.T) {
-	if got := buildChunkPublisher(config.Config{}); got != nil {
+	if got := buildChunkPublisher(config.Config{}, nil); got != nil {
 		t.Fatal("expected nil publisher")
 	}
 }
@@ -138,7 +138,7 @@ func TestBuildChunkPublisherReturnsPublisherWhenConfigured(t *testing.T) {
 			BunnyAPIKey:    "api-key",
 		},
 	}
-	if got := buildChunkPublisher(cfg); got == nil {
+	if got := buildChunkPublisher(cfg, nil); got == nil {
 		t.Fatal("expected publisher")
 	}
 }
