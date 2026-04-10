@@ -18,6 +18,7 @@ This repository contains the backend modular monolith for the FunPot Telegram Mi
 ## Testing & Quality
 - Prefer table-driven tests for Go packages.
 - Maintain linting via `golangci-lint`.
+- If you change a function signature, update all call sites in tests (especially in `cmd/server/main_test.go`) and run `go test ./...` to catch vet/build failures early.
 - Include load/performance test plans in `docs/load_testing.md` when behavior changes.
 
 ## PR Expectations
