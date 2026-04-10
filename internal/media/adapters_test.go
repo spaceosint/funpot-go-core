@@ -328,3 +328,46 @@ func TestNormalizeStreamlinkQualityPrefers1080p(t *testing.T) {
 		t.Fatalf("normalizeStreamlinkQuality(custom) = %q, want 480p", got)
 	}
 }
+
+func TestStreamlinkCaptureAdapterContinuousAcceptsStableSegmentWithoutNextChunk(t *testing.T) {
+	outDir := t.TempDir()
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir: outDir,
+	}, nil, nil)
+	adapter.cfg.CaptureTimeout = 2 * time.Second
+
+	segmentsDir := filepath.Join(outDir, "str_live", "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	segmentPath := filepath.Join(segmentsDir, "000000001.mp4")
+	if err := os.WriteFile(segmentPath, []byte("segment-bytes"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	past := time.Now().Add(-3 * time.Second)
+	if err := os.Chtimes(segmentPath, past, past); err != nil {
+		t.Fatalf("Chtimes() error = %v", err)
+	}
+
+	adapter.sessions["str_live"] = &continuousCaptureSession{
+		streamerID:  "str_live",
+		channel:     "live_channel",
+		segmentsDir: segmentsDir,
+		nextIndex:   1,
+		started:     true,
+	}
+
+	chunk, err := adapter.captureContinuous(context.Background(), "str_live")
+	if err != nil {
+		t.Fatalf("captureContinuous() error = %v", err)
+	}
+	if chunk.Reference == "" {
+		t.Fatal("expected chunk reference")
+	}
+	if filepath.Base(chunk.Reference) != "000000001.mp4" {
+		t.Fatalf("chunk path = %q, want renamed stable segment", chunk.Reference)
+	}
+	if _, err := os.Stat(segmentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected source segment to be moved, err=%v", err)
+	}
+}
