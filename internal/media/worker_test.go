@@ -471,8 +471,8 @@ func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) 
 	worker := NewWorker(fakeCapture{err: ErrStreamlinkStreamEnded}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 
 	got, err := worker.ProcessStreamer(context.Background(), "str-ended")
-	if err != nil {
-		t.Fatalf("ProcessStreamer() error = %v", err)
+	if !errors.Is(err, ErrTrackingStop) {
+		t.Fatalf("ProcessStreamer() error = %v, want %v", err, ErrTrackingStop)
 	}
 	if got != (streamers.LLMDecision{}) {
 		t.Fatalf("expected zero decision on ended stream, got %#v", got)

@@ -118,6 +118,7 @@ func main() {
 		configurableCapture.SetLogger(logger.Named("stream_capture"))
 	}
 
+	chunkPublisher := buildChunkPublisher(cfg, streamersService)
 	streamWorker := media.NewWorker(
 		streamCapture,
 		buildStageClassifier(logger, cfg),
@@ -125,7 +126,7 @@ func main() {
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
-		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5, ChunkPublisher: buildChunkPublisher(cfg)},
+		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5, ChunkPublisher: chunkPublisher},
 	)
 	streamWorker.SetLogger(logger.Named("stream_worker"))
 	streamScheduler := media.NewScheduler(streamWorker, streamProcessInterval(cfg))
@@ -135,6 +136,12 @@ func main() {
 		return streamScheduler.Start(streamerID)
 	})
 	streamersService.SetTrackingStopHook(func(_ context.Context, streamerID string) error {
+		if finalizer, ok := chunkPublisher.(streamChunkFinalizer); ok {
+			if err := finalizer.Finalize(context.Background(), streamerID, time.Now().UTC()); err != nil {
+				logger.Error("failed to finalize stream video on manual tracking stop", zap.String("streamerID", streamerID), zap.Error(err))
+				return err
+			}
+		}
 		streamScheduler.Stop(streamerID)
 		return nil
 	})
@@ -255,7 +262,7 @@ func streamWorkerLockTTL(cfg config.Config) time.Duration {
 	return interval + 5*time.Second
 }
 
-func buildChunkPublisher(cfg config.Config) media.ChunkPublisher {
+func buildChunkPublisher(cfg config.Config, streamersService *streamers.Service) media.ChunkPublisher {
 	if cfg.Streamlink.BunnyLibraryID == "" || cfg.Streamlink.BunnyAPIKey == "" {
 		return nil
 	}
@@ -266,7 +273,17 @@ func buildChunkPublisher(cfg config.Config) media.ChunkPublisher {
 		BaseURL:        cfg.Streamlink.BunnyBaseURL,
 		LibraryID:      cfg.Streamlink.BunnyLibraryID,
 		APIKey:         cfg.Streamlink.BunnyAPIKey,
+		UsernameResolver: func(ctx context.Context, streamerID string) (string, error) {
+			if streamersService == nil {
+				return "", nil
+			}
+			return streamersService.ResolveStreamlinkChannel(ctx, streamerID)
+		},
 	})
+}
+
+type streamChunkFinalizer interface {
+	Finalize(ctx context.Context, streamerID string, capturedAt time.Time) error
 }
 
 func newLogger(level string) (*zap.Logger, error) {
