@@ -43,6 +43,7 @@ var streamlinkEndedMarkers = []string{
 const defaultPreferredStreamQuality = "1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best"
 const minimumStreamlinkCaptureTimeout = 30 * time.Second
 const streamlinkCaptureShutdownGracePeriod = 5 * time.Second
+const continuousSegmentStabilityWindow = 1500 * time.Millisecond
 
 type StreamlinkChannelResolver interface {
 	ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error)
@@ -314,6 +315,8 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 
 	targetIndex := session.nextIndex
 	deadline := time.Now().Add(a.cfg.CaptureTimeout + streamlinkCaptureShutdownGracePeriod)
+	lastObservedSize := int64(-1)
+	var lastSizeChangedAt time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -325,6 +328,15 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex+1))
 		nextInfo, nextErr := os.Stat(nextSegmentPath)
 		segmentFinalized := nextErr == nil && nextInfo.Size() > 0
+		if statErr == nil && info.Size() > 0 {
+			if info.Size() != lastObservedSize {
+				lastObservedSize = info.Size()
+				lastSizeChangedAt = time.Now()
+			}
+			if !segmentFinalized && !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow {
+				segmentFinalized = true
+			}
+		}
 		if statErr == nil && info.Size() > 0 && segmentFinalized {
 			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.mp4", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
 			if err := os.Rename(segmentPath, chunkPath); err != nil {
@@ -332,6 +344,10 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 			}
 			session.nextIndex++
 			return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
+		}
+		if statErr != nil {
+			lastObservedSize = -1
+			lastSizeChangedAt = time.Time{}
 		}
 		if time.Now().After(deadline) {
 			return ChunkRef{}, fmt.Errorf("%w: no continuous segment available before deadline", ErrStreamlinkNoData)
