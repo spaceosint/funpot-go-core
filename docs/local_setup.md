@@ -62,6 +62,8 @@ FUNPOT_DATABASE_NAME=funpot
 FUNPOT_DATABASE_USER=funpot
 FUNPOT_DATABASE_PASSWORD=funpot
 FUNPOT_DATABASE_SSLMODE=disable
+FUNPOT_DATABASE_URL=
+FUNPOT_RUN_MIGRATIONS_ON_STARTUP=true
 FUNPOT_DATABASE_MAX_OPEN_CONNS=10
 FUNPOT_DATABASE_MIN_OPEN_CONNS=1
 FUNPOT_DATABASE_CONNECT_TIMEOUT=5s
@@ -180,6 +182,8 @@ repository `Dockerfile`:
 docker build -t funpot-core:dev .
 docker run --rm -p 8080:8080 --env-file .env funpot-core:dev
 ```
+
+Container startup now applies migrations automatically (via `migrate up`) when database configuration is present. Set `FUNPOT_RUN_MIGRATIONS_ON_STARTUP=false` to disable this behavior for one-off debug runs.
 
 On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /healthz` – liveness probe returning the current timestamp.
