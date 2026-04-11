@@ -44,6 +44,7 @@ WORKDIR /app
 # - tini для корректной работы с subprocess/signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     python3 \
     python3-venv \
     python3-pip \
@@ -58,6 +59,18 @@ RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/streamlink --version \
     && ffmpeg -version
 
+# Install golang-migrate CLI for startup schema migrations
+RUN ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+        amd64) MIGRATE_ARCH="amd64" ;; \
+        arm64) MIGRATE_ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/golang-migrate/migrate/releases/download/v4.18.3/migrate.linux-${MIGRATE_ARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin migrate \
+    && chmod +x /usr/local/bin/migrate \
+    && migrate -version
+
 # Непривилегированный пользователь
 RUN groupadd -g 10001 appuser \
     && useradd -r -u 10001 -g appuser -d /app -s /usr/sbin/nologin appuser
@@ -66,14 +79,17 @@ RUN groupadd -g 10001 appuser \
 COPY --from=build /out/funpot /usr/local/bin/funpot
 
 # Если у вас есть дополнительные файлы, раскомментируйте:
-# COPY --from=build /app/migrations /app/migrations
+COPY --from=build /app/migrations /app/migrations
 # COPY --from=build /app/configs /app/configs
 # COPY --from=build /app/static /app/static
 
-RUN chown -R appuser:appuser /app /usr/local/bin/funpot
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+RUN chmod +x /usr/local/bin/entrypoint.sh \
+    && chown -R appuser:appuser /app /usr/local/bin/funpot /usr/local/bin/entrypoint.sh
 
 USER appuser
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/funpot"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
