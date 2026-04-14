@@ -524,23 +524,10 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 				initial = append(initial, step)
 			}
 		}
-		if len(initial) == 0 {
+		if len(initial) != 1 {
 			return ScenarioStep{}, false, ErrInvalidScenarioInitial
 		}
-		sort.Slice(initial, func(i, j int) bool { return initial[i].Order < initial[j].Order })
-		for _, candidate := range initial {
-			ok, err := evaluateCondition(candidate.EntryCondition, state)
-			if err == nil && ok {
-				return candidate, true, nil
-			}
-		}
-		// Bootstrap fail-safe: if no initial candidate condition matches,
-		// still start from the first ordered initial/root step.
-		// This keeps scheduler cycles running when state payload is sparse.
-		if len(initial) > 0 {
-			return initial[0], true, nil
-		}
-		return ScenarioStep{}, false, ErrScenarioStepNotFound
+		return initial[0], true, nil
 	}
 
 	active, ok := byID[current]
@@ -576,15 +563,9 @@ func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {
 			initial = append(initial, step)
 		}
 	}
-	if len(initial) == 0 {
+	if len(initial) != 1 {
 		return ScenarioStep{}, ErrInvalidScenarioInitial
 	}
-	sort.Slice(initial, func(i, j int) bool {
-		if initial[i].Order == initial[j].Order {
-			return initial[i].ID < initial[j].ID
-		}
-		return initial[i].Order < initial[j].Order
-	})
 	return initial[0], nil
 }
 
