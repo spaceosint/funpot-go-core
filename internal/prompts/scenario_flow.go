@@ -518,16 +518,11 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 	state := parseJSONMap(stateJSON)
 	current := strings.TrimSpace(currentStepID)
 	if current == "" {
-		initial := make([]ScenarioStep, 0, len(p.Steps))
-		for _, step := range p.Steps {
-			if step.Initial {
-				initial = append(initial, step)
-			}
+		entry, err := p.InitialStep()
+		if err != nil {
+			return ScenarioStep{}, false, err
 		}
-		if len(initial) != 1 {
-			return ScenarioStep{}, false, ErrInvalidScenarioInitial
-		}
-		return initial[0], true, nil
+		return entry, true, nil
 	}
 
 	active, ok := byID[current]
