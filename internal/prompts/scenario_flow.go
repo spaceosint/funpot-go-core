@@ -517,17 +517,17 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 
 	state := parseJSONMap(stateJSON)
 	current := strings.TrimSpace(currentStepID)
-		if current == "" {
-			initial := make([]ScenarioStep, 0, len(p.Steps))
-			for _, step := range p.Steps {
-				if step.Initial {
-					initial = append(initial, step)
-				}
+	if current == "" {
+		initial := make([]ScenarioStep, 0, len(p.Steps))
+		for _, step := range p.Steps {
+			if step.Initial {
+				initial = append(initial, step)
 			}
-			if len(initial) == 0 {
-				return ScenarioStep{}, false, ErrInvalidScenarioInitial
-			}
-			sort.Slice(initial, func(i, j int) bool { return initial[i].Order < initial[j].Order })
+		}
+		if len(initial) == 0 {
+			return ScenarioStep{}, false, ErrInvalidScenarioInitial
+		}
+		sort.Slice(initial, func(i, j int) bool { return initial[i].Order < initial[j].Order })
 		for _, candidate := range initial {
 			ok, err := evaluateCondition(candidate.EntryCondition, state)
 			if err == nil && ok {
