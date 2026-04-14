@@ -64,6 +64,8 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "global",
 				"promptTemplate":     "detect",
 				"responseSchemaJson": "{}",
+				"segmentSeconds":     15,
+				"maxRequests":        4,
 				"initial":            true,
 				"order":              1,
 			},
@@ -104,6 +106,20 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	transitions, ok := created["transitions"].([]any)
 	if !ok || len(transitions) != 1 {
 		t.Fatalf("expected explicit transitions in response, got %#v", created["transitions"])
+	}
+	steps, ok := created["steps"].([]any)
+	if !ok || len(steps) == 0 {
+		t.Fatalf("expected steps in response, got %#v", created["steps"])
+	}
+	firstStep, ok := steps[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first step object, got %#v", steps[0])
+	}
+	if got, _ := firstStep["segmentSeconds"].(float64); int(got) != 15 {
+		t.Fatalf("expected segmentSeconds=15, got %#v", firstStep["segmentSeconds"])
+	}
+	if got, _ := firstStep["maxRequests"].(float64); int(got) != 4 {
+		t.Fatalf("expected maxRequests=4, got %#v", firstStep["maxRequests"])
 	}
 
 	updateBody, _ := json.Marshal(map[string]any{

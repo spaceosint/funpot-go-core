@@ -98,12 +98,12 @@ func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches
 	}
 }
 
-func TestCreateScenarioPackageNormalizesToSingleInitialStep(t *testing.T) {
+func TestCreateScenarioPackageRejectsMultipleInitialSteps(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
 	config := mustCreateModelConfig(t, svc)
-	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
 		Name:             "single initial",
 		GameSlug:         "global",
 		ActorID:          "admin-1",
@@ -114,32 +114,17 @@ func TestCreateScenarioPackageNormalizesToSingleInitialStep(t *testing.T) {
 			{ID: "branch", Name: "Branch", PromptTemplate: "branch", ResponseSchemaJSON: `{}`, Initial: false, Order: 3},
 		},
 	})
-	if err != nil {
-		t.Fatalf("create scenario package: %v", err)
-	}
-
-	initialCount := 0
-	initialID := ""
-	for _, step := range pkg.Steps {
-		if step.Initial {
-			initialCount++
-			initialID = step.ID
-		}
-	}
-	if initialCount != 1 {
-		t.Fatalf("expected exactly one initial step, got %d (%#v)", initialCount, pkg.Steps)
-	}
-	if initialID != "root" {
-		t.Fatalf("expected lowest-order initial step root to be preserved, got %q", initialID)
+	if !errors.Is(err, ErrInvalidScenarioInitial) {
+		t.Fatalf("expected ErrInvalidScenarioInitial, got %v", err)
 	}
 }
 
-func TestCreateScenarioPackageAssignsInitialWhenMissing(t *testing.T) {
+func TestCreateScenarioPackageRejectsMissingInitialStep(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
 	config := mustCreateModelConfig(t, svc)
-	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
 		Name:             "auto root",
 		GameSlug:         "global",
 		ActorID:          "admin-1",
@@ -149,16 +134,8 @@ func TestCreateScenarioPackageAssignsInitialWhenMissing(t *testing.T) {
 			{ID: "detect", Name: "Detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Order: 1},
 		},
 	})
-	if err != nil {
-		t.Fatalf("create scenario package: %v", err)
-	}
-
-	initial, err := pkg.InitialStep()
-	if err != nil {
-		t.Fatalf("initial step: %v", err)
-	}
-	if initial.ID != "detect" {
-		t.Fatalf("expected lowest-order step detect to become initial, got %q", initial.ID)
+	if !errors.Is(err, ErrInvalidScenarioInitial) {
+		t.Fatalf("expected ErrInvalidScenarioInitial, got %v", err)
 	}
 }
 
@@ -325,7 +302,7 @@ func TestScenarioPackageUpdateAcrossGameDeactivatesAndNormalizesSteps(t *testing
 		ActorID:          "admin-1",
 		LLMModelConfigID: config.ID,
 		Steps: []ScenarioStep{
-			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`},
+			{ID: "cs2_mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Initial: true},
 		},
 	})
 	if err != nil {
