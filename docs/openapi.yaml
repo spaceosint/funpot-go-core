@@ -1327,9 +1327,10 @@ components:
               type: string
               format: date-time
               nullable: true
-    ScenarioStep:
+    ScenarioStepRequest:
       type: object
       required: [id, name, promptTemplate, responseSchemaJson, initial, order]
+      additionalProperties: false
       properties:
         id:
           type: string
@@ -1346,22 +1347,28 @@ components:
         responseSchemaJson:
           type: string
           description: JSON schema/template contract that the LLM response must follow exactly (legacy coercion is not applied).
-        segmentSeconds:
-          type: integer
-          minimum: 1
-          description: Video segment duration in seconds for this step. Defaults to 15 for the initial step and 30 for all other steps.
-        maxRequests:
-          type: integer
-          minimum: 0
-          description: Maximum number of LLM requests allowed for this step (0 = unlimited). If a non-initial step reaches this limit runtime returns to the initial step; if the initial step reaches this limit runtime stops tracking the streamer.
         initial:
           type: boolean
         order:
           type: integer
           minimum: 1
+    ScenarioStep:
+      allOf:
+        - $ref: '#/components/schemas/ScenarioStepRequest'
+        - type: object
+          properties:
+            segmentSeconds:
+              type: integer
+              minimum: 1
+              description: Video segment duration in seconds for this step. Defaults to 15 for the initial step and 30 for all other steps.
+            maxRequests:
+              type: integer
+              minimum: 0
+              description: Maximum number of LLM requests allowed for this step (0 = unlimited). If a non-initial step reaches this limit runtime returns to the initial step; if the initial step reaches this limit runtime stops tracking the streamer.
     ScenarioTransition:
       type: object
       required: [fromStepId, toStepId, condition, priority]
+      additionalProperties: false
       properties:
         fromStepId:
           type: string
@@ -1375,6 +1382,7 @@ components:
     ScenarioPackageCreateRequest:
       type: object
       required: [gameSlug, name, llmModelConfigId, steps]
+      additionalProperties: false
       properties:
         gameSlug:
           type: string
@@ -1386,7 +1394,7 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/ScenarioStep'
+            $ref: '#/components/schemas/ScenarioStepRequest'
         transitions:
           type: array
           description: Optional explicit graph edges for branching scenario flow. When omitted, backend auto-generates linear transitions by `order`.
@@ -1403,6 +1411,10 @@ components:
               type: integer
             isActive:
               type: boolean
+            steps:
+              type: array
+              items:
+                $ref: '#/components/schemas/ScenarioStep'
             transitions:
               type: array
               description: Effective transitions used by runtime (explicit admin-defined edges or backend auto-generated linear edges when omitted in create/update payload).
