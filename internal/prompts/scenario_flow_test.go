@@ -73,12 +73,12 @@ func TestScenarioPackageResolveStep(t *testing.T) {
 	}
 }
 
-func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches(t *testing.T) {
+func TestScenarioPackageResolveStepRejectsMultipleInitialStepsOnBootstrap(t *testing.T) {
 	t.Parallel()
 
 	pkg := ScenarioPackage{
 		ID:       "pkg-1",
-		Name:     "fallback flow",
+		Name:     "invalid bootstrap flow",
 		GameSlug: "global",
 		Steps: []ScenarioStep{
 			{ID: "root_detect", Name: "Root detect", Initial: true, Order: 1, EntryCondition: "game == cs2"},
@@ -86,15 +86,9 @@ func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches
 		},
 	}
 
-	step, entered, err := pkg.ResolveStep("", `{"game":"dota2"}`)
-	if err != nil {
-		t.Fatalf("resolve initial fallback: %v", err)
-	}
-	if !entered {
-		t.Fatalf("expected entered=true for bootstrap fallback")
-	}
-	if step.ID != "root_detect" {
-		t.Fatalf("expected fallback to first ordered initial step root_detect, got %s", step.ID)
+	_, _, err := pkg.ResolveStep("", `{"game":"dota2"}`)
+	if !errors.Is(err, ErrInvalidScenarioInitial) {
+		t.Fatalf("expected ErrInvalidScenarioInitial, got %v", err)
 	}
 }
 
