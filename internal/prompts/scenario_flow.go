@@ -45,19 +45,26 @@ type ScenarioTransition struct {
 	Priority   int    `json:"priority"`
 }
 
+type ScenarioPackageTransition struct {
+	ToPackageID string `json:"toPackageId"`
+	Condition   string `json:"condition"`
+	Priority    int    `json:"priority"`
+}
+
 type ScenarioPackage struct {
-	ID               string               `json:"id"`
-	Name             string               `json:"name"`
-	Version          int                  `json:"version"`
-	GameSlug         string               `json:"gameSlug"`
-	LLMModelConfigID string               `json:"llmModelConfigId"`
-	IsActive         bool                 `json:"isActive"`
-	Steps            []ScenarioStep       `json:"steps"`
-	Transitions      []ScenarioTransition `json:"transitions"`
-	CreatedBy        string               `json:"createdBy"`
-	ActivatedBy      string               `json:"activatedBy,omitempty"`
-	CreatedAt        time.Time            `json:"createdAt"`
-	ActivatedAt      time.Time            `json:"activatedAt,omitempty"`
+	ID                 string                      `json:"id"`
+	Name               string                      `json:"name"`
+	Version            int                         `json:"version"`
+	GameSlug           string                      `json:"gameSlug"`
+	LLMModelConfigID   string                      `json:"llmModelConfigId"`
+	IsActive           bool                        `json:"isActive"`
+	Steps              []ScenarioStep              `json:"steps"`
+	Transitions        []ScenarioTransition        `json:"transitions"`
+	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
+	CreatedBy          string                      `json:"createdBy"`
+	ActivatedBy        string                      `json:"activatedBy,omitempty"`
+	CreatedAt          time.Time                   `json:"createdAt"`
+	ActivatedAt        time.Time                   `json:"activatedAt,omitempty"`
 }
 
 type ScenarioGraphNode struct {
@@ -97,12 +104,13 @@ type ScenarioPackageGraph struct {
 }
 
 type ScenarioPackageCreateRequest struct {
-	Name             string
-	GameSlug         string
-	LLMModelConfigID string
-	Steps            []ScenarioStep
-	Transitions      []ScenarioTransition
-	ActorID          string
+	Name               string
+	GameSlug           string
+	LLMModelConfigID   string
+	Steps              []ScenarioStep
+	Transitions        []ScenarioTransition
+	PackageTransitions []ScenarioPackageTransition
+	ActorID            string
 }
 
 func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) error {
@@ -147,6 +155,14 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		}
 		if err := validateScenarioCondition(transition.Condition); err != nil {
 			return fmt.Errorf("%w: transition %s -> %s: %v", ErrInvalidScenarioCondition, from, to, err)
+		}
+	}
+	for _, transition := range req.PackageTransitions {
+		if strings.TrimSpace(transition.ToPackageID) == "" {
+			return fmt.Errorf("%w: package transition toPackageId is required", ErrInvalidScenarioStepID)
+		}
+		if err := validateScenarioCondition(transition.Condition); err != nil {
+			return fmt.Errorf("%w: package transition -> %s: %v", ErrInvalidScenarioCondition, transition.ToPackageID, err)
 		}
 	}
 	return nil
@@ -244,6 +260,26 @@ func cloneScenarioTransitions(transitions []ScenarioTransition) []ScenarioTransi
 	return append([]ScenarioTransition{}, transitions...)
 }
 
+func normalizeScenarioPackageTransitions(transitions []ScenarioPackageTransition) []ScenarioPackageTransition {
+	normalized := make([]ScenarioPackageTransition, 0, len(transitions))
+	for _, tr := range transitions {
+		next := ScenarioPackageTransition{
+			ToPackageID: strings.TrimSpace(tr.ToPackageID),
+			Condition:   strings.TrimSpace(tr.Condition),
+			Priority:    tr.Priority,
+		}
+		if next.Priority <= 0 {
+			next.Priority = 1
+		}
+		normalized = append(normalized, next)
+	}
+	return normalized
+}
+
+func cloneScenarioPackageTransitions(transitions []ScenarioPackageTransition) []ScenarioPackageTransition {
+	return append([]ScenarioPackageTransition{}, transitions...)
+}
+
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 	if s.scenarioStore != nil {
 		items, err := s.scenarioStore.List(ctx)
@@ -278,6 +314,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	now := time.Now().UTC()
 	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
+	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -286,13 +323,14 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	}
 	if s.scenarioStore != nil {
 		item := ScenarioPackage{
-			Name:             strings.TrimSpace(req.Name),
-			GameSlug:         gameSlug,
-			LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
-			Steps:            append([]ScenarioStep(nil), req.Steps...),
-			Transitions:      cloneScenarioTransitions(normalizedTransitions),
-			CreatedBy:        strings.TrimSpace(req.ActorID),
-			CreatedAt:        now,
+			Name:               strings.TrimSpace(req.Name),
+			GameSlug:           gameSlug,
+			LLMModelConfigID:   strings.TrimSpace(req.LLMModelConfigID),
+			Steps:              append([]ScenarioStep(nil), req.Steps...),
+			Transitions:        cloneScenarioTransitions(normalizedTransitions),
+			PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
+			CreatedBy:          strings.TrimSpace(req.ActorID),
+			CreatedAt:          now,
 		}
 		return s.scenarioStore.Create(ctx, item)
 	}
@@ -306,15 +344,16 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	s.counter++
 	version := len(s.scenarioPackages[gameSlug]) + 1
 	item := ScenarioPackage{
-		ID:               fmt.Sprintf("scenario-pkg-%d", s.counter),
-		Name:             strings.TrimSpace(req.Name),
-		Version:          version,
-		GameSlug:         gameSlug,
-		LLMModelConfigID: strings.TrimSpace(req.LLMModelConfigID),
-		Steps:            append([]ScenarioStep(nil), req.Steps...),
-		Transitions:      cloneScenarioTransitions(normalizedTransitions),
-		CreatedBy:        strings.TrimSpace(req.ActorID),
-		CreatedAt:        now,
+		ID:                 fmt.Sprintf("scenario-pkg-%d", s.counter),
+		Name:               strings.TrimSpace(req.Name),
+		Version:            version,
+		GameSlug:           gameSlug,
+		LLMModelConfigID:   strings.TrimSpace(req.LLMModelConfigID),
+		Steps:              append([]ScenarioStep(nil), req.Steps...),
+		Transitions:        cloneScenarioTransitions(normalizedTransitions),
+		PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
+		CreatedBy:          strings.TrimSpace(req.ActorID),
+		CreatedAt:          now,
 	}
 	if len(s.scenarioPackages[gameSlug]) == 0 {
 		item.IsActive = true
@@ -358,6 +397,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	now := time.Now().UTC()
 	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
+	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -379,6 +419,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 		current.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
 		current.Steps = append([]ScenarioStep(nil), req.Steps...)
 		current.Transitions = cloneScenarioTransitions(normalizedTransitions)
+		current.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
 		if current.GameSlug != previousGameSlug {
 			current.IsActive = false
 			current.ActivatedBy = ""
@@ -401,6 +442,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated.LLMModelConfigID = strings.TrimSpace(req.LLMModelConfigID)
 			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
 			updated.Transitions = cloneScenarioTransitions(normalizedTransitions)
+			updated.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
 			if updated.GameSlug != gameSlug {
 				updated.IsActive = false
 				updated.ActivatedBy = ""
@@ -549,6 +591,27 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 		return next, next.ID != current, nil
 	}
 	return active, false, nil
+}
+
+func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (string, bool, error) {
+	if len(p.PackageTransitions) == 0 {
+		return p.ID, false, nil
+	}
+	state := parseJSONMap(stateJSON)
+	transitions := cloneScenarioPackageTransitions(p.PackageTransitions)
+	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
+	for _, tr := range transitions {
+		matched, err := evaluateCondition(tr.Condition, state)
+		if err != nil || !matched {
+			continue
+		}
+		target := strings.TrimSpace(tr.ToPackageID)
+		if target == "" || target == p.ID {
+			return p.ID, false, nil
+		}
+		return target, true, nil
+	}
+	return p.ID, false, nil
 }
 
 func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {

@@ -1388,6 +1388,18 @@ components:
         priority:
           type: integer
           minimum: 1
+    ScenarioPackageTransition:
+      type: object
+      required: [toPackageId, condition, priority]
+      additionalProperties: false
+      properties:
+        toPackageId:
+          type: string
+        condition:
+          type: string
+        priority:
+          type: integer
+          minimum: 1
     ScenarioPackageCreateRequest:
       type: object
       required: [gameSlug, name, llmModelConfigId, steps]
@@ -1409,6 +1421,11 @@ components:
           description: Optional explicit graph edges for branching scenario flow. When omitted, backend auto-generates linear transitions by `order`.
           items:
             $ref: '#/components/schemas/ScenarioTransition'
+        packageTransitions:
+          type: array
+          description: Optional package-level graph edges evaluated from shared state; when condition matches runtime switches to target package.
+          items:
+            $ref: '#/components/schemas/ScenarioPackageTransition'
     ScenarioPackageVersion:
       allOf:
         - $ref: '#/components/schemas/ScenarioPackageCreateRequest'
@@ -1429,6 +1446,11 @@ components:
               description: Effective transitions used by runtime (explicit admin-defined edges or backend auto-generated linear edges when omitted in create/update payload).
               items:
                 $ref: '#/components/schemas/ScenarioTransition'
+            packageTransitions:
+              type: array
+              description: Effective package-level transitions used by runtime to switch between scenario packages.
+              items:
+                $ref: '#/components/schemas/ScenarioPackageTransition'
             createdBy:
               type: string
             activatedBy:

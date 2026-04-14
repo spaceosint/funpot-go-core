@@ -238,6 +238,11 @@ type scenarioPackageScanner interface {
 	Scan(dest ...any) error
 }
 
+type transitionsPayload struct {
+	StepTransitions    []ScenarioTransition        `json:"stepTransitions"`
+	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
+}
+
 func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error) {
 	var item ScenarioPackage
 	var activatedAt sql.NullTime
@@ -266,11 +271,16 @@ func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error
 		}
 	}
 	if len(transitionsRaw) > 0 {
-		if err := json.Unmarshal(transitionsRaw, &item.Transitions); err != nil {
+		var payload transitionsPayload
+		if err := json.Unmarshal(transitionsRaw, &payload); err == nil && (payload.StepTransitions != nil || payload.PackageTransitions != nil) {
+			item.Transitions = payload.StepTransitions
+			item.PackageTransitions = payload.PackageTransitions
+		} else if err := json.Unmarshal(transitionsRaw, &item.Transitions); err != nil {
 			return ScenarioPackage{}, fmt.Errorf("unmarshal transitions_json: %w", err)
 		}
 	}
 	item.Transitions = cloneScenarioTransitions(item.Transitions)
+	item.PackageTransitions = cloneScenarioPackageTransitions(item.PackageTransitions)
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
 	}
@@ -282,7 +292,10 @@ func encodeScenarioPackagePayload(item ScenarioPackage) ([]byte, []byte, error) 
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal steps: %w", err)
 	}
-	transitionsJSON, err := json.Marshal(item.Transitions)
+	transitionsJSON, err := json.Marshal(transitionsPayload{
+		StepTransitions:    item.Transitions,
+		PackageTransitions: item.PackageTransitions,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal transitions: %w", err)
 	}
