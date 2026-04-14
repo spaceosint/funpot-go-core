@@ -357,7 +357,7 @@ func TestStreamlinkCaptureAdapterContinuousAcceptsStableSegmentWithoutNextChunk(
 		started:     true,
 	}
 
-	chunk, err := adapter.captureContinuous(context.Background(), "str_live")
+	chunk, err := adapter.captureContinuous(context.Background(), "str_live", 30*time.Second)
 	if err != nil {
 		t.Fatalf("captureContinuous() error = %v", err)
 	}
@@ -403,7 +403,7 @@ func TestStreamlinkCaptureAdapterContinuousStableSegmentWaitsNearDeadline(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := adapter.captureContinuous(ctx, "str_live")
+	_, err := adapter.captureContinuous(ctx, "str_live", 30*time.Second)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("captureContinuous() error = %v, want context deadline exceeded while far from capture deadline", err)
 	}

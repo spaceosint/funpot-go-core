@@ -30,6 +30,8 @@ type ScenarioStep struct {
 	EntryCondition     string    `json:"entryCondition,omitempty"`
 	PromptTemplate     string    `json:"promptTemplate"`
 	ResponseSchemaJSON string    `json:"responseSchemaJson"`
+	SegmentSeconds     int       `json:"segmentSeconds,omitempty"`
+	MaxRequests        int       `json:"maxRequests,omitempty"`
 	Initial            bool      `json:"initial"`
 	Order              int       `json:"order"`
 	CreatedAt          time.Time `json:"-"`
@@ -155,6 +157,16 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		if strings.TrimSpace(normalized[i].GameSlug) == "" {
 			normalized[i].GameSlug = fallbackGameSlug
 		}
+		if normalized[i].SegmentSeconds <= 0 {
+			if normalized[i].Initial {
+				normalized[i].SegmentSeconds = 15
+			} else {
+				normalized[i].SegmentSeconds = 30
+			}
+		}
+		if normalized[i].MaxRequests < 0 {
+			normalized[i].MaxRequests = 0
+		}
 	}
 	return normalized
 }
@@ -187,7 +199,14 @@ func normalizeScenarioTransitions(steps []ScenarioStep, transitions []ScenarioTr
 		}
 		return ordered[i].Order < ordered[j].Order
 	})
-	autowired := make([]ScenarioTransition, 0, len(ordered)-1)
+	initialStep := ordered[0]
+	for _, step := range ordered {
+		if step.Initial {
+			initialStep = step
+			break
+		}
+	}
+	autowired := make([]ScenarioTransition, 0, (len(ordered)-1)*2)
 	for i := 0; i < len(ordered)-1; i++ {
 		next := ordered[i+1]
 		autowired = append(autowired, ScenarioTransition{
@@ -196,6 +215,19 @@ func normalizeScenarioTransitions(steps []ScenarioStep, transitions []ScenarioTr
 			Condition:  strings.TrimSpace(next.EntryCondition),
 			Priority:   1,
 		})
+	}
+	if strings.TrimSpace(initialStep.EntryCondition) != "" {
+		for _, step := range ordered {
+			if strings.TrimSpace(step.ID) == strings.TrimSpace(initialStep.ID) {
+				continue
+			}
+			autowired = append(autowired, ScenarioTransition{
+				FromStepID: strings.TrimSpace(step.ID),
+				ToStepID:   strings.TrimSpace(initialStep.ID),
+				Condition:  strings.TrimSpace(initialStep.EntryCondition),
+				Priority:   1,
+			})
+		}
 	}
 	return autowired
 }
@@ -527,6 +559,28 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 		return next, next.ID != current, nil
 	}
 	return active, false, nil
+}
+
+func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {
+	initial := make([]ScenarioStep, 0, len(p.Steps))
+	for _, step := range p.Steps {
+		if step.Initial {
+			initial = append(initial, step)
+		}
+	}
+	if len(initial) == 0 {
+		initial = append(initial, p.Steps...)
+	}
+	if len(initial) == 0 {
+		return ScenarioStep{}, ErrScenarioStepNotFound
+	}
+	sort.Slice(initial, func(i, j int) bool {
+		if initial[i].Order == initial[j].Order {
+			return initial[i].ID < initial[j].ID
+		}
+		return initial[i].Order < initial[j].Order
+	})
+	return initial[0], nil
 }
 
 func (p ScenarioPackage) BuildVisualGraph() ScenarioPackageGraph {
