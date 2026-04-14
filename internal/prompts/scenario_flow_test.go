@@ -301,7 +301,7 @@ func TestScenarioPackageCreateAutowiresTransitionsWhenMissing(t *testing.T) {
 		t.Fatalf("create scenario package: %v", err)
 	}
 	if len(item.Transitions) != 2 {
-		t.Fatalf("expected 2 auto transitions, got %#v", item.Transitions)
+		t.Fatalf("expected 2 auto transitions from initial step, got %#v", item.Transitions)
 	}
 	if item.Transitions[0].FromStepID != "step_a" || item.Transitions[0].ToStepID != "step_b" {
 		t.Fatalf("unexpected first transition: %#v", item.Transitions[0])
@@ -537,5 +537,34 @@ func TestScenarioPackageCreateDoesNotUseStepModel(t *testing.T) {
 	}
 	if item.LLMModelConfigID != config.ID {
 		t.Fatalf("expected package model config ID %q, got %q", config.ID, item.LLMModelConfigID)
+	}
+}
+
+func TestScenarioPackageCreateAppliesStepDefaults(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "step defaults",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "game", Name: "Game", PromptTemplate: "game", ResponseSchemaJSON: `{}`, Order: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if item.Steps[0].SegmentSeconds != 15 {
+		t.Fatalf("expected initial step segment default 15s, got %d", item.Steps[0].SegmentSeconds)
+	}
+	if item.Steps[1].SegmentSeconds != 30 {
+		t.Fatalf("expected non-initial step segment default 30s, got %d", item.Steps[1].SegmentSeconds)
+	}
+	if item.Steps[0].MaxRequests != 0 || item.Steps[1].MaxRequests != 0 {
+		t.Fatalf("expected maxRequests default 0 (unlimited), got %#v", item.Steps)
 	}
 }

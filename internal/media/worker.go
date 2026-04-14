@@ -68,6 +68,10 @@ type StreamCapture interface {
 	Capture(ctx context.Context, streamerID string) (ChunkRef, error)
 }
 
+type StepDurationCapture interface {
+	CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error)
+}
+
 type StageClassifier interface {
 	Classify(ctx context.Context, input StageRequest) (StageClassification, error)
 }
@@ -190,7 +194,25 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		logger.Info("streamer processing lock released", zap.String("streamerID", id), zap.String("lockKey", lockKey))
 	}()
 
-	chunk, err := w.captureWithRetry(ctx, id)
+	pkg, err := w.prompts.GetActiveScenarioPackage(ctx, "global")
+	if err != nil {
+		logger.Error("active scenario package lookup failed", zap.String("streamerID", id), zap.String("gameSlug", "global"), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "lookup_scenario_package")
+		w.metrics.recordCycle(ctx, id, "failed")
+		return streamers.LLMDecision{}, err
+	}
+	execution, err := w.planScenarioExecution(ctx, id, pkg)
+	if err != nil {
+		if errors.Is(err, ErrTrackingStop) {
+			w.metrics.recordCycle(ctx, id, "tracking_stop")
+			return streamers.LLMDecision{}, ErrTrackingStop
+		}
+		w.metrics.recordFailure(ctx, id, "plan_execution")
+		w.metrics.recordCycle(ctx, id, "failed")
+		return streamers.LLMDecision{}, err
+	}
+
+	chunk, err := w.captureWithRetry(ctx, id, execution.Step.SegmentSeconds)
 	if err != nil {
 		if errors.Is(err, ErrStreamlinkAdBreak) {
 			logger.Info("stream chunk capture skipped because stream is on ad break", zap.String("streamerID", id), zap.Error(err))
@@ -227,7 +249,7 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	}
 	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 
-	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk)
+	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk, pkg, execution)
 	if err != nil {
 		w.metrics.recordFailure(ctx, id, "execution_plan")
 		w.metrics.recordCycle(ctx, id, "failed")
@@ -246,18 +268,8 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	return lastDecision, nil
 }
 
-func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID string, chunk ChunkRef) (streamers.LLMDecision, error) {
-	logger := w.logger
-	if logger == nil {
-		logger = zap.NewNop()
-	}
-
-	pkg, err := w.prompts.GetActiveScenarioPackage(ctx, "global")
-	if err != nil {
-		logger.Error("active scenario package lookup failed", zap.String("streamerID", streamerID), zap.String("gameSlug", "global"), zap.Error(err))
-		return streamers.LLMDecision{}, err
-	}
-	return w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg)
+func (w *Worker) processExecutionPlan(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage, execution scenarioExecutionPlan) (streamers.LLMDecision, error) {
+	return w.processScenarioPackage(ctx, runID, streamerID, chunk, pkg, execution)
 }
 
 func isTrackerStage(stage string) bool {
@@ -273,15 +285,19 @@ func defaultTrackerState() string {
 	return `{}`
 }
 
-func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (ChunkRef, error) {
+func (w *Worker) captureWithRetry(ctx context.Context, streamerID string, segmentSeconds int) (ChunkRef, error) {
 	attempts := w.captureRetryCount + 1
 	if attempts <= 0 {
 		attempts = 1
 	}
+	duration := time.Duration(segmentSeconds) * time.Second
+	if duration <= 0 {
+		duration = 30 * time.Second
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		chunk, err := w.capture.Capture(ctx, streamerID)
+		chunk, err := w.captureChunk(ctx, streamerID, duration)
 		if err == nil {
 			return chunk, nil
 		}
@@ -294,6 +310,13 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string) (Chunk
 		}
 	}
 	return ChunkRef{}, lastErr
+}
+
+func (w *Worker) captureChunk(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
+	if timedCapture, ok := w.capture.(StepDurationCapture); ok {
+		return timedCapture.CaptureWithDuration(ctx, streamerID, duration)
+	}
+	return w.capture.Capture(ctx, streamerID)
 }
 
 func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.PromptVersion, result StageClassification, chunk ChunkRef, runID, streamerID, previousState string) (streamers.LLMDecision, error) {
@@ -642,27 +665,74 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage) (streamers.LLMDecision, error) {
-	logger := w.logger
-	if logger == nil {
-		logger = zap.NewNop()
-	}
+type scenarioExecutionPlan struct {
+	Step          prompts.ScenarioStep
+	Entering      bool
+	PreviousState string
+}
+
+func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, pkg prompts.ScenarioPackage) (scenarioExecutionPlan, error) {
 	latest := w.latestDecisionByStreamer(ctx, streamerID)
 	previousState := w.resolvePreviousState(ctx, streamerID)
 	step, entering, err := pkg.ResolveStep(latest.Stage, previousState)
 	if err != nil {
 		if errors.Is(err, prompts.ErrScenarioStepNotFound) && strings.TrimSpace(latest.Stage) != "" {
-			logger.Warn("current scenario step is missing in active package, restarting from initial step",
-				zap.String("streamerID", streamerID),
-				zap.String("missingStepID", latest.Stage),
-				zap.String("scenarioPackageID", pkg.ID),
-			)
 			step, entering, err = pkg.ResolveStep("", previousState)
 		}
 		if err != nil {
-			return streamers.LLMDecision{}, err
+			return scenarioExecutionPlan{}, err
 		}
 	}
+	if step.MaxRequests > 0 {
+		requestCount := w.stepRequestCount(ctx, streamerID, step.ID)
+		if requestCount >= step.MaxRequests {
+			if step.Initial {
+				return scenarioExecutionPlan{}, ErrTrackingStop
+			}
+			initial, initialErr := pkg.InitialStep()
+			if initialErr != nil {
+				return scenarioExecutionPlan{}, initialErr
+			}
+			if initial.MaxRequests > 0 && w.stepRequestCount(ctx, streamerID, initial.ID) >= initial.MaxRequests {
+				return scenarioExecutionPlan{}, ErrTrackingStop
+			}
+			step = initial
+			entering = true
+		}
+	}
+	return scenarioExecutionPlan{
+		Step:          step,
+		Entering:      entering,
+		PreviousState: previousState,
+	}, nil
+}
+
+func (w *Worker) stepRequestCount(ctx context.Context, streamerID, stepID string) int {
+	if w == nil || w.decisions == nil {
+		return 0
+	}
+	target := strings.TrimSpace(stepID)
+	if target == "" {
+		return 0
+	}
+	count := 0
+	for _, item := range w.decisions.ListAllLLMDecisions(ctx, streamerID) {
+		if strings.TrimSpace(item.Stage) == target {
+			count++
+		}
+	}
+	return count
+}
+
+func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID string, chunk ChunkRef, pkg prompts.ScenarioPackage, execution scenarioExecutionPlan) (streamers.LLMDecision, error) {
+	logger := w.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	step := execution.Step
+	entering := execution.Entering
+	previousState := execution.PreviousState
+	logger.Info("scenario step selected", zap.String("streamerID", streamerID), zap.String("scenarioPackageID", pkg.ID), zap.String("stepID", step.ID), zap.Int("segmentSeconds", step.SegmentSeconds), zap.Int("maxRequests", step.MaxRequests))
 	if strings.TrimSpace(pkg.LLMModelConfigID) == "" {
 		return streamers.LLMDecision{}, prompts.ErrInvalidScenarioModelRef
 	}

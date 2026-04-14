@@ -16,15 +16,23 @@ import (
 )
 
 type fakeCapture struct {
-	chunk ChunkRef
-	err   error
+	chunk          ChunkRef
+	err            error
+	lastDuration   time.Duration
+	captureInvoked int
 }
 
-func (f fakeCapture) Capture(_ context.Context, _ string) (ChunkRef, error) {
+func (f *fakeCapture) Capture(_ context.Context, _ string) (ChunkRef, error) {
+	f.captureInvoked++
 	if f.err != nil {
 		return ChunkRef{}, f.err
 	}
 	return f.chunk, nil
+}
+
+func (f *fakeCapture) CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
+	f.lastDuration = duration
+	return f.Capture(ctx, streamerID)
 }
 
 type fakeClassifier struct {
@@ -194,7 +202,7 @@ func (s *countingRunStore) CreateRun(_ context.Context, streamerID string) (stri
 func TestWorkerProcessStreamerUsesScenarioPackageFirstStep(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
 			"detector":       {Label: "cs_detected", Confidence: 0.99},
 			"match_update":   {Label: "state_updated", Confidence: 0.97, UpdatedStateJSON: `{"match_status":"in_progress"}`, EvidenceDeltaJSON: `["opened session"]`, NextEvidenceJSON: `["final scoreboard"]`},
@@ -237,7 +245,7 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 		},
 	}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
 			"root_detect": {Label: "cs2_detected", Confidence: 0.99, UpdatedStateJSON: `{"game":"cs2"}`},
 		}},
@@ -274,7 +282,7 @@ func TestWorkerProcessStreamerResetsToInitialStepWhenLatestStepMissingInActivePa
 }
 
 func TestWorkerResolvePreviousStateDefaultsToTrackerBootstrap(t *testing.T) {
-	worker := NewWorker(fakeCapture{}, fakeClassifier{}, fakePromptResolver{}, &InMemoryRunStore{}, nil, NewInMemoryLocker(), WorkerConfig{})
+	worker := NewWorker(&fakeCapture{}, fakeClassifier{}, fakePromptResolver{}, &InMemoryRunStore{}, nil, NewInMemoryLocker(), WorkerConfig{})
 	if got := worker.resolvePreviousState(context.Background(), "str-1"); got != defaultTrackerState() {
 		t.Fatalf("resolvePreviousState() = %q", got)
 	}
@@ -283,7 +291,7 @@ func TestWorkerResolvePreviousStateDefaultsToTrackerBootstrap(t *testing.T) {
 func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}},
 		fakeClassifier{results: map[string]StageClassification{
 			"detector":    {Label: "cs_detected", Confidence: 0.91, RawResponse: `{"label":"cs_detected"}`, RequestRef: "req-1", ResponseRef: "res-1", TokensIn: 128, TokensOut: 32, Latency: 230 * time.Millisecond},
 			"ranked_mode": {Label: "competitive", Confidence: 0.89, RawResponse: `{"label":"competitive"}`, RequestRef: "req-2", ResponseRef: "res-2", TokensIn: 96, TokensOut: 18, Latency: 180 * time.Millisecond},
@@ -308,7 +316,7 @@ func TestWorkerProcessStreamerRunsAllOrderedStages(t *testing.T) {
 }
 
 func TestWorkerProcessStreamerUsesGenericUncertainFallback(t *testing.T) {
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "whatever", Confidence: 0.1}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "custom", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "whatever", Confidence: 0.1}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "custom", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	got, err := worker.ProcessStreamer(context.Background(), "str-1")
 	if err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
@@ -323,7 +331,7 @@ func TestWorkerProcessStreamerBusy(t *testing.T) {
 	if ok := locker.TryLock("stream-capture:str-1", time.Second); !ok {
 		t.Fatal("expected lock")
 	}
-	worker := NewWorker(fakeCapture{}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, locker, WorkerConfig{})
+	worker := NewWorker(&fakeCapture{}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, locker, WorkerConfig{})
 	_, err := worker.ProcessStreamer(context.Background(), "str-1")
 	if !errors.Is(err, ErrStreamerBusy) {
 		t.Fatalf("error = %v, want %v", err, ErrStreamerBusy)
@@ -335,7 +343,7 @@ func TestWorkerProcessStreamerCleansUpChunkFileOnSuccess(t *testing.T) {
 	if err := os.WriteFile(chunkPath, []byte("chunk"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: chunkPath}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: chunkPath}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
@@ -349,7 +357,7 @@ func TestWorkerProcessStreamerCleansUpChunkFileOnClassifierError(t *testing.T) {
 	if err := os.WriteFile(chunkPath, []byte("chunk"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: chunkPath}}, fakeClassifier{errByStage: map[string]error{"custom": errors.New("llm failed")}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: chunkPath}}, fakeClassifier{errByStage: map[string]error{"custom": errors.New("llm failed")}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
 		t.Fatal("expected classifier error")
 	}
@@ -373,7 +381,7 @@ func TestWorkerProcessStreamerRetriesCapture(t *testing.T) {
 
 func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
 	classifier := &flakyClassifier{failures: 1, result: StageClassification{Label: "ok", Confidence: 0.9}}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
 
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
@@ -386,7 +394,7 @@ func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
 
 func TestWorkerProcessStreamerPublishesChunkAfterAnalysis(t *testing.T) {
 	publisher := &fakeChunkPublisher{}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, ChunkPublisher: publisher})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, ChunkPublisher: publisher})
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
@@ -397,7 +405,7 @@ func TestWorkerProcessStreamerPublishesChunkAfterAnalysis(t *testing.T) {
 
 func TestWorkerProcessStreamerReturnsErrorAfterRetryExhausted(t *testing.T) {
 	classifier := &flakyClassifier{failures: 2, result: StageClassification{Label: "ok", Confidence: 0.9}}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 1, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
 
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
@@ -418,7 +426,7 @@ func TestWorkerProcessStreamerRetriesTransientGeminiFailuresWithSafetyFloor(t *t
 			Model:      "gemini",
 		},
 	}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 0, BackoffMS: 0}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 0, BackoffMS: 0}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
 
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
@@ -439,7 +447,7 @@ func TestWorkerProcessStreamerDoesNotRetryNonTransientGeminiFailures(t *testing.
 			Model:      "gemini",
 		},
 	}
-	worker := NewWorker(fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 3, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, classifier, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1, RetryCount: 3, BackoffMS: 10}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 	worker.sleepFn = func(context.Context, time.Duration) error { return nil }
 
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err == nil {
@@ -452,7 +460,7 @@ func TestWorkerProcessStreamerDoesNotRetryNonTransientGeminiFailures(t *testing.
 
 func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
 	runStore := &countingRunStore{}
-	worker := NewWorker(fakeCapture{err: ErrStreamlinkAdBreak}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{err: ErrStreamlinkAdBreak}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 
 	got, err := worker.ProcessStreamer(context.Background(), "str-ads")
 	if err != nil {
@@ -468,7 +476,7 @@ func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
 
 func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) {
 	runStore := &countingRunStore{}
-	worker := NewWorker(fakeCapture{err: ErrStreamlinkStreamEnded}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+	worker := NewWorker(&fakeCapture{err: ErrStreamlinkStreamEnded}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
 
 	got, err := worker.ProcessStreamer(context.Background(), "str-ended")
 	if !errors.Is(err, ErrTrackingStop) {
@@ -485,7 +493,7 @@ func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) 
 func TestWorkerProcessStreamerFailsWhenScenarioPackageIsMissing(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
 			"match_update": {Label: "state_updated", Confidence: 0.98, UpdatedStateJSON: `{"match_status":"in_progress"}`},
 		}},
@@ -507,7 +515,7 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 	decisions := &fakeDecisionStore{}
 	classifier := &flakyClassifier{result: StageClassification{Label: "state_updated", Confidence: 0.95, UpdatedStateJSON: `{"score":{"ct":8,"t":5}}`}}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		classifier,
 		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
 		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
@@ -530,7 +538,7 @@ func TestWorkerProcessStreamerPassesPersistedPreviousStateToTrackerStages(t *tes
 func TestWorkerProcessStreamerIgnoresRawResponseStatePayloads(t *testing.T) {
 	decisions := &fakeDecisionStore{}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		fakeClassifier{results: map[string]StageClassification{
 			"start": {
 				Confidence: 0.91,
@@ -572,7 +580,7 @@ func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned
 		},
 	}
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}},
 		classifier,
 		fakePromptResolver{prompts: []prompts.PromptVersion{{ID: "tracker-1", Stage: "match_update", Position: 1, IsActive: true, MinConfidence: 0.5, Template: "update tracker state", Model: "gemini", MaxTokens: 100, TimeoutMS: 1000}}},
 		&InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5},
@@ -598,7 +606,7 @@ func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned
 
 func TestWorkerProcessScenarioPackageUsesPackageModelConfigWhenStepModelMissing(t *testing.T) {
 	worker := NewWorker(
-		fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
 		fakeClassifier{results: map[string]StageClassification{"root_detect": {Label: "ok", Confidence: 0.9}}},
 		fakePromptResolver{
 			scenario: prompts.ScenarioPackage{
@@ -623,5 +631,67 @@ func TestWorkerProcessScenarioPackageUsesPackageModelConfigWhenStepModelMissing(
 	}
 	if decision.Stage != "root_detect" {
 		t.Fatalf("expected root_detect stage, got %q", decision.Stage)
+	}
+}
+
+func TestWorkerProcessStreamerUsesStepSegmentDuration(t *testing.T) {
+	capture := &fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}}
+	worker := NewWorker(
+		capture,
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-1",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, SegmentSeconds: 15},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	if _, err := worker.ProcessStreamer(context.Background(), "streamer-1"); err != nil {
+		t.Fatalf("process streamer: %v", err)
+	}
+	if capture.lastDuration != 15*time.Second {
+		t.Fatalf("capture duration = %v, want 15s", capture.lastDuration)
+	}
+}
+
+func TestWorkerProcessStreamerStopsWhenInitialMaxRequestsExceeded(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{StreamerID: "streamer-1", Stage: "initial", UpdatedStateJSON: `{}`},
+		},
+	}
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-1",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, MaxRequests: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		decisions,
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	_, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if !errors.Is(err, ErrTrackingStop) {
+		t.Fatalf("expected ErrTrackingStop, got %v", err)
 	}
 }

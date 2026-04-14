@@ -1346,6 +1346,14 @@ components:
         responseSchemaJson:
           type: string
           description: JSON schema/template contract that the LLM response must follow exactly (legacy coercion is not applied).
+        segmentSeconds:
+          type: integer
+          minimum: 1
+          description: Video segment duration in seconds for this step. Defaults to 15 for the initial step and 30 for all other steps.
+        maxRequests:
+          type: integer
+          minimum: 0
+          description: Maximum number of LLM requests allowed for this step (0 = unlimited). If a non-initial step reaches this limit runtime returns to the initial step; if the initial step reaches this limit runtime stops tracking the streamer.
         initial:
           type: boolean
         order:

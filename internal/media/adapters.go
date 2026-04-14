@@ -142,13 +142,23 @@ func (a *StreamlinkCaptureAdapter) SetLogger(logger *zap.Logger) {
 }
 
 func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID string) (ChunkRef, error) {
-	if a.continuous {
-		return a.captureContinuous(ctx, streamerID)
-	}
-	return a.captureSingle(ctx, streamerID)
+	return a.CaptureWithDuration(ctx, streamerID, a.cfg.CaptureTimeout)
 }
 
-func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID string) (ChunkRef, error) {
+func (a *StreamlinkCaptureAdapter) CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
+	if duration <= 0 {
+		duration = a.cfg.CaptureTimeout
+	}
+	if duration < minimumStreamlinkCaptureTimeout {
+		duration = minimumStreamlinkCaptureTimeout
+	}
+	if a.continuous {
+		return a.captureContinuous(ctx, streamerID, duration)
+	}
+	return a.captureSingle(ctx, streamerID, duration)
+}
+
+func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID string, captureTimeout time.Duration) (ChunkRef, error) {
 	logger := a.logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -188,11 +198,11 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 	}
 	defer file.Close() //nolint:errcheck
 
-	captureCtx, cancel := context.WithTimeout(ctx, a.cfg.CaptureTimeout+streamlinkCaptureShutdownGracePeriod)
+	captureCtx, cancel := context.WithTimeout(ctx, captureTimeout+streamlinkCaptureShutdownGracePeriod)
 	defer cancel()
 
 	streamURL := fmt.Sprintf(a.cfg.URLTemplate, channel)
-	args := []string{"--stdout", "--ffmpeg-fout", "mp4", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+	args := []string{"--stdout", "--ffmpeg-fout", "mp4", "--stream-segmented-duration", formatStreamlinkDurationArg(captureTimeout), streamURL, a.cfg.Quality}
 
 	var stderr strings.Builder
 	logger.Info("executing streamlink capture", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath), zap.String("streamURL", streamURL), zap.String("quality", a.cfg.Quality), zap.String("chunkPath", chunkPath))
@@ -206,7 +216,7 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 			return ChunkRef{}, err
 		}
 		stderr.Reset()
-		args = []string{"--stdout", "--ffmpeg-fout", "mp4", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+		args = []string{"--stdout", "--ffmpeg-fout", "mp4", "--hls-duration", formatStreamlinkDurationArg(captureTimeout), streamURL, a.cfg.Quality}
 		runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
 	}
 	if runErr != nil && isStreamlinkUnknownOption(stderr.String(), "--ffmpeg-fout") {
@@ -218,7 +228,7 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 			return ChunkRef{}, err
 		}
 		stderr.Reset()
-		args = []string{"--stdout", "--stream-segmented-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+		args = []string{"--stdout", "--stream-segmented-duration", formatStreamlinkDurationArg(captureTimeout), streamURL, a.cfg.Quality}
 		runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
 		if runErr != nil && isStreamlinkUnknownOption(stderr.String(), "--stream-segmented-duration") {
 			logger.Info("streamlink does not support --stream-segmented-duration; retrying with --hls-duration", zap.String("streamerID", id), zap.String("binaryPath", a.cfg.BinaryPath))
@@ -229,7 +239,7 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 				return ChunkRef{}, err
 			}
 			stderr.Reset()
-			args = []string{"--stdout", "--hls-duration", formatStreamlinkDurationArg(a.cfg.CaptureTimeout), streamURL, a.cfg.Quality}
+			args = []string{"--stdout", "--hls-duration", formatStreamlinkDurationArg(captureTimeout), streamURL, a.cfg.Quality}
 			runErr = a.runner.Run(captureCtx, file, &stderr, a.cfg.BinaryPath, args...)
 		}
 	}
@@ -283,7 +293,7 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 	return normalized, nil
 }
 
-func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, streamerID string) (ChunkRef, error) {
+func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, streamerID string, captureTimeout time.Duration) (ChunkRef, error) {
 	logger := a.logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -314,7 +324,7 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 	}
 
 	targetIndex := session.nextIndex
-	deadline := time.Now().Add(a.cfg.CaptureTimeout + streamlinkCaptureShutdownGracePeriod)
+	deadline := time.Now().Add(captureTimeout + streamlinkCaptureShutdownGracePeriod)
 	lastObservedSize := int64(-1)
 	var lastSizeChangedAt time.Time
 	for {
