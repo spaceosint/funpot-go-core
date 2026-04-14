@@ -103,6 +103,13 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 	}, nil
 }
 
+func (f fakePromptResolver) GetScenarioPackage(_ context.Context, id string) (prompts.ScenarioPackage, error) {
+	if f.scenario.ID == id {
+		return f.scenario, nil
+	}
+	return prompts.ScenarioPackage{}, prompts.ErrScenarioPackageNotFound
+}
+
 func (f fakePromptResolver) GetLLMModelConfig(_ context.Context, _ string) (prompts.LLMModelConfig, error) {
 	if f.llmConfigErr != nil {
 		return prompts.LLMModelConfig{}, f.llmConfigErr
@@ -565,7 +572,7 @@ func TestWorkerProcessStreamerIgnoresRawResponseStatePayloads(t *testing.T) {
 	if len(decisions.items) != 1 {
 		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
-	if got := decisions.items[0].UpdatedStateJSON; got != defaultTrackerState() {
+	if got := decisions.items[0].UpdatedStateJSON; got != `{"_scenario":{"packageId":"scenario-test","stepId":"start"}}` {
 		t.Fatalf("updated state = %q", decisions.items[0].UpdatedStateJSON)
 	}
 }
@@ -596,7 +603,7 @@ func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned
 	if second.Label != "state_updated" {
 		t.Fatalf("second label = %q, want state_updated", second.Label)
 	}
-	if got := second.UpdatedStateJSON; got != `{"final_outcome":"unknown","state":{"ct_score":0,"mode":"unknown","t_score":0}}` {
+	if got := second.UpdatedStateJSON; got != `{"_scenario":{"packageId":"scenario-test","stepId":"match_update"},"final_outcome":"unknown","state":{"ct_score":0,"mode":"unknown","t_score":0}}` {
 		t.Fatalf("updated state = %q", got)
 	}
 	if len(decisions.items) != 2 {

@@ -78,6 +78,7 @@ type StageClassifier interface {
 
 type PromptResolver interface {
 	GetActiveScenarioPackage(ctx context.Context, gameSlug string) (prompts.ScenarioPackage, error)
+	GetScenarioPackage(ctx context.Context, id string) (prompts.ScenarioPackage, error)
 	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
 }
 
@@ -250,6 +251,17 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 
 	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk, pkg, execution)
+	if err != nil {
+		if execution.CurrentPackageID != "" && execution.StartPackageID != "" && execution.CurrentPackageID != execution.StartPackageID {
+			rootPkg, rootErr := w.prompts.GetScenarioPackage(ctx, execution.StartPackageID)
+			if rootErr == nil {
+				rootExecution, planErr := w.planScenarioExecution(ctx, id, rootPkg)
+				if planErr == nil {
+					lastDecision, err = w.processExecutionPlan(ctx, runID, id, chunk, rootPkg, rootExecution)
+				}
+			}
+		}
+	}
 	if err != nil {
 		w.metrics.recordFailure(ctx, id, "execution_plan")
 		w.metrics.recordCycle(ctx, id, "failed")
@@ -666,18 +678,46 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 }
 
 type scenarioExecutionPlan struct {
-	Step          prompts.ScenarioStep
-	Entering      bool
-	PreviousState string
+	Step                  prompts.ScenarioStep
+	Entering              bool
+	PreviousState         string
+	StartPackageID        string
+	CurrentPackageID      string
+	CurrentPackageChanged bool
 }
 
 func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, pkg prompts.ScenarioPackage) (scenarioExecutionPlan, error) {
 	latest := w.latestDecisionByStreamer(ctx, streamerID)
 	previousState := w.resolvePreviousState(ctx, streamerID)
-	step, entering, err := pkg.ResolveStep(latest.Stage, previousState)
+	startPackageID := strings.TrimSpace(pkg.ID)
+	currentPackageID := scenarioStatePackageID(previousState)
+	if currentPackageID == "" {
+		currentPackageID = startPackageID
+	}
+	activePackage := pkg
+	packageChanged := false
+	if currentPackageID != "" && currentPackageID != startPackageID {
+		resolved, err := w.prompts.GetScenarioPackage(ctx, currentPackageID)
+		if err == nil {
+			activePackage = resolved
+		}
+	}
+	if nextPackageID, changed, err := activePackage.ResolveNextPackage(previousState); err == nil && changed {
+		nextPackage, pkgErr := w.prompts.GetScenarioPackage(ctx, nextPackageID)
+		if pkgErr == nil {
+			activePackage = nextPackage
+			currentPackageID = strings.TrimSpace(nextPackage.ID)
+			packageChanged = true
+		}
+	}
+	currentStepID := strings.TrimSpace(latest.Stage)
+	if packageChanged {
+		currentStepID = ""
+	}
+	step, entering, err := activePackage.ResolveStep(currentStepID, previousState)
 	if err != nil {
 		if errors.Is(err, prompts.ErrScenarioStepNotFound) && strings.TrimSpace(latest.Stage) != "" {
-			step, entering, err = pkg.ResolveStep("", previousState)
+			step, entering, err = activePackage.ResolveStep("", previousState)
 		}
 		if err != nil {
 			return scenarioExecutionPlan{}, err
@@ -689,7 +729,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 			if step.Initial {
 				return scenarioExecutionPlan{}, ErrTrackingStop
 			}
-			initial, initialErr := pkg.InitialStep()
+			initial, initialErr := activePackage.InitialStep()
 			if initialErr != nil {
 				return scenarioExecutionPlan{}, initialErr
 			}
@@ -701,9 +741,12 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 		}
 	}
 	return scenarioExecutionPlan{
-		Step:          step,
-		Entering:      entering,
-		PreviousState: previousState,
+		Step:                  step,
+		Entering:              entering,
+		PreviousState:         previousState,
+		StartPackageID:        startPackageID,
+		CurrentPackageID:      strings.TrimSpace(activePackage.ID),
+		CurrentPackageChanged: packageChanged,
 	}, nil
 }
 
@@ -761,6 +804,7 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
+	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, pkg.ID, step.ID)
 	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
 	if err != nil {
 		return streamers.LLMDecision{}, err
@@ -792,4 +836,54 @@ func parseSimpleState(raw string) map[string]any {
 		return nested
 	}
 	return out
+}
+
+func parseJSONMap(raw string) map[string]any {
+	out := map[string]any{}
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func enrichScenarioState(currentState, previousState, packageID, stepID string) string {
+	base := parseJSONMap(previousState)
+	if existing, ok := base["_scenario"].(map[string]any); ok {
+		baseScenario := map[string]any{}
+		for k, v := range existing {
+			baseScenario[k] = v
+		}
+		base["_scenario"] = baseScenario
+	} else {
+		base["_scenario"] = map[string]any{}
+	}
+	current := parseJSONMap(currentState)
+	for key, value := range current {
+		base[key] = value
+	}
+	scenarioMeta, _ := base["_scenario"].(map[string]any)
+	scenarioMeta["packageId"] = strings.TrimSpace(packageID)
+	scenarioMeta["stepId"] = strings.TrimSpace(stepID)
+	base["_scenario"] = scenarioMeta
+	body, err := json.Marshal(base)
+	if err != nil {
+		return currentState
+	}
+	return string(body)
+}
+
+func scenarioStatePackageID(stateJSON string) string {
+	state := parseJSONMap(stateJSON)
+	raw, ok := state["_scenario"]
+	if !ok {
+		return ""
+	}
+	meta, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(meta["packageId"]))
 }

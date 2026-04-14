@@ -84,13 +84,22 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 			Priority:   transition.Priority,
 		})
 	}
+	packageTransitions := make([]prompts.ScenarioPackageTransition, 0, len(req.PackageTransitions))
+	for _, transition := range req.PackageTransitions {
+		packageTransitions = append(packageTransitions, prompts.ScenarioPackageTransition{
+			ToPackageID: transition.ToPackageID,
+			Condition:   transition.Condition,
+			Priority:    transition.Priority,
+		})
+	}
 	return prompts.ScenarioPackageCreateRequest{
-		Name:             req.Name,
-		GameSlug:         req.GameSlug,
-		LLMModelConfigID: req.LLMModelConfigID,
-		Steps:            steps,
-		Transitions:      transitions,
-		ActorID:          actorID,
+		Name:               req.Name,
+		GameSlug:           req.GameSlug,
+		LLMModelConfigID:   req.LLMModelConfigID,
+		Steps:              steps,
+		Transitions:        transitions,
+		PackageTransitions: packageTransitions,
+		ActorID:            actorID,
 	}
 }
 
@@ -132,12 +141,19 @@ type scenarioTransitionRequest struct {
 	Priority   int    `json:"priority"`
 }
 
+type scenarioPackageTransitionRequest struct {
+	ToPackageID string `json:"toPackageId"`
+	Condition   string `json:"condition"`
+	Priority    int    `json:"priority"`
+}
+
 type scenarioPackageCreateRequest struct {
-	Name             string                      `json:"name"`
-	GameSlug         string                      `json:"gameSlug"`
-	LLMModelConfigID string                      `json:"llmModelConfigId"`
-	Steps            []scenarioStepRequest       `json:"steps"`
-	Transitions      []scenarioTransitionRequest `json:"transitions"`
+	Name               string                             `json:"name"`
+	GameSlug           string                             `json:"gameSlug"`
+	LLMModelConfigID   string                             `json:"llmModelConfigId"`
+	Steps              []scenarioStepRequest              `json:"steps"`
+	Transitions        []scenarioTransitionRequest        `json:"transitions"`
+	PackageTransitions []scenarioPackageTransitionRequest `json:"packageTransitions"`
 }
 
 type llmModelConfigUpsertRequest struct {
