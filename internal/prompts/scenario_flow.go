@@ -17,6 +17,7 @@ var (
 	ErrScenarioStepNotFound     = errors.New("scenario step not found")
 	ErrInvalidScenarioPackage   = errors.New("scenario package must contain at least one step")
 	ErrInvalidScenarioStepID    = errors.New("scenario step id must not be empty")
+	ErrInvalidScenarioInitial   = errors.New("scenario package must contain exactly one initial step")
 	ErrInvalidScenarioCondition = errors.New("scenario step entry condition is invalid")
 	ErrInvalidScenarioModelRef  = errors.New("scenario package llmModelConfigId must not be empty")
 	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
@@ -115,15 +116,22 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		return ErrInvalidScenarioPackage
 	}
 	seenSteps := make(map[string]struct{}, len(req.Steps))
+	initialCount := 0
 	for _, step := range req.Steps {
 		id := strings.TrimSpace(step.ID)
 		if id == "" {
 			return ErrInvalidScenarioStepID
 		}
+		if step.Initial {
+			initialCount++
+		}
 		if err := validateScenarioCondition(step.EntryCondition); err != nil {
 			return fmt.Errorf("%w: step %s: %v", ErrInvalidScenarioCondition, id, err)
 		}
 		seenSteps[id] = struct{}{}
+	}
+	if initialCount != 1 {
+		return ErrInvalidScenarioInitial
 	}
 	for _, transition := range req.Transitions {
 		from := strings.TrimSpace(transition.FromStepID)
@@ -167,29 +175,6 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		if normalized[i].MaxRequests < 0 {
 			normalized[i].MaxRequests = 0
 		}
-	}
-	if len(normalized) == 0 {
-		return normalized
-	}
-	initialIndex := -1
-	for i := range normalized {
-		if !normalized[i].Initial {
-			continue
-		}
-		if initialIndex == -1 || normalized[i].Order < normalized[initialIndex].Order || (normalized[i].Order == normalized[initialIndex].Order && strings.TrimSpace(normalized[i].ID) < strings.TrimSpace(normalized[initialIndex].ID)) {
-			initialIndex = i
-		}
-	}
-	if initialIndex == -1 {
-		initialIndex = 0
-		for i := 1; i < len(normalized); i++ {
-			if normalized[i].Order < normalized[initialIndex].Order || (normalized[i].Order == normalized[initialIndex].Order && strings.TrimSpace(normalized[i].ID) < strings.TrimSpace(normalized[initialIndex].ID)) {
-				initialIndex = i
-			}
-		}
-	}
-	for i := range normalized {
-		normalized[i].Initial = i == initialIndex
 	}
 	return normalized
 }
@@ -532,17 +517,17 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 
 	state := parseJSONMap(stateJSON)
 	current := strings.TrimSpace(currentStepID)
-	if current == "" {
-		initial := make([]ScenarioStep, 0, len(p.Steps))
-		for _, step := range p.Steps {
-			if step.Initial {
-				initial = append(initial, step)
+		if current == "" {
+			initial := make([]ScenarioStep, 0, len(p.Steps))
+			for _, step := range p.Steps {
+				if step.Initial {
+					initial = append(initial, step)
+				}
 			}
-		}
-		if len(initial) == 0 {
-			initial = append(initial, p.Steps...)
-		}
-		sort.Slice(initial, func(i, j int) bool { return initial[i].Order < initial[j].Order })
+			if len(initial) == 0 {
+				return ScenarioStep{}, false, ErrInvalidScenarioInitial
+			}
+			sort.Slice(initial, func(i, j int) bool { return initial[i].Order < initial[j].Order })
 		for _, candidate := range initial {
 			ok, err := evaluateCondition(candidate.EntryCondition, state)
 			if err == nil && ok {
@@ -592,10 +577,7 @@ func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {
 		}
 	}
 	if len(initial) == 0 {
-		initial = append(initial, p.Steps...)
-	}
-	if len(initial) == 0 {
-		return ScenarioStep{}, ErrScenarioStepNotFound
+		return ScenarioStep{}, ErrInvalidScenarioInitial
 	}
 	sort.Slice(initial, func(i, j int) bool {
 		if initial[i].Order == initial[j].Order {
