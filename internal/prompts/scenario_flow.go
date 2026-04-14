@@ -168,6 +168,29 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 			normalized[i].MaxRequests = 0
 		}
 	}
+	if len(normalized) == 0 {
+		return normalized
+	}
+	initialIndex := -1
+	for i := range normalized {
+		if !normalized[i].Initial {
+			continue
+		}
+		if initialIndex == -1 || normalized[i].Order < normalized[initialIndex].Order || (normalized[i].Order == normalized[initialIndex].Order && strings.TrimSpace(normalized[i].ID) < strings.TrimSpace(normalized[initialIndex].ID)) {
+			initialIndex = i
+		}
+	}
+	if initialIndex == -1 {
+		initialIndex = 0
+		for i := 1; i < len(normalized); i++ {
+			if normalized[i].Order < normalized[initialIndex].Order || (normalized[i].Order == normalized[initialIndex].Order && strings.TrimSpace(normalized[i].ID) < strings.TrimSpace(normalized[initialIndex].ID)) {
+				initialIndex = i
+			}
+		}
+	}
+	for i := range normalized {
+		normalized[i].Initial = i == initialIndex
+	}
 	return normalized
 }
 
