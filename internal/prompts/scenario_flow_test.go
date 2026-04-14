@@ -98,6 +98,70 @@ func TestScenarioPackageResolveStepFallsBackToFirstInitialWhenNoConditionMatches
 	}
 }
 
+func TestCreateScenarioPackageNormalizesToSingleInitialStep(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "single initial",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "fallback", Name: "Fallback", PromptTemplate: "fallback", ResponseSchemaJSON: `{}`, Initial: true, Order: 2},
+			{ID: "root", Name: "Root", PromptTemplate: "root", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+			{ID: "branch", Name: "Branch", PromptTemplate: "branch", ResponseSchemaJSON: `{}`, Initial: false, Order: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+
+	initialCount := 0
+	initialID := ""
+	for _, step := range pkg.Steps {
+		if step.Initial {
+			initialCount++
+			initialID = step.ID
+		}
+	}
+	if initialCount != 1 {
+		t.Fatalf("expected exactly one initial step, got %d (%#v)", initialCount, pkg.Steps)
+	}
+	if initialID != "root" {
+		t.Fatalf("expected lowest-order initial step root to be preserved, got %q", initialID)
+	}
+}
+
+func TestCreateScenarioPackageAssignsInitialWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "auto root",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "mode", Name: "Mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+			{ID: "detect", Name: "Detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Order: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+
+	initial, err := pkg.InitialStep()
+	if err != nil {
+		t.Fatalf("initial step: %v", err)
+	}
+	if initial.ID != "detect" {
+		t.Fatalf("expected lowest-order step detect to become initial, got %q", initial.ID)
+	}
+}
+
 func TestScenarioPackageResolveStepUsesHighestPriorityTransition(t *testing.T) {
 	t.Parallel()
 

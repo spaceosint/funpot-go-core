@@ -695,3 +695,40 @@ func TestWorkerProcessStreamerStopsWhenInitialMaxRequestsExceeded(t *testing.T) 
 		t.Fatalf("expected ErrTrackingStop, got %v", err)
 	}
 }
+
+func TestWorkerProcessStreamerStopsWhenInitialHasNoMatchingBranchAndLimitReached(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{StreamerID: "streamer-1", Stage: "initial", UpdatedStateJSON: `{"game":"unknown"}`},
+			{StreamerID: "streamer-1", Stage: "initial", UpdatedStateJSON: `{"game":"unknown"}`},
+		},
+	}
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-1",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, MaxRequests: 2},
+					{ID: "cs2_mode", Name: "CS2", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Order: 2},
+				},
+				Transitions: []prompts.ScenarioTransition{
+					{FromStepID: "initial", ToStepID: "cs2_mode", Condition: "game == cs2", Priority: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		decisions,
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	_, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if !errors.Is(err, ErrTrackingStop) {
+		t.Fatalf("expected ErrTrackingStop when initial branch did not match and max requests reached, got %v", err)
+	}
+}
