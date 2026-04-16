@@ -77,6 +77,7 @@ type StageClassifier interface {
 }
 
 type PromptResolver interface {
+	GetActiveGameScenario(ctx context.Context, gameSlug string) (prompts.GameScenario, error)
 	GetActiveScenarioPackage(ctx context.Context, gameSlug string) (prompts.ScenarioPackage, error)
 	GetScenarioPackage(ctx context.Context, id string) (prompts.ScenarioPackage, error)
 	GetLLMModelConfig(ctx context.Context, id string) (prompts.LLMModelConfig, error)
@@ -195,14 +196,28 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		logger.Info("streamer processing lock released", zap.String("streamerID", id), zap.String("lockKey", lockKey))
 	}()
 
-	pkg, err := w.prompts.GetActiveScenarioPackage(ctx, "global")
+	gameScenario, err := w.prompts.GetActiveGameScenario(ctx, "global")
 	if err != nil {
-		logger.Error("active scenario package lookup failed", zap.String("streamerID", id), zap.String("gameSlug", "global"), zap.Error(err))
+		logger.Error("active game scenario lookup failed", zap.String("streamerID", id), zap.String("gameSlug", "global"), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "lookup_game_scenario")
+		w.metrics.recordCycle(ctx, id, "failed")
+		return streamers.LLMDecision{}, err
+	}
+	rootNode, err := gameScenario.InitialNode()
+	if err != nil {
+		logger.Error("game scenario initial node resolve failed", zap.String("streamerID", id), zap.String("gameScenarioID", gameScenario.ID), zap.Error(err))
+		w.metrics.recordFailure(ctx, id, "resolve_game_scenario_initial")
+		w.metrics.recordCycle(ctx, id, "failed")
+		return streamers.LLMDecision{}, err
+	}
+	pkg, err := w.prompts.GetScenarioPackage(ctx, rootNode.ScenarioPackageID)
+	if err != nil {
+		logger.Error("initial scenario package lookup failed", zap.String("streamerID", id), zap.String("gameScenarioID", gameScenario.ID), zap.String("packageID", rootNode.ScenarioPackageID), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "lookup_scenario_package")
 		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
 	}
-	execution, err := w.planScenarioExecution(ctx, id, pkg)
+	execution, err := w.planScenarioExecution(ctx, id, gameScenario, pkg)
 	if err != nil {
 		if errors.Is(err, ErrTrackingStop) {
 			w.metrics.recordCycle(ctx, id, "tracking_stop")
@@ -272,7 +287,7 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		if execution.CurrentPackageID != "" && execution.StartPackageID != "" && execution.CurrentPackageID != execution.StartPackageID {
 			rootPkg, rootErr := w.prompts.GetScenarioPackage(ctx, execution.StartPackageID)
 			if rootErr == nil {
-				rootExecution, planErr := w.planScenarioExecution(ctx, id, rootPkg)
+				rootExecution, planErr := w.planScenarioExecution(ctx, id, gameScenario, rootPkg)
 				if planErr == nil {
 					lastDecision, err = w.processExecutionPlan(ctx, runID, id, chunk, rootPkg, rootExecution)
 				}
@@ -412,7 +427,9 @@ func (w *Worker) processStageResult(ctx context.Context, activePrompt prompts.Pr
 }
 
 func hasConcreteTrackerChange(previousState, updatedState, evidenceDelta, conflicts, finalOutcome string) bool {
-	if normalizeStateJSON(previousState) != normalizeStateJSON(updatedState) {
+	prevNormalized := normalizeStateJSONWithoutScenario(previousState)
+	updatedNormalized := normalizeStateJSONWithoutScenario(updatedState)
+	if prevNormalized != updatedNormalized {
 		return true
 	}
 	if normalized := normalizeStateJSON(evidenceDelta); normalized != "" && normalized != "[]" {
@@ -423,6 +440,16 @@ func hasConcreteTrackerChange(previousState, updatedState, evidenceDelta, confli
 	}
 	outcome := strings.TrimSpace(strings.ToLower(finalOutcome))
 	return outcome != "" && outcome != "unknown"
+}
+
+func normalizeStateJSONWithoutScenario(raw string) string {
+	state := parseJSONMap(raw)
+	delete(state, "_scenario")
+	body, err := json.Marshal(state)
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 func (w *Worker) resolvePreviousState(ctx context.Context, streamerID string) string {
@@ -707,25 +734,57 @@ type scenarioExecutionPlan struct {
 	CurrentPackageChanged bool
 }
 
-func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, pkg prompts.ScenarioPackage) (scenarioExecutionPlan, error) {
+func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, gameScenario prompts.GameScenario, pkg prompts.ScenarioPackage) (scenarioExecutionPlan, error) {
 	latest := w.latestDecisionByStreamer(ctx, streamerID)
 	previousState := w.resolvePreviousState(ctx, streamerID)
 	startPackageID := strings.TrimSpace(pkg.ID)
-	currentPackageID := scenarioStatePackageID(previousState)
-	if currentPackageID == "" {
-		currentPackageID = startPackageID
+	currentNodeID := scenarioStateNodeID(previousState)
+	resolvedNode, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, previousState)
+	if err != nil {
+		return scenarioExecutionPlan{}, err
+	}
+	currentPackageID := startPackageID
+	if strings.TrimSpace(resolvedNode.ScenarioPackageID) != "" {
+		currentPackageID = strings.TrimSpace(resolvedNode.ScenarioPackageID)
 	}
 	activePackage := pkg
-	packageChanged := false
+	if currentPackageID != "" && currentPackageID != startPackageID {
+		resolved, pkgErr := w.prompts.GetScenarioPackage(ctx, currentPackageID)
+		if pkgErr != nil {
+			return scenarioExecutionPlan{}, pkgErr
+		}
+		activePackage = resolved
+	}
+	packageChanged := nodeChanged || currentPackageID != startPackageID
 	transitionTrace := map[string]any{
 		"status":      "no_transition",
-		"fromPackage": strings.TrimSpace(activePackage.ID),
+		"fromNode":    firstNonEmpty(strings.TrimSpace(currentNodeID), strings.TrimSpace(gameScenario.InitialNodeID)),
+		"toNode":      strings.TrimSpace(resolvedNode.ID),
+		"fromPackage": strings.TrimSpace(startPackageID),
+		"toPackage":   strings.TrimSpace(currentPackageID),
 	}
-	if currentPackageID != "" && currentPackageID != startPackageID {
-		resolved, err := w.prompts.GetScenarioPackage(ctx, currentPackageID)
-		if err == nil {
-			activePackage = resolved
+	if nodeChanged {
+		transitionTrace["status"] = "accepted"
+		transitionTrace["reason"] = "game_scenario_transition_matched"
+	}
+	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(previousState); terminalErr != nil {
+		return scenarioExecutionPlan{}, terminalErr
+	} else if ok {
+		transitionTrace = map[string]any{
+			"status":      "terminal_stop",
+			"fromNode":    strings.TrimSpace(resolvedNode.ID),
+			"fromPackage": strings.TrimSpace(activePackage.ID),
+			"reason":      "game_scenario_terminal_condition_matched",
 		}
+		return scenarioExecutionPlan{
+			StopTracking:      true,
+			TerminalStateJSON: mergeJSONState(previousState, terminal.ResultStateJSON),
+			TerminalLabel:     firstNonEmpty(strings.TrimSpace(terminal.ResultLabel), "tracking_stopped"),
+			TransitionTrace:   transitionTrace,
+			PreviousState:     previousState,
+			StartPackageID:    startPackageID,
+			CurrentPackageID:  strings.TrimSpace(activePackage.ID),
+		}, nil
 	}
 	resolution, resolveErr := activePackage.ResolveNextPackage(previousState)
 	if resolveErr == nil {
@@ -955,6 +1014,12 @@ func enrichScenarioState(currentState, previousState, packageID, stepID string, 
 	scenarioMeta, _ := base["_scenario"].(map[string]any)
 	scenarioMeta["packageId"] = strings.TrimSpace(packageID)
 	scenarioMeta["stepId"] = strings.TrimSpace(stepID)
+	if toNode, ok := transitionTrace["toNode"]; ok {
+		nodeID := strings.TrimSpace(fmt.Sprint(toNode))
+		if nodeID != "" {
+			scenarioMeta["gameScenarioNodeId"] = nodeID
+		}
+	}
 	if len(transitionTrace) > 0 {
 		scenarioMeta["transition"] = transitionTrace
 	}
@@ -977,4 +1042,17 @@ func scenarioStatePackageID(stateJSON string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(meta["packageId"]))
+}
+
+func scenarioStateNodeID(stateJSON string) string {
+	state := parseJSONMap(stateJSON)
+	raw, ok := state["_scenario"]
+	if !ok {
+		return ""
+	}
+	meta, ok := raw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(meta["gameScenarioNodeId"]))
 }

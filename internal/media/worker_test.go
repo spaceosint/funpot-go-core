@@ -52,11 +52,35 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 
 type fakePromptResolver struct {
 	prompts        []prompts.PromptVersion
+	gameScenario   prompts.GameScenario
 	scenario       prompts.ScenarioPackage
 	scenariosByID  map[string]prompts.ScenarioPackage
 	scenarioErr    error
 	llmModelConfig prompts.LLMModelConfig
 	llmConfigErr   error
+}
+
+func (f fakePromptResolver) GetActiveGameScenario(_ context.Context, _ string) (prompts.GameScenario, error) {
+	if strings.TrimSpace(f.gameScenario.ID) != "" {
+		return f.gameScenario, nil
+	}
+	packageID := strings.TrimSpace(f.scenario.ID)
+	if packageID == "" && len(f.prompts) > 0 {
+		packageID = "scenario-test"
+	}
+	if packageID != "" {
+		return prompts.GameScenario{
+			ID:            "game-scenario-test",
+			Name:          "generated",
+			GameSlug:      "global",
+			InitialNodeID: "node-root",
+			Nodes: []prompts.GameScenarioNode{
+				{ID: "node-root", ScenarioPackageID: packageID},
+			},
+			IsActive: true,
+		}, nil
+	}
+	return prompts.GameScenario{}, prompts.ErrGameScenarioNotFound
 }
 
 func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string) (prompts.ScenarioPackage, error) {
@@ -110,6 +134,9 @@ func (f fakePromptResolver) GetScenarioPackage(_ context.Context, id string) (pr
 	}
 	if f.scenario.ID == id {
 		return f.scenario, nil
+	}
+	if len(f.prompts) > 0 && strings.TrimSpace(id) == "scenario-test" {
+		return f.GetActiveScenarioPackage(context.Background(), "global")
 	}
 	return prompts.ScenarioPackage{}, prompts.ErrScenarioPackageNotFound
 }
