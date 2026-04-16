@@ -286,6 +286,103 @@ func (s *Service) ActivateGameScenario(ctx context.Context, id, actorID string) 
 	return GameScenario{}, ErrGameScenarioNotFound
 }
 
+func (s *Service) GetActiveGameScenario(ctx context.Context, gameSlug string) (GameScenario, error) {
+	_ = ctx
+	lookup := strings.TrimSpace(gameSlug)
+	if lookup == "" {
+		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	versions := s.gameScenarios[lookup]
+	for _, item := range versions {
+		if item.IsActive {
+			return item, nil
+		}
+	}
+	return GameScenario{}, ErrGameScenarioNotFound
+}
+
+func (g GameScenario) InitialNode() (GameScenarioNode, error) {
+	initial := strings.TrimSpace(g.InitialNodeID)
+	if initial == "" {
+		return GameScenarioNode{}, ErrInvalidGameScenario
+	}
+	for _, node := range g.Nodes {
+		if strings.TrimSpace(node.ID) == initial {
+			return node, nil
+		}
+	}
+	return GameScenarioNode{}, ErrInvalidGameScenario
+}
+
+func (g GameScenario) ResolveTerminalCondition(stateJSON string) (GameScenarioTerminalCondition, bool, error) {
+	state := parseJSONMap(stateJSON)
+	ordered := append([]GameScenarioTerminalCondition(nil), g.TerminalConditions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Priority == ordered[j].Priority {
+			return strings.TrimSpace(ordered[i].ID) < strings.TrimSpace(ordered[j].ID)
+		}
+		return ordered[i].Priority > ordered[j].Priority
+	})
+	for _, terminal := range ordered {
+		ok, err := evaluateCondition(terminal.Condition, state)
+		if err != nil {
+			return GameScenarioTerminalCondition{}, false, err
+		}
+		if ok {
+			return terminal, true, nil
+		}
+	}
+	return GameScenarioTerminalCondition{}, false, nil
+}
+
+func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenarioNode, bool, error) {
+	activeNodeID := strings.TrimSpace(currentNodeID)
+	if activeNodeID == "" {
+		initial, err := g.InitialNode()
+		return initial, true, err
+	}
+	nodeByID := make(map[string]GameScenarioNode, len(g.Nodes))
+	for _, node := range g.Nodes {
+		nodeByID[strings.TrimSpace(node.ID)] = node
+	}
+	currentNode, ok := nodeByID[activeNodeID]
+	if !ok {
+		initial, err := g.InitialNode()
+		return initial, true, err
+	}
+	state := parseJSONMap(stateJSON)
+	ordered := append([]GameScenarioTransition(nil), g.Transitions...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Priority == ordered[j].Priority {
+			left := strings.TrimSpace(ordered[i].ID) + strings.TrimSpace(ordered[i].ToNodeID)
+			right := strings.TrimSpace(ordered[j].ID) + strings.TrimSpace(ordered[j].ToNodeID)
+			return left < right
+		}
+		return ordered[i].Priority > ordered[j].Priority
+	})
+	for _, tr := range ordered {
+		if strings.TrimSpace(tr.FromNodeID) != activeNodeID {
+			continue
+		}
+		matched, err := evaluateCondition(tr.Condition, state)
+		if err != nil {
+			return GameScenarioNode{}, false, err
+		}
+		if !matched {
+			continue
+		}
+		targetID := strings.TrimSpace(tr.ToNodeID)
+		next, exists := nodeByID[targetID]
+		if !exists {
+			return GameScenarioNode{}, false, ErrInvalidGameScenario
+		}
+		return next, targetID != strings.TrimSpace(currentNode.ID), nil
+	}
+	return currentNode, false, nil
+}
+
 func isValidJSON(raw string) bool {
 	return json.Valid([]byte(strings.TrimSpace(raw)))
 }
