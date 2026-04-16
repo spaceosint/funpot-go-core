@@ -206,11 +206,27 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	if err != nil {
 		if errors.Is(err, ErrTrackingStop) {
 			w.metrics.recordCycle(ctx, id, "tracking_stop")
-			return streamers.LLMDecision{}, ErrTrackingStop
+			lastDecision := w.latestDecisionByStreamer(ctx, id)
+			if strings.TrimSpace(lastDecision.UpdatedStateJSON) == "" {
+				lastDecision.UpdatedStateJSON = w.resolvePreviousState(ctx, id)
+			}
+			if strings.TrimSpace(lastDecision.Label) == "" {
+				lastDecision.Label = "tracking_stopped"
+			}
+			return lastDecision, ErrTrackingStop
 		}
 		w.metrics.recordFailure(ctx, id, "plan_execution")
 		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
+	}
+	if execution.StopTracking {
+		w.metrics.recordCycle(ctx, id, "tracking_stop")
+		lastDecision := w.latestDecisionByStreamer(ctx, id)
+		lastDecision.StreamerID = id
+		lastDecision.TransitionTerminal = true
+		lastDecision.Label = firstNonEmpty(strings.TrimSpace(execution.TerminalLabel), strings.TrimSpace(lastDecision.Label), "tracking_stopped")
+		lastDecision.UpdatedStateJSON = firstNonEmpty(strings.TrimSpace(execution.TerminalStateJSON), strings.TrimSpace(lastDecision.UpdatedStateJSON), w.resolvePreviousState(ctx, id))
+		return lastDecision, ErrTrackingStop
 	}
 
 	chunk, err := w.captureWithRetry(ctx, id, execution.Step.SegmentSeconds)
@@ -680,6 +696,9 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 type scenarioExecutionPlan struct {
 	Step                  prompts.ScenarioStep
 	Entering              bool
+	StopTracking          bool
+	TerminalStateJSON     string
+	TerminalLabel         string
 	PreviousState         string
 	StartPackageID        string
 	CurrentPackageID      string
@@ -702,12 +721,25 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 			activePackage = resolved
 		}
 	}
-	if nextPackageID, changed, err := activePackage.ResolveNextPackage(previousState); err == nil && changed {
-		nextPackage, pkgErr := w.prompts.GetScenarioPackage(ctx, nextPackageID)
-		if pkgErr == nil {
-			activePackage = nextPackage
-			currentPackageID = strings.TrimSpace(nextPackage.ID)
-			packageChanged = true
+	resolution, resolveErr := activePackage.ResolveNextPackage(previousState)
+	if resolveErr == nil {
+		if resolution.StopTracking {
+			return scenarioExecutionPlan{
+				StopTracking:      true,
+				TerminalStateJSON: mergeJSONState(previousState, resolution.FinalStateJSON),
+				TerminalLabel:     firstNonEmpty(strings.TrimSpace(resolution.FinalLabel), "tracking_stopped"),
+				PreviousState:     previousState,
+				StartPackageID:    startPackageID,
+				CurrentPackageID:  strings.TrimSpace(activePackage.ID),
+			}, nil
+		}
+		if resolution.Changed {
+			nextPackage, pkgErr := w.prompts.GetScenarioPackage(ctx, resolution.PackageID)
+			if pkgErr == nil {
+				activePackage = nextPackage
+				currentPackageID = strings.TrimSpace(nextPackage.ID)
+				packageChanged = true
+			}
 		}
 	}
 	currentStepID := strings.TrimSpace(latest.Stage)
@@ -743,6 +775,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 	return scenarioExecutionPlan{
 		Step:                  step,
 		Entering:              entering,
+		StopTracking:          false,
 		PreviousState:         previousState,
 		StartPackageID:        startPackageID,
 		CurrentPackageID:      strings.TrimSpace(activePackage.ID),
@@ -847,6 +880,25 @@ func parseJSONMap(raw string) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func mergeJSONState(baseJSON, patchJSON string) string {
+	base := parseJSONMap(baseJSON)
+	patch := parseJSONMap(patchJSON)
+	if len(base) == 0 && len(patch) == 0 {
+		if strings.TrimSpace(baseJSON) != "" {
+			return baseJSON
+		}
+		return patchJSON
+	}
+	for key, value := range patch {
+		base[key] = value
+	}
+	body, err := json.Marshal(base)
+	if err != nil {
+		return firstNonEmpty(strings.TrimSpace(baseJSON), strings.TrimSpace(patchJSON))
+	}
+	return string(body)
 }
 
 func enrichScenarioState(currentState, previousState, packageID, stepID string) string {

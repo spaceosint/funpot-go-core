@@ -21,6 +21,7 @@ var (
 	ErrInvalidScenarioCondition = errors.New("scenario step entry condition is invalid")
 	ErrInvalidScenarioModelRef  = errors.New("scenario package llmModelConfigId must not be empty")
 	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
+	ErrInvalidPackageChain      = errors.New("scenario package must have at most one package transition")
 )
 
 type ScenarioStep struct {
@@ -46,9 +47,19 @@ type ScenarioTransition struct {
 }
 
 type ScenarioPackageTransition struct {
-	ToPackageID string `json:"toPackageId"`
-	Condition   string `json:"condition"`
-	Priority    int    `json:"priority"`
+	ToPackageID        string `json:"toPackageId"`
+	Condition          string `json:"condition"`
+	Priority           int    `json:"priority"`
+	Action             string `json:"action,omitempty"`
+	FinalStateOptionID string `json:"finalStateOptionId,omitempty"`
+}
+
+type ScenarioFinalStateOption struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Condition      string `json:"condition"`
+	FinalStateJSON string `json:"finalStateJson,omitempty"`
+	FinalLabel     string `json:"finalLabel,omitempty"`
 }
 
 type ScenarioPackage struct {
@@ -61,6 +72,7 @@ type ScenarioPackage struct {
 	Steps              []ScenarioStep              `json:"steps"`
 	Transitions        []ScenarioTransition        `json:"transitions"`
 	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
+	FinalStateOptions  []ScenarioFinalStateOption  `json:"finalStateOptions"`
 	CreatedBy          string                      `json:"createdBy"`
 	ActivatedBy        string                      `json:"activatedBy,omitempty"`
 	CreatedAt          time.Time                   `json:"createdAt"`
@@ -110,6 +122,7 @@ type ScenarioPackageCreateRequest struct {
 	Steps              []ScenarioStep
 	Transitions        []ScenarioTransition
 	PackageTransitions []ScenarioPackageTransition
+	FinalStateOptions  []ScenarioFinalStateOption
 	ActorID            string
 }
 
@@ -157,12 +170,47 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 			return fmt.Errorf("%w: transition %s -> %s: %v", ErrInvalidScenarioCondition, from, to, err)
 		}
 	}
+	if len(req.PackageTransitions) > 1 {
+		return ErrInvalidPackageChain
+	}
+	optionByID := make(map[string]ScenarioFinalStateOption, len(req.FinalStateOptions))
+	for _, option := range req.FinalStateOptions {
+		id := strings.TrimSpace(option.ID)
+		if id == "" {
+			return fmt.Errorf("%w: final state option id is required", ErrInvalidScenarioStepID)
+		}
+		if _, exists := optionByID[id]; exists {
+			return fmt.Errorf("%w: duplicated final state option id %q", ErrInvalidScenarioPackage, id)
+		}
+		if strings.TrimSpace(option.Name) == "" {
+			return fmt.Errorf("%w: final state option %s name is required", ErrInvalidScenarioPackage, id)
+		}
+		if err := validateScenarioCondition(option.Condition); err != nil {
+			return fmt.Errorf("%w: final state option %s: %v", ErrInvalidScenarioCondition, id, err)
+		}
+		if strings.TrimSpace(option.FinalStateJSON) != "" {
+			if !json.Valid([]byte(option.FinalStateJSON)) {
+				return fmt.Errorf("%w: final state option %s finalStateJson must be valid json", ErrInvalidScenarioPackage, id)
+			}
+		}
+		optionByID[id] = option
+	}
 	for _, transition := range req.PackageTransitions {
-		if strings.TrimSpace(transition.ToPackageID) == "" {
+		action := normalizeScenarioPackageTransitionAction(transition.Action)
+		if strings.TrimSpace(transition.ToPackageID) == "" && action != ScenarioPackageTransitionActionStopTracking {
 			return fmt.Errorf("%w: package transition toPackageId is required", ErrInvalidScenarioStepID)
+		}
+		optionID := strings.TrimSpace(transition.FinalStateOptionID)
+		if optionID != "" {
+			if _, ok := optionByID[optionID]; !ok {
+				return fmt.Errorf("%w: unknown package transition finalStateOptionId %s", ErrInvalidScenarioStepID, optionID)
+			}
 		}
 		if err := validateScenarioCondition(transition.Condition); err != nil {
 			return fmt.Errorf("%w: package transition -> %s: %v", ErrInvalidScenarioCondition, transition.ToPackageID, err)
+		}
+		if action != "" && action != ScenarioPackageTransitionActionStopTracking {
+			return fmt.Errorf("%w: package transition action %q is not supported", ErrInvalidScenarioPackage, transition.Action)
 		}
 	}
 	return nil
@@ -264,9 +312,11 @@ func normalizeScenarioPackageTransitions(transitions []ScenarioPackageTransition
 	normalized := make([]ScenarioPackageTransition, 0, len(transitions))
 	for _, tr := range transitions {
 		next := ScenarioPackageTransition{
-			ToPackageID: strings.TrimSpace(tr.ToPackageID),
-			Condition:   strings.TrimSpace(tr.Condition),
-			Priority:    tr.Priority,
+			ToPackageID:        strings.TrimSpace(tr.ToPackageID),
+			Condition:          strings.TrimSpace(tr.Condition),
+			Priority:           tr.Priority,
+			Action:             normalizeScenarioPackageTransitionAction(tr.Action),
+			FinalStateOptionID: strings.TrimSpace(tr.FinalStateOptionID),
 		}
 		if next.Priority <= 0 {
 			next.Priority = 1
@@ -278,6 +328,24 @@ func normalizeScenarioPackageTransitions(transitions []ScenarioPackageTransition
 
 func cloneScenarioPackageTransitions(transitions []ScenarioPackageTransition) []ScenarioPackageTransition {
 	return append([]ScenarioPackageTransition{}, transitions...)
+}
+
+func normalizeFinalStateOptions(options []ScenarioFinalStateOption) []ScenarioFinalStateOption {
+	normalized := make([]ScenarioFinalStateOption, 0, len(options))
+	for _, item := range options {
+		normalized = append(normalized, ScenarioFinalStateOption{
+			ID:             strings.TrimSpace(item.ID),
+			Name:           strings.TrimSpace(item.Name),
+			Condition:      strings.TrimSpace(item.Condition),
+			FinalStateJSON: strings.TrimSpace(item.FinalStateJSON),
+			FinalLabel:     strings.TrimSpace(item.FinalLabel),
+		})
+	}
+	return normalized
+}
+
+func cloneFinalStateOptions(options []ScenarioFinalStateOption) []ScenarioFinalStateOption {
+	return append([]ScenarioFinalStateOption{}, options...)
 }
 
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
@@ -315,6 +383,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	normalizedSteps := normalizeScenarioSteps(req.Steps, gameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
+	normalizedFinalStateOptions := normalizeFinalStateOptions(req.FinalStateOptions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -329,6 +398,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 			Steps:              append([]ScenarioStep(nil), req.Steps...),
 			Transitions:        cloneScenarioTransitions(normalizedTransitions),
 			PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
+			FinalStateOptions:  cloneFinalStateOptions(normalizedFinalStateOptions),
 			CreatedBy:          strings.TrimSpace(req.ActorID),
 			CreatedAt:          now,
 		}
@@ -352,6 +422,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		Steps:              append([]ScenarioStep(nil), req.Steps...),
 		Transitions:        cloneScenarioTransitions(normalizedTransitions),
 		PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
+		FinalStateOptions:  cloneFinalStateOptions(normalizedFinalStateOptions),
 		CreatedBy:          strings.TrimSpace(req.ActorID),
 		CreatedAt:          now,
 	}
@@ -398,6 +469,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	normalizedSteps := normalizeScenarioSteps(req.Steps, targetGameSlug, now)
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
+	normalizedFinalStateOptions := normalizeFinalStateOptions(req.FinalStateOptions)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -420,6 +492,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 		current.Steps = append([]ScenarioStep(nil), req.Steps...)
 		current.Transitions = cloneScenarioTransitions(normalizedTransitions)
 		current.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
+		current.FinalStateOptions = cloneFinalStateOptions(normalizedFinalStateOptions)
 		if current.GameSlug != previousGameSlug {
 			current.IsActive = false
 			current.ActivatedBy = ""
@@ -443,6 +516,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated.Steps = append([]ScenarioStep(nil), req.Steps...)
 			updated.Transitions = cloneScenarioTransitions(normalizedTransitions)
 			updated.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
+			updated.FinalStateOptions = cloneFinalStateOptions(normalizedFinalStateOptions)
 			if updated.GameSlug != gameSlug {
 				updated.IsActive = false
 				updated.ActivatedBy = ""
@@ -593,25 +667,63 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 	return active, false, nil
 }
 
-func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (string, bool, error) {
+const ScenarioPackageTransitionActionStopTracking = "stop_tracking"
+
+func normalizeScenarioPackageTransitionAction(action string) string {
+	return strings.ToLower(strings.TrimSpace(action))
+}
+
+type ScenarioPackageResolution struct {
+	PackageID      string
+	Changed        bool
+	StopTracking   bool
+	FinalStateJSON string
+	FinalLabel     string
+}
+
+func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (ScenarioPackageResolution, error) {
+	currentPackageID := strings.TrimSpace(p.ID)
 	if len(p.PackageTransitions) == 0 {
-		return p.ID, false, nil
+		return ScenarioPackageResolution{PackageID: currentPackageID}, nil
 	}
 	state := parseJSONMap(stateJSON)
 	transitions := cloneScenarioPackageTransitions(p.PackageTransitions)
+	optionsByID := make(map[string]ScenarioFinalStateOption, len(p.FinalStateOptions))
+	for _, item := range p.FinalStateOptions {
+		optionsByID[strings.TrimSpace(item.ID)] = item
+	}
 	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
 	for _, tr := range transitions {
-		matched, err := evaluateCondition(tr.Condition, state)
+		condition := strings.TrimSpace(tr.Condition)
+		optionID := strings.TrimSpace(tr.FinalStateOptionID)
+		if condition == "" && optionID != "" {
+			if option, ok := optionsByID[optionID]; ok {
+				condition = strings.TrimSpace(option.Condition)
+			}
+		}
+		matched, err := evaluateCondition(condition, state)
 		if err != nil || !matched {
 			continue
 		}
-		target := strings.TrimSpace(tr.ToPackageID)
-		if target == "" || target == p.ID {
-			return p.ID, false, nil
+		option := ScenarioFinalStateOption{}
+		if optionID != "" {
+			option = optionsByID[optionID]
 		}
-		return target, true, nil
+		if normalizeScenarioPackageTransitionAction(tr.Action) == ScenarioPackageTransitionActionStopTracking {
+			return ScenarioPackageResolution{
+				PackageID:      currentPackageID,
+				StopTracking:   true,
+				FinalStateJSON: strings.TrimSpace(option.FinalStateJSON),
+				FinalLabel:     strings.TrimSpace(option.FinalLabel),
+			}, nil
+		}
+		target := strings.TrimSpace(tr.ToPackageID)
+		if target == "" || target == currentPackageID {
+			return ScenarioPackageResolution{PackageID: currentPackageID}, nil
+		}
+		return ScenarioPackageResolution{PackageID: target, Changed: true}, nil
 	}
-	return p.ID, false, nil
+	return ScenarioPackageResolution{PackageID: currentPackageID}, nil
 }
 
 func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {

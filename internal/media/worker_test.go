@@ -739,3 +739,48 @@ func TestWorkerProcessStreamerStopsWhenInitialHasNoMatchingBranchAndLimitReached
 		t.Fatalf("expected ErrTrackingStop when initial branch did not match and max requests reached, got %v", err)
 	}
 }
+
+func TestWorkerProcessStreamerStopsFromPackageTransitionAndReturnsState(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{StreamerID: "streamer-1", Stage: "initial", Label: "running", UpdatedStateJSON: `{"outcome":"ct_win","streamer_side":"ct"}`},
+		},
+	}
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-1",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+				PackageTransitions: []prompts.ScenarioPackageTransition{
+					{Priority: 1, Action: prompts.ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
+				},
+				FinalStateOptions: []prompts.ScenarioFinalStateOption{
+					{ID: "ct_win", Name: "CT Win", Condition: `outcome == "ct_win" && streamer_side == "ct"`, FinalStateJSON: `{"result":"win"}`, FinalLabel: "final_ct_win"},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		decisions,
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if !errors.Is(err, ErrTrackingStop) {
+		t.Fatalf("expected ErrTrackingStop, got %v", err)
+	}
+	state := parseJSONMap(decision.UpdatedStateJSON)
+	if state["outcome"] != "ct_win" || state["streamer_side"] != "ct" || state["result"] != "win" {
+		t.Fatalf("expected merged terminal state, got %#v", state)
+	}
+	if decision.Label != "final_ct_win" {
+		t.Fatalf("expected final label in decision, got %s", decision.Label)
+	}
+}
