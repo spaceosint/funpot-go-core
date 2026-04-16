@@ -604,13 +604,13 @@ func TestScenarioPackageCreateAppliesStepDefaults(t *testing.T) {
 	}
 }
 
-func TestScenarioPackageCreateRejectsMultiplePackageTransitions(t *testing.T) {
+func TestScenarioPackageCreateAcceptsMultiplePackageTransitions(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
 	config := mustCreateModelConfig(t, svc)
-	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
-		Name:             "linear chain only",
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "graph transitions",
 		GameSlug:         "global",
 		ActorID:          "admin-1",
 		LLMModelConfigID: config.ID,
@@ -618,15 +618,15 @@ func TestScenarioPackageCreateRejectsMultiplePackageTransitions(t *testing.T) {
 			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 		},
 		PackageTransitions: []ScenarioPackageTransition{
-			{ToPackageID: "pkg-2", Priority: 1},
-			{ToPackageID: "pkg-3", Priority: 1},
+			{ToPackageID: "pkg-cs2", Condition: `game == "cs2"`, Priority: 2},
+			{ToPackageID: "pkg-dota2", Condition: `game == "dota2"`, Priority: 1},
 		},
 	})
-	if err == nil {
-		t.Fatalf("expected linear chain validation error")
+	if err != nil {
+		t.Fatalf("expected package graph transitions to be accepted, got %v", err)
 	}
-	if !errors.Is(err, ErrInvalidPackageChain) {
-		t.Fatalf("expected ErrInvalidPackageChain, got %v", err)
+	if len(item.PackageTransitions) != 2 {
+		t.Fatalf("expected 2 package transitions, got %#v", item.PackageTransitions)
 	}
 }
 
@@ -647,7 +647,7 @@ func TestScenarioPackageCreateAcceptsFinalStateOptionInPackageTransition(t *test
 			{ID: "ct_win", Name: "CT Win", Condition: `outcome == "ct_win" && streamer_side == "ct"`, FinalStateJSON: `{"result":"win"}`, FinalLabel: "ct_win"},
 		},
 		PackageTransitions: []ScenarioPackageTransition{
-			{Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
+			{Condition: `outcome == "ct_win"`, Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
 		},
 	})
 	if err != nil {
@@ -655,6 +655,31 @@ func TestScenarioPackageCreateAcceptsFinalStateOptionInPackageTransition(t *test
 	}
 	if len(item.FinalStateOptions) != 1 || item.FinalStateOptions[0].ID != "ct_win" {
 		t.Fatalf("expected final state option to be persisted, got %#v", item.FinalStateOptions)
+	}
+}
+
+func TestScenarioPackageCreateRejectsInvalidPackageTransitionCondition(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "invalid package transition condition",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		PackageTransitions: []ScenarioPackageTransition{
+			{ToPackageID: "pkg-cs2", Condition: `game ~~ "cs2"`, Priority: 1},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid condition error")
+	}
+	if !errors.Is(err, ErrInvalidScenarioCondition) {
+		t.Fatalf("expected ErrInvalidScenarioCondition, got %v", err)
 	}
 }
 

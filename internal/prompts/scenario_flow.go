@@ -21,7 +21,6 @@ var (
 	ErrInvalidScenarioCondition = errors.New("scenario step entry condition is invalid")
 	ErrInvalidScenarioModelRef  = errors.New("scenario package llmModelConfigId must not be empty")
 	ErrInvalidScenarioName      = errors.New("scenario package name must not be empty")
-	ErrInvalidPackageChain      = errors.New("scenario package must have at most one package transition")
 )
 
 type ScenarioStep struct {
@@ -48,6 +47,7 @@ type ScenarioTransition struct {
 
 type ScenarioPackageTransition struct {
 	ToPackageID        string `json:"toPackageId"`
+	Condition          string `json:"condition,omitempty"`
 	Priority           int    `json:"priority"`
 	Action             string `json:"action,omitempty"`
 	FinalStateOptionID string `json:"finalStateOptionId,omitempty"`
@@ -178,9 +178,6 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 			return fmt.Errorf("%w: transition %s -> %s: %v", ErrInvalidScenarioCondition, from, to, err)
 		}
 	}
-	if len(req.PackageTransitions) > 1 {
-		return ErrInvalidPackageChain
-	}
 	optionByID := make(map[string]ScenarioFinalStateOption, len(req.FinalStateOptions))
 	for _, option := range req.FinalStateOptions {
 		id := strings.TrimSpace(option.ID)
@@ -207,6 +204,12 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 		action := normalizeScenarioPackageTransitionAction(transition.Action)
 		if strings.TrimSpace(transition.ToPackageID) == "" && action != ScenarioPackageTransitionActionStopTracking {
 			return fmt.Errorf("%w: package transition toPackageId is required", ErrInvalidScenarioStepID)
+		}
+		if strings.TrimSpace(transition.Condition) == "" {
+			return fmt.Errorf("%w: package transition condition is required", ErrInvalidScenarioCondition)
+		}
+		if err := validateScenarioCondition(transition.Condition); err != nil {
+			return fmt.Errorf("%w: package transition condition: %v", ErrInvalidScenarioCondition, err)
 		}
 		optionID := strings.TrimSpace(transition.FinalStateOptionID)
 		if optionID != "" {
@@ -321,6 +324,7 @@ func normalizeScenarioPackageTransitions(transitions []ScenarioPackageTransition
 	for _, tr := range transitions {
 		next := ScenarioPackageTransition{
 			ToPackageID:        strings.TrimSpace(tr.ToPackageID),
+			Condition:          strings.TrimSpace(tr.Condition),
 			Priority:           tr.Priority,
 			Action:             normalizeScenarioPackageTransitionAction(tr.Action),
 			FinalStateOptionID: strings.TrimSpace(tr.FinalStateOptionID),
@@ -876,13 +880,8 @@ func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (ScenarioPackageRe
 	}
 	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
 	for _, tr := range transitions {
-		condition := strings.TrimSpace(p.FinalCondition)
+		condition := strings.TrimSpace(tr.Condition)
 		optionID := strings.TrimSpace(tr.FinalStateOptionID)
-		if condition == "" && optionID != "" {
-			if option, ok := optionsByID[optionID]; ok {
-				condition = strings.TrimSpace(option.Condition)
-			}
-		}
 		matched, err := evaluateCondition(condition, state)
 		if err != nil || !matched {
 			continue
@@ -906,6 +905,15 @@ func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (ScenarioPackageRe
 		return ScenarioPackageResolution{PackageID: target, Changed: true}, nil
 	}
 	return ScenarioPackageResolution{PackageID: currentPackageID}, nil
+}
+
+func (p ScenarioPackage) CanEnter(stateJSON string) (bool, error) {
+	initial, err := p.InitialStep()
+	if err != nil {
+		return false, err
+	}
+	state := parseJSONMap(stateJSON)
+	return evaluateCondition(initial.EntryCondition, state)
 }
 
 func (p ScenarioPackage) InitialStep() (ScenarioStep, error) {

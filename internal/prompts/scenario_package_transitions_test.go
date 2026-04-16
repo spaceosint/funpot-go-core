@@ -8,7 +8,7 @@ func TestScenarioPackageResolveNextPackage(t *testing.T) {
 	pkg := ScenarioPackage{
 		ID: "pkg-root",
 		PackageTransitions: []ScenarioPackageTransition{
-			{ToPackageID: "pkg-cs2", Priority: 10},
+			{ToPackageID: "pkg-cs2", Condition: `game == "cs2"`, Priority: 10},
 		},
 	}
 
@@ -30,8 +30,8 @@ func TestScenarioPackageResolveNextPackage(t *testing.T) {
 	if resolution.StopTracking {
 		t.Fatalf("ResolveNextPackage() fallback stop=%v, want false", resolution.StopTracking)
 	}
-	if !resolution.Changed || resolution.PackageID != "pkg-cs2" {
-		t.Fatalf("ResolveNextPackage() fallback = (%q,%v), want (pkg-cs2,true)", resolution.PackageID, resolution.Changed)
+	if resolution.Changed || resolution.PackageID != "pkg-root" {
+		t.Fatalf("ResolveNextPackage() fallback = (%q,%v), want (pkg-root,false)", resolution.PackageID, resolution.Changed)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestScenarioPackageResolveNextPackageStopTracking(t *testing.T) {
 			{ID: "ct_win", Name: "CT win", Condition: `outcome == "ct_win"`, FinalStateJSON: `{"result":"win"}`, FinalLabel: "ct_win"},
 		},
 		PackageTransitions: []ScenarioPackageTransition{
-			{Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
+			{Condition: `outcome == "ct_win"`, Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
 		},
 		FinalCondition: `outcome == "ct_win"`,
 	}
@@ -75,5 +75,31 @@ func TestScenarioPackageResolveNextPackageStopTracking(t *testing.T) {
 	}
 	if resolution.StopTracking {
 		t.Fatalf("ResolveNextPackage() final condition mismatch stop=%v, want false", resolution.StopTracking)
+	}
+}
+
+func TestScenarioPackageCanEnterByInitialStepCondition(t *testing.T) {
+	t.Parallel()
+
+	pkg := ScenarioPackage{
+		ID: "pkg-cs2",
+		Steps: []ScenarioStep{
+			{ID: "initial", Initial: true, EntryCondition: `game == "cs2"`},
+		},
+	}
+	ok, err := pkg.CanEnter(`{"game":"cs2"}`)
+	if err != nil {
+		t.Fatalf("CanEnter() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("CanEnter() = false, want true")
+	}
+
+	ok, err = pkg.CanEnter(`{"game":"dota2"}`)
+	if err != nil {
+		t.Fatalf("CanEnter() mismatch error = %v", err)
+	}
+	if ok {
+		t.Fatalf("CanEnter() = true, want false")
 	}
 }
