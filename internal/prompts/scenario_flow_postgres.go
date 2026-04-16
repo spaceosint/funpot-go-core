@@ -241,6 +241,7 @@ type scenarioPackageScanner interface {
 type transitionsPayload struct {
 	StepTransitions    []ScenarioTransition        `json:"stepTransitions"`
 	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
+	FinalStateOptions  []ScenarioFinalStateOption  `json:"finalStateOptions"`
 }
 
 func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error) {
@@ -275,12 +276,14 @@ func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error
 		if err := json.Unmarshal(transitionsRaw, &payload); err == nil && (payload.StepTransitions != nil || payload.PackageTransitions != nil) {
 			item.Transitions = payload.StepTransitions
 			item.PackageTransitions = payload.PackageTransitions
+			item.FinalStateOptions = payload.FinalStateOptions
 		} else if err := json.Unmarshal(transitionsRaw, &item.Transitions); err != nil {
 			return ScenarioPackage{}, fmt.Errorf("unmarshal transitions_json: %w", err)
 		}
 	}
 	item.Transitions = cloneScenarioTransitions(item.Transitions)
 	item.PackageTransitions = cloneScenarioPackageTransitions(item.PackageTransitions)
+	item.FinalStateOptions = cloneFinalStateOptions(item.FinalStateOptions)
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
 	}
@@ -295,6 +298,7 @@ func encodeScenarioPackagePayload(item ScenarioPackage) ([]byte, []byte, error) 
 	transitionsJSON, err := json.Marshal(transitionsPayload{
 		StepTransitions:    item.Transitions,
 		PackageTransitions: item.PackageTransitions,
+		FinalStateOptions:  item.FinalStateOptions,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal transitions: %w", err)

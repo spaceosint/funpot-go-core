@@ -1390,16 +1390,43 @@ components:
           minimum: 1
     ScenarioPackageTransition:
       type: object
-      required: [toPackageId, condition, priority]
+      required: [condition, priority]
       additionalProperties: false
       properties:
         toPackageId:
           type: string
+          description: Required for package-to-package chain transition; optional when action is `stop_tracking`.
         condition:
           type: string
+          description: Condition evaluated against current state. Empty condition means unconditional transition.
         priority:
           type: integer
           minimum: 1
+        action:
+          type: string
+          enum: [stop_tracking]
+          description: Optional terminal action that stops streamer tracking and returns the current state.
+        finalStateOptionId:
+          type: string
+          description: Optional ID of preconfigured final state option to evaluate/apply for this connector.
+    ScenarioFinalStateOption:
+      type: object
+      required: [id, name, condition]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        condition:
+          type: string
+          description: State condition used to match this option.
+        finalStateJson:
+          type: string
+          description: Optional JSON object patch merged into current state when option is selected.
+        finalLabel:
+          type: string
+          description: Optional label returned when stop action finalizes on this option.
     ScenarioPackageCreateRequest:
       type: object
       required: [gameSlug, name, llmModelConfigId, steps]
@@ -1423,9 +1450,15 @@ components:
             $ref: '#/components/schemas/ScenarioTransition'
         packageTransitions:
           type: array
-          description: Optional package-level graph edges evaluated from shared state; when condition matches runtime switches to target package.
+          maxItems: 1
+          description: Optional package-level connector for strict linear chain (A -> B -> N) or terminal action. Runtime evaluates it from shared state on each cycle.
           items:
             $ref: '#/components/schemas/ScenarioPackageTransition'
+        finalStateOptions:
+          type: array
+          description: Optional predefined mini-game final states that admin can choose in package transitions.
+          items:
+            $ref: '#/components/schemas/ScenarioFinalStateOption'
     ScenarioPackageVersion:
       allOf:
         - $ref: '#/components/schemas/ScenarioPackageCreateRequest'
@@ -1448,9 +1481,15 @@ components:
                 $ref: '#/components/schemas/ScenarioTransition'
             packageTransitions:
               type: array
-              description: Effective package-level transitions used by runtime to switch between scenario packages.
+              maxItems: 1
+              description: Effective package-level connector used by runtime to switch to the next package in the chain or stop tracking.
               items:
                 $ref: '#/components/schemas/ScenarioPackageTransition'
+            finalStateOptions:
+              type: array
+              description: Effective final state options available for package transitions.
+              items:
+                $ref: '#/components/schemas/ScenarioFinalStateOption'
             createdBy:
               type: string
             activatedBy:

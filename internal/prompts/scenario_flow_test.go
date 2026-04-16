@@ -603,3 +603,57 @@ func TestScenarioPackageCreateAppliesStepDefaults(t *testing.T) {
 		t.Fatalf("expected maxRequests default 0 (unlimited), got %#v", item.Steps)
 	}
 }
+
+func TestScenarioPackageCreateRejectsMultiplePackageTransitions(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "linear chain only",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		PackageTransitions: []ScenarioPackageTransition{
+			{ToPackageID: "pkg-2", Priority: 1},
+			{ToPackageID: "pkg-3", Priority: 1},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected linear chain validation error")
+	}
+	if !errors.Is(err, ErrInvalidPackageChain) {
+		t.Fatalf("expected ErrInvalidPackageChain, got %v", err)
+	}
+}
+
+func TestScenarioPackageCreateAcceptsFinalStateOptionInPackageTransition(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "final state options",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		FinalStateOptions: []ScenarioFinalStateOption{
+			{ID: "ct_win", Name: "CT Win", Condition: `outcome == "ct_win" && streamer_side == "ct"`, FinalStateJSON: `{"result":"win"}`, FinalLabel: "ct_win"},
+		},
+		PackageTransitions: []ScenarioPackageTransition{
+			{Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if len(item.FinalStateOptions) != 1 || item.FinalStateOptions[0].ID != "ct_win" {
+		t.Fatalf("expected final state option to be persisted, got %#v", item.FinalStateOptions)
+	}
+}

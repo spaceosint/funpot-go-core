@@ -87,9 +87,21 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 	packageTransitions := make([]prompts.ScenarioPackageTransition, 0, len(req.PackageTransitions))
 	for _, transition := range req.PackageTransitions {
 		packageTransitions = append(packageTransitions, prompts.ScenarioPackageTransition{
-			ToPackageID: transition.ToPackageID,
-			Condition:   transition.Condition,
-			Priority:    transition.Priority,
+			ToPackageID:        transition.ToPackageID,
+			Condition:          transition.Condition,
+			Priority:           transition.Priority,
+			Action:             transition.Action,
+			FinalStateOptionID: transition.FinalStateOptionID,
+		})
+	}
+	finalStateOptions := make([]prompts.ScenarioFinalStateOption, 0, len(req.FinalStateOptions))
+	for _, option := range req.FinalStateOptions {
+		finalStateOptions = append(finalStateOptions, prompts.ScenarioFinalStateOption{
+			ID:             option.ID,
+			Name:           option.Name,
+			Condition:      option.Condition,
+			FinalStateJSON: option.FinalStateJSON,
+			FinalLabel:     option.FinalLabel,
 		})
 	}
 	return prompts.ScenarioPackageCreateRequest{
@@ -99,6 +111,7 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 		Steps:              steps,
 		Transitions:        transitions,
 		PackageTransitions: packageTransitions,
+		FinalStateOptions:  finalStateOptions,
 		ActorID:            actorID,
 	}
 }
@@ -142,9 +155,19 @@ type scenarioTransitionRequest struct {
 }
 
 type scenarioPackageTransitionRequest struct {
-	ToPackageID string `json:"toPackageId"`
-	Condition   string `json:"condition"`
-	Priority    int    `json:"priority"`
+	ToPackageID        string `json:"toPackageId"`
+	Condition          string `json:"condition"`
+	Priority           int    `json:"priority"`
+	Action             string `json:"action"`
+	FinalStateOptionID string `json:"finalStateOptionId"`
+}
+
+type scenarioFinalStateOptionRequest struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Condition      string `json:"condition"`
+	FinalStateJSON string `json:"finalStateJson"`
+	FinalLabel     string `json:"finalLabel"`
 }
 
 type scenarioPackageCreateRequest struct {
@@ -154,6 +177,7 @@ type scenarioPackageCreateRequest struct {
 	Steps              []scenarioStepRequest              `json:"steps"`
 	Transitions        []scenarioTransitionRequest        `json:"transitions"`
 	PackageTransitions []scenarioPackageTransitionRequest `json:"packageTransitions"`
+	FinalStateOptions  []scenarioFinalStateOptionRequest  `json:"finalStateOptions"`
 }
 
 type llmModelConfigUpsertRequest struct {
