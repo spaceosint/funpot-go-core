@@ -48,7 +48,6 @@ type ScenarioTransition struct {
 
 type ScenarioPackageTransition struct {
 	ToPackageID        string `json:"toPackageId"`
-	Condition          string `json:"condition"`
 	Priority           int    `json:"priority"`
 	Action             string `json:"action,omitempty"`
 	FinalStateOptionID string `json:"finalStateOptionId,omitempty"`
@@ -73,6 +72,8 @@ type ScenarioPackage struct {
 	Transitions        []ScenarioTransition        `json:"transitions"`
 	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
 	FinalStateOptions  []ScenarioFinalStateOption  `json:"finalStateOptions"`
+	FinalCondition     string                      `json:"finalCondition,omitempty"`
+	PotentialState     []ScenarioStateField        `json:"potentialState,omitempty"`
 	CreatedBy          string                      `json:"createdBy"`
 	ActivatedBy        string                      `json:"activatedBy,omitempty"`
 	CreatedAt          time.Time                   `json:"createdAt"`
@@ -123,7 +124,14 @@ type ScenarioPackageCreateRequest struct {
 	Transitions        []ScenarioTransition
 	PackageTransitions []ScenarioPackageTransition
 	FinalStateOptions  []ScenarioFinalStateOption
+	FinalCondition     string
 	ActorID            string
+}
+
+type ScenarioStateField struct {
+	Path           string   `json:"path"`
+	Type           string   `json:"type,omitempty"`
+	PossibleValues []string `json:"possibleValues,omitempty"`
 }
 
 func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) error {
@@ -206,12 +214,12 @@ func ValidateScenarioPackageCreateRequest(req ScenarioPackageCreateRequest) erro
 				return fmt.Errorf("%w: unknown package transition finalStateOptionId %s", ErrInvalidScenarioStepID, optionID)
 			}
 		}
-		if err := validateScenarioCondition(transition.Condition); err != nil {
-			return fmt.Errorf("%w: package transition -> %s: %v", ErrInvalidScenarioCondition, transition.ToPackageID, err)
-		}
 		if action != "" && action != ScenarioPackageTransitionActionStopTracking {
 			return fmt.Errorf("%w: package transition action %q is not supported", ErrInvalidScenarioPackage, transition.Action)
 		}
+	}
+	if err := validateScenarioCondition(req.FinalCondition); err != nil {
+		return fmt.Errorf("%w: final condition: %v", ErrInvalidScenarioCondition, err)
 	}
 	return nil
 }
@@ -313,7 +321,6 @@ func normalizeScenarioPackageTransitions(transitions []ScenarioPackageTransition
 	for _, tr := range transitions {
 		next := ScenarioPackageTransition{
 			ToPackageID:        strings.TrimSpace(tr.ToPackageID),
-			Condition:          strings.TrimSpace(tr.Condition),
 			Priority:           tr.Priority,
 			Action:             normalizeScenarioPackageTransitionAction(tr.Action),
 			FinalStateOptionID: strings.TrimSpace(tr.FinalStateOptionID),
@@ -348,10 +355,156 @@ func cloneFinalStateOptions(options []ScenarioFinalStateOption) []ScenarioFinalS
 	return append([]ScenarioFinalStateOption{}, options...)
 }
 
+func buildPotentialStateFields(steps []ScenarioStep) []ScenarioStateField {
+	if len(steps) == 0 {
+		return nil
+	}
+	fieldsByPath := make(map[string]ScenarioStateField)
+	for _, step := range steps {
+		schemaRaw := strings.TrimSpace(step.ResponseSchemaJSON)
+		if schemaRaw == "" {
+			continue
+		}
+		var schemaDoc any
+		if err := json.Unmarshal([]byte(schemaRaw), &schemaDoc); err != nil {
+			continue
+		}
+		walkScenarioStateSchema(schemaDoc, "", fieldsByPath)
+	}
+	fields := make([]ScenarioStateField, 0, len(fieldsByPath))
+	for _, item := range fieldsByPath {
+		if len(item.PossibleValues) > 1 {
+			sort.Strings(item.PossibleValues)
+		}
+		fields = append(fields, item)
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Path < fields[j].Path })
+	return fields
+}
+
+func walkScenarioStateSchema(node any, path string, fields map[string]ScenarioStateField) {
+	object, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	if propertiesRaw, ok := object["properties"]; ok {
+		if properties, ok := propertiesRaw.(map[string]any); ok {
+			for key, child := range properties {
+				childPath := key
+				if path != "" {
+					childPath = path + "." + key
+				}
+				walkScenarioStateSchema(child, childPath, fields)
+			}
+		}
+	}
+
+	possibleValues := schemaNodePossibleValues(object)
+	fieldType := strings.TrimSpace(toString(object["type"]))
+	if path != "" && (fieldType != "" || len(possibleValues) > 0 || len(object) == 0) {
+		current, exists := fields[path]
+		if !exists {
+			current = ScenarioStateField{Path: path}
+		}
+		if current.Type == "" && fieldType != "" {
+			current.Type = fieldType
+		}
+		current.PossibleValues = mergeUniqueStrings(current.PossibleValues, possibleValues)
+		fields[path] = current
+	}
+
+	for _, key := range []string{"oneOf", "anyOf", "allOf"} {
+		raw, ok := object[key]
+		if !ok {
+			continue
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			continue
+		}
+		for _, child := range items {
+			walkScenarioStateSchema(child, path, fields)
+		}
+	}
+}
+
+func schemaNodePossibleValues(node map[string]any) []string {
+	out := make([]string, 0)
+	if enumRaw, ok := node["enum"]; ok {
+		if enumItems, ok := enumRaw.([]any); ok {
+			for _, item := range enumItems {
+				out = append(out, strings.TrimSpace(toString(item)))
+			}
+		}
+	}
+	if constRaw, ok := node["const"]; ok {
+		out = append(out, strings.TrimSpace(toString(constRaw)))
+	}
+	if typeRaw, ok := node["type"]; ok {
+		switch strings.TrimSpace(toString(typeRaw)) {
+		case "boolean":
+			out = append(out, "true", "false")
+		}
+	}
+	return uniqueNonEmpty(out)
+}
+
+func mergeUniqueStrings(base []string, extra []string) []string {
+	combined := append([]string{}, base...)
+	combined = append(combined, extra...)
+	return uniqueNonEmpty(combined)
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func toString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	case bool:
+		if typed {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	default:
+		return fmt.Sprintf("%v", typed)
+	}
+}
+
+func hydrateScenarioPackageDerivedFields(item ScenarioPackage) ScenarioPackage {
+	item.PotentialState = buildPotentialStateFields(item.Steps)
+	item.FinalCondition = strings.TrimSpace(item.FinalCondition)
+	return item
+}
+
 func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 	if s.scenarioStore != nil {
 		items, err := s.scenarioStore.List(ctx)
 		if err == nil {
+			for i := range items {
+				items[i] = hydrateScenarioPackageDerivedFields(items[i])
+			}
 			return items
 		}
 	}
@@ -368,6 +521,9 @@ func (s *Service) ListScenarioPackages(ctx context.Context) []ScenarioPackage {
 		}
 		return items[i].GameSlug < items[j].GameSlug
 	})
+	for i := range items {
+		items[i] = hydrateScenarioPackageDerivedFields(items[i])
+	}
 	return items
 }
 
@@ -384,6 +540,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
 	normalizedFinalStateOptions := normalizeFinalStateOptions(req.FinalStateOptions)
+	normalizedFinalCondition := strings.TrimSpace(req.FinalCondition)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -399,10 +556,15 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 			Transitions:        cloneScenarioTransitions(normalizedTransitions),
 			PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
 			FinalStateOptions:  cloneFinalStateOptions(normalizedFinalStateOptions),
+			FinalCondition:     normalizedFinalCondition,
 			CreatedBy:          strings.TrimSpace(req.ActorID),
 			CreatedAt:          now,
 		}
-		return s.scenarioStore.Create(ctx, item)
+		created, err := s.scenarioStore.Create(ctx, item)
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		return hydrateScenarioPackageDerivedFields(created), nil
 	}
 	_ = ctx
 
@@ -423,6 +585,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		Transitions:        cloneScenarioTransitions(normalizedTransitions),
 		PackageTransitions: cloneScenarioPackageTransitions(normalizedPackageTransitions),
 		FinalStateOptions:  cloneFinalStateOptions(normalizedFinalStateOptions),
+		FinalCondition:     normalizedFinalCondition,
 		CreatedBy:          strings.TrimSpace(req.ActorID),
 		CreatedAt:          now,
 	}
@@ -432,7 +595,7 @@ func (s *Service) CreateScenarioPackage(ctx context.Context, req ScenarioPackage
 		item.ActivatedAt = now
 	}
 	s.scenarioPackages[gameSlug] = append(s.scenarioPackages[gameSlug], item)
-	return item, nil
+	return hydrateScenarioPackageDerivedFields(item), nil
 }
 
 func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPackage, error) {
@@ -441,7 +604,11 @@ func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPa
 		if lookup == "" {
 			return ScenarioPackage{}, ErrScenarioPackageNotFound
 		}
-		return s.scenarioStore.GetByID(ctx, lookup)
+		item, err := s.scenarioStore.GetByID(ctx, lookup)
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		return hydrateScenarioPackageDerivedFields(item), nil
 	}
 	_ = ctx
 	s.mu.RLock()
@@ -450,7 +617,7 @@ func (s *Service) GetScenarioPackage(ctx context.Context, id string) (ScenarioPa
 	for _, versions := range s.scenarioPackages {
 		for _, item := range versions {
 			if item.ID == lookup {
-				return item, nil
+				return hydrateScenarioPackageDerivedFields(item), nil
 			}
 		}
 	}
@@ -470,6 +637,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 	normalizedTransitions := normalizeScenarioTransitions(normalizedSteps, req.Transitions)
 	normalizedPackageTransitions := normalizeScenarioPackageTransitions(req.PackageTransitions)
 	normalizedFinalStateOptions := normalizeFinalStateOptions(req.FinalStateOptions)
+	normalizedFinalCondition := strings.TrimSpace(req.FinalCondition)
 	req.Steps = normalizedSteps
 	if strings.TrimSpace(req.LLMModelConfigID) != "" {
 		if _, err := s.GetLLMModelConfig(ctx, req.LLMModelConfigID); err != nil {
@@ -493,12 +661,17 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 		current.Transitions = cloneScenarioTransitions(normalizedTransitions)
 		current.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
 		current.FinalStateOptions = cloneFinalStateOptions(normalizedFinalStateOptions)
+		current.FinalCondition = normalizedFinalCondition
 		if current.GameSlug != previousGameSlug {
 			current.IsActive = false
 			current.ActivatedBy = ""
 			current.ActivatedAt = time.Time{}
 		}
-		return s.scenarioStore.Update(ctx, current)
+		updated, err := s.scenarioStore.Update(ctx, current)
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		return hydrateScenarioPackageDerivedFields(updated), nil
 	}
 	_ = ctx
 	s.mu.Lock()
@@ -517,6 +690,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 			updated.Transitions = cloneScenarioTransitions(normalizedTransitions)
 			updated.PackageTransitions = cloneScenarioPackageTransitions(normalizedPackageTransitions)
 			updated.FinalStateOptions = cloneFinalStateOptions(normalizedFinalStateOptions)
+			updated.FinalCondition = normalizedFinalCondition
 			if updated.GameSlug != gameSlug {
 				updated.IsActive = false
 				updated.ActivatedBy = ""
@@ -529,7 +703,7 @@ func (s *Service) UpdateScenarioPackage(ctx context.Context, id string, req Scen
 				versions[i] = updated
 				s.scenarioPackages[gameSlug] = versions
 			}
-			return updated, nil
+			return hydrateScenarioPackageDerivedFields(updated), nil
 		}
 	}
 	return ScenarioPackage{}, ErrScenarioPackageNotFound
@@ -568,7 +742,11 @@ func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID strin
 		if lookup == "" {
 			return ScenarioPackage{}, ErrScenarioPackageNotFound
 		}
-		return s.scenarioStore.SetActive(ctx, lookup, strings.TrimSpace(actorID), time.Now().UTC())
+		item, err := s.scenarioStore.SetActive(ctx, lookup, strings.TrimSpace(actorID), time.Now().UTC())
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		return hydrateScenarioPackageDerivedFields(item), nil
 	}
 	_ = ctx
 	s.mu.Lock()
@@ -594,7 +772,7 @@ func (s *Service) ActivateScenarioPackage(ctx context.Context, id, actorID strin
 			}
 		}
 		s.scenarioPackages[gameSlug] = versions
-		return versions[active], nil
+		return hydrateScenarioPackageDerivedFields(versions[active]), nil
 	}
 	return ScenarioPackage{}, ErrScenarioPackageNotFound
 }
@@ -605,7 +783,11 @@ func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string)
 		if key == "" {
 			key = "global"
 		}
-		return s.scenarioStore.GetActiveByGameSlug(ctx, key)
+		item, err := s.scenarioStore.GetActiveByGameSlug(ctx, key)
+		if err != nil {
+			return ScenarioPackage{}, err
+		}
+		return hydrateScenarioPackageDerivedFields(item), nil
 	}
 	_ = ctx
 	s.mu.RLock()
@@ -619,7 +801,7 @@ func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string)
 	}
 	for _, item := range s.scenarioPackages[key] {
 		if item.IsActive {
-			return item, nil
+			return hydrateScenarioPackageDerivedFields(item), nil
 		}
 	}
 	return ScenarioPackage{}, ErrScenarioPackageNotFound
@@ -694,7 +876,7 @@ func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (ScenarioPackageRe
 	}
 	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
 	for _, tr := range transitions {
-		condition := strings.TrimSpace(tr.Condition)
+		condition := strings.TrimSpace(p.FinalCondition)
 		optionID := strings.TrimSpace(tr.FinalStateOptionID)
 		if condition == "" && optionID != "" {
 			if option, ok := optionsByID[optionID]; ok {

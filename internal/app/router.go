@@ -88,7 +88,6 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 	for _, transition := range req.PackageTransitions {
 		packageTransitions = append(packageTransitions, prompts.ScenarioPackageTransition{
 			ToPackageID:        transition.ToPackageID,
-			Condition:          transition.Condition,
 			Priority:           transition.Priority,
 			Action:             transition.Action,
 			FinalStateOptionID: transition.FinalStateOptionID,
@@ -112,6 +111,7 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 		Transitions:        transitions,
 		PackageTransitions: packageTransitions,
 		FinalStateOptions:  finalStateOptions,
+		FinalCondition:     req.FinalCondition,
 		ActorID:            actorID,
 	}
 }
@@ -156,7 +156,6 @@ type scenarioTransitionRequest struct {
 
 type scenarioPackageTransitionRequest struct {
 	ToPackageID        string `json:"toPackageId"`
-	Condition          string `json:"condition"`
 	Priority           int    `json:"priority"`
 	Action             string `json:"action"`
 	FinalStateOptionID string `json:"finalStateOptionId"`
@@ -178,6 +177,7 @@ type scenarioPackageCreateRequest struct {
 	Transitions        []scenarioTransitionRequest        `json:"transitions"`
 	PackageTransitions []scenarioPackageTransitionRequest `json:"packageTransitions"`
 	FinalStateOptions  []scenarioFinalStateOptionRequest  `json:"finalStateOptions"`
+	FinalCondition     string                             `json:"finalCondition"`
 }
 
 type llmModelConfigUpsertRequest struct {

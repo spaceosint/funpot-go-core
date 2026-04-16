@@ -1390,15 +1390,12 @@ components:
           minimum: 1
     ScenarioPackageTransition:
       type: object
-      required: [condition, priority]
+      required: [priority]
       additionalProperties: false
       properties:
         toPackageId:
           type: string
-          description: Required for package-to-package chain transition; optional when action is `stop_tracking`.
-        condition:
-          type: string
-          description: Condition evaluated against current state. Empty condition means unconditional transition.
+          description: Required for package-to-package linear chain transition; optional when action is `stop_tracking`.
         priority:
           type: integer
           minimum: 1
@@ -1459,6 +1456,22 @@ components:
           description: Optional predefined mini-game final states that admin can choose in package transitions.
           items:
             $ref: '#/components/schemas/ScenarioFinalStateOption'
+        finalCondition:
+          type: string
+          description: Optional logical expression evaluated against the aggregated state before stop-tracking finalization.
+    ScenarioStateField:
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        type:
+          type: string
+        possibleValues:
+          type: array
+          items:
+            type: string
     ScenarioPackageVersion:
       allOf:
         - $ref: '#/components/schemas/ScenarioPackageCreateRequest'
@@ -1490,6 +1503,14 @@ components:
               description: Effective final state options available for package transitions.
               items:
                 $ref: '#/components/schemas/ScenarioFinalStateOption'
+            finalCondition:
+              type: string
+              description: Effective mini-game final logical condition configured by admin.
+            potentialState:
+              type: array
+              description: Derived state keys and value variants aggregated from all step response schemas in the package.
+              items:
+                $ref: '#/components/schemas/ScenarioStateField'
             createdBy:
               type: string
             activatedBy:

@@ -8,7 +8,7 @@ func TestScenarioPackageResolveNextPackage(t *testing.T) {
 	pkg := ScenarioPackage{
 		ID: "pkg-root",
 		PackageTransitions: []ScenarioPackageTransition{
-			{ToPackageID: "pkg-cs2", Condition: `game == "cs2"`, Priority: 10},
+			{ToPackageID: "pkg-cs2", Priority: 10},
 		},
 	}
 
@@ -25,13 +25,13 @@ func TestScenarioPackageResolveNextPackage(t *testing.T) {
 
 	resolution, err = pkg.ResolveNextPackage(`{"game":"valorant"}`)
 	if err != nil {
-		t.Fatalf("ResolveNextPackage() no-match error = %v", err)
+		t.Fatalf("ResolveNextPackage() fallback error = %v", err)
 	}
 	if resolution.StopTracking {
-		t.Fatalf("ResolveNextPackage() no-match stop=%v, want false", resolution.StopTracking)
+		t.Fatalf("ResolveNextPackage() fallback stop=%v, want false", resolution.StopTracking)
 	}
-	if resolution.Changed || resolution.PackageID != "pkg-root" {
-		t.Fatalf("ResolveNextPackage() no-match = (%q,%v), want (pkg-root,false)", resolution.PackageID, resolution.Changed)
+	if !resolution.Changed || resolution.PackageID != "pkg-cs2" {
+		t.Fatalf("ResolveNextPackage() fallback = (%q,%v), want (pkg-cs2,true)", resolution.PackageID, resolution.Changed)
 	}
 }
 
@@ -46,6 +46,7 @@ func TestScenarioPackageResolveNextPackageStopTracking(t *testing.T) {
 		PackageTransitions: []ScenarioPackageTransition{
 			{Priority: 1, Action: ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
 		},
+		FinalCondition: `outcome == "ct_win"`,
 	}
 
 	resolution, err := pkg.ResolveNextPackage(`{"outcome":"ct_win"}`)
@@ -66,5 +67,13 @@ func TestScenarioPackageResolveNextPackageStopTracking(t *testing.T) {
 	}
 	if resolution.FinalLabel != "ct_win" {
 		t.Fatalf("ResolveNextPackage() final label=%q, want ct_win", resolution.FinalLabel)
+	}
+
+	resolution, err = pkg.ResolveNextPackage(`{"outcome":"t_win"}`)
+	if err != nil {
+		t.Fatalf("ResolveNextPackage() final condition mismatch error = %v", err)
+	}
+	if resolution.StopTracking {
+		t.Fatalf("ResolveNextPackage() final condition mismatch stop=%v, want false", resolution.StopTracking)
 	}
 }
