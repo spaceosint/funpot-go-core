@@ -242,6 +242,7 @@ type transitionsPayload struct {
 	StepTransitions    []ScenarioTransition        `json:"stepTransitions"`
 	PackageTransitions []ScenarioPackageTransition `json:"packageTransitions"`
 	FinalStateOptions  []ScenarioFinalStateOption  `json:"finalStateOptions"`
+	FinalCondition     string                      `json:"finalCondition,omitempty"`
 }
 
 func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error) {
@@ -277,6 +278,7 @@ func scanScenarioPackage(scanner scenarioPackageScanner) (ScenarioPackage, error
 			item.Transitions = payload.StepTransitions
 			item.PackageTransitions = payload.PackageTransitions
 			item.FinalStateOptions = payload.FinalStateOptions
+			item.FinalCondition = strings.TrimSpace(payload.FinalCondition)
 		} else if err := json.Unmarshal(transitionsRaw, &item.Transitions); err != nil {
 			return ScenarioPackage{}, fmt.Errorf("unmarshal transitions_json: %w", err)
 		}
@@ -299,6 +301,7 @@ func encodeScenarioPackagePayload(item ScenarioPackage) ([]byte, []byte, error) 
 		StepTransitions:    item.Transitions,
 		PackageTransitions: item.PackageTransitions,
 		FinalStateOptions:  item.FinalStateOptions,
+		FinalCondition:     strings.TrimSpace(item.FinalCondition),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal transitions: %w", err)

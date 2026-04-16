@@ -657,3 +657,82 @@ func TestScenarioPackageCreateAcceptsFinalStateOptionInPackageTransition(t *test
 		t.Fatalf("expected final state option to be persisted, got %#v", item.FinalStateOptions)
 	}
 }
+
+func TestScenarioPackageCreateBuildsPotentialStateFromResponseSchemas(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	item, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "potential state",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{
+				ID:             "initial",
+				Name:           "Initial",
+				PromptTemplate: "detect",
+				ResponseSchemaJSON: `{
+					"type":"object",
+					"properties":{
+						"team_win":{"type":"string","enum":["ct","t"]},
+						"streamer_side":{"type":"string","enum":["ct","t"]},
+						"is_pistol_round":{"type":"boolean"}
+					}
+				}`,
+				Initial: true,
+				Order:   1,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+	if len(item.PotentialState) < 3 {
+		t.Fatalf("expected potential state fields, got %#v", item.PotentialState)
+	}
+	find := func(path string) ScenarioStateField {
+		for _, field := range item.PotentialState {
+			if field.Path == path {
+				return field
+			}
+		}
+		return ScenarioStateField{}
+	}
+	teamWin := find("team_win")
+	if teamWin.Type != "string" || len(teamWin.PossibleValues) != 2 {
+		t.Fatalf("expected team_win enum field, got %#v", teamWin)
+	}
+	streamerSide := find("streamer_side")
+	if streamerSide.Type != "string" || len(streamerSide.PossibleValues) != 2 {
+		t.Fatalf("expected streamer_side enum field, got %#v", streamerSide)
+	}
+	pistolRound := find("is_pistol_round")
+	if pistolRound.Type != "boolean" || len(pistolRound.PossibleValues) != 2 {
+		t.Fatalf("expected boolean field with true/false variants, got %#v", pistolRound)
+	}
+}
+
+func TestScenarioPackageCreateRejectsInvalidFinalCondition(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	config := mustCreateModelConfig(t, svc)
+	_, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "invalid final condition",
+		GameSlug:         "global",
+		ActorID:          "admin-1",
+		LLMModelConfigID: config.ID,
+		Steps: []ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		FinalCondition: "team_win ~~ ct",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid final condition error")
+	}
+	if !errors.Is(err, ErrInvalidScenarioCondition) {
+		t.Fatalf("expected ErrInvalidScenarioCondition, got %v", err)
+	}
+}
