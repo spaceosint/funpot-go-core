@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -216,5 +217,91 @@ func TestAdminLLMModelConfigRoutes(t *testing.T) {
 	handler.ServeHTTP(deleteRes, deleteReq)
 	if deleteRes.Code != http.StatusNoContent {
 		t.Fatalf("delete model config status=%d body=%s", deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestAdminLLMGameScenarioRoutes(t *testing.T) {
+	promptsService := prompts.NewService()
+	cfg, err := promptsService.CreateLLMModelConfig(context.Background(), prompts.LLMModelConfigUpsertRequest{
+		Name:    "Primary",
+		Model:   "gemini-2.5-flash",
+		ActorID: "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("create llm config: %v", err)
+	}
+	rootPkg, err := promptsService.CreateScenarioPackage(context.Background(), prompts.ScenarioPackageCreateRequest{
+		Name:             "root pkg",
+		GameSlug:         "global",
+		LLMModelConfigID: cfg.ID,
+		ActorID:          "admin-1",
+		Steps: []prompts.ScenarioStep{
+			{ID: "root_step", Name: "Root", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create root package: %v", err)
+	}
+	targetPkg, err := promptsService.CreateScenarioPackage(context.Background(), prompts.ScenarioPackageCreateRequest{
+		Name:             "target pkg",
+		GameSlug:         "cs2",
+		LLMModelConfigID: cfg.ID,
+		ActorID:          "admin-1",
+		Steps: []prompts.ScenarioStep{
+			{ID: "target_step", Name: "Target", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, EntryCondition: `game == "cs2"`},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create target package: %v", err)
+	}
+
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), nil, streamers.NewService(), nil, promptsService, nil, nil, ClientConfigResponse{})
+	adminToken := buildToken(t, "admin-1")
+
+	createBody, _ := json.Marshal(map[string]any{
+		"name":          "cs2 game scenario",
+		"gameSlug":      "cs2",
+		"initialNodeId": "node-root",
+		"nodes": []map[string]any{
+			{"id": "node-root", "alias": "Root Node", "scenarioPackageId": rootPkg.ID},
+			{"id": "node-target", "alias": "Target Node", "scenarioPackageId": targetPkg.ID},
+		},
+		"transitions": []map[string]any{
+			{"id": "tr-1", "fromNodeId": "node-root", "toNodeId": "node-target", "condition": `game == "cs2"`, "priority": 10},
+		},
+		"terminalConditions": []map[string]any{
+			{"id": "tm-1", "condition": `winner == "ct" && side == "ct"`, "resultLabel": "ct_win", "resultStateJson": `{"result":"win"}`, "priority": 100},
+		},
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/game-scenarios", bytes.NewReader(createBody))
+	createReq.Header.Set("Authorization", "Bearer "+adminToken)
+	createRes := httptest.NewRecorder()
+	handler.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("game scenario create status=%d body=%s", createRes.Code, createRes.Body.String())
+	}
+	var created map[string]any
+	if err := json.Unmarshal(createRes.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created game scenario: %v", err)
+	}
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatalf("expected created id, got %#v", created)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/game-scenarios/"+id, nil)
+	getReq.Header.Set("Authorization", "Bearer "+adminToken)
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("game scenario get status=%d body=%s", getRes.Code, getRes.Body.String())
+	}
+
+	activateReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/game-scenarios/"+id+"/activate", nil)
+	activateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	activateRes := httptest.NewRecorder()
+	handler.ServeHTTP(activateRes, activateReq)
+	if activateRes.Code != http.StatusOK {
+		t.Fatalf("game scenario activate status=%d body=%s", activateRes.Code, activateRes.Body.String())
 	}
 }

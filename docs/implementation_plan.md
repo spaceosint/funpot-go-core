@@ -66,6 +66,7 @@ business logic and immediate backend scope.
   finalization into `win | loss | draw | unknown` only from accumulated
   evidence.
 - [x] Start migration to scenario-graph orchestration (root game-detection step + game-folder steps + concrete game sub-steps) with condition-based transitions and stay-on-step fallback.
+- [ ] Implement Game Scenario graph orchestration over scenario-packages (node = package, edge = transition), including terminal finish conditions and first-step guard validation on package transitions.
 - [ ] Add resilient orchestration with retries, idempotency keys, and dead-letter
   handling for failed LLM jobs.
 - [ ] Publish live match-state/finalization updates to clients via WebSocket.

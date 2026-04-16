@@ -53,6 +53,7 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 type fakePromptResolver struct {
 	prompts        []prompts.PromptVersion
 	scenario       prompts.ScenarioPackage
+	scenariosByID  map[string]prompts.ScenarioPackage
 	scenarioErr    error
 	llmModelConfig prompts.LLMModelConfig
 	llmConfigErr   error
@@ -104,6 +105,9 @@ func (f fakePromptResolver) GetActiveScenarioPackage(_ context.Context, _ string
 }
 
 func (f fakePromptResolver) GetScenarioPackage(_ context.Context, id string) (prompts.ScenarioPackage, error) {
+	if item, ok := f.scenariosByID[id]; ok {
+		return item, nil
+	}
 	if f.scenario.ID == id {
 		return f.scenario, nil
 	}
@@ -572,7 +576,9 @@ func TestWorkerProcessStreamerIgnoresRawResponseStatePayloads(t *testing.T) {
 	if len(decisions.items) != 1 {
 		t.Fatalf("recorded %d decisions, want 1", len(decisions.items))
 	}
-	if got := decisions.items[0].UpdatedStateJSON; got != `{"_scenario":{"packageId":"scenario-test","stepId":"start"}}` {
+	state := parseJSONMap(decisions.items[0].UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	if meta["packageId"] != "scenario-test" || meta["stepId"] != "start" {
 		t.Fatalf("updated state = %q", decisions.items[0].UpdatedStateJSON)
 	}
 }
@@ -603,8 +609,14 @@ func TestWorkerProcessStreamerUsesLLMStateEvenWhenUnknownPlaceholdersAreReturned
 	if second.Label != "state_updated" {
 		t.Fatalf("second label = %q, want state_updated", second.Label)
 	}
-	if got := second.UpdatedStateJSON; got != `{"_scenario":{"packageId":"scenario-test","stepId":"match_update"},"final_outcome":"unknown","state":{"ct_score":0,"mode":"unknown","t_score":0}}` {
-		t.Fatalf("updated state = %q", got)
+	state := parseJSONMap(second.UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	if meta["packageId"] != "scenario-test" || meta["stepId"] != "match_update" {
+		t.Fatalf("updated state = %q", second.UpdatedStateJSON)
+	}
+	payload, _ := state["state"].(map[string]any)
+	if payload["ct_score"] != float64(0) || payload["t_score"] != float64(0) || payload["mode"] != "unknown" {
+		t.Fatalf("updated state payload = %#v", payload)
 	}
 	if len(decisions.items) != 2 {
 		t.Fatalf("recorded %d decisions, want 2", len(decisions.items))
@@ -758,7 +770,7 @@ func TestWorkerProcessStreamerStopsFromPackageTransitionAndReturnsState(t *testi
 					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
 				},
 				PackageTransitions: []prompts.ScenarioPackageTransition{
-					{Priority: 1, Action: prompts.ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
+					{Condition: `outcome == "ct_win"`, Priority: 1, Action: prompts.ScenarioPackageTransitionActionStopTracking, FinalStateOptionID: "ct_win"},
 				},
 				FinalStateOptions: []prompts.ScenarioFinalStateOption{
 					{ID: "ct_win", Name: "CT Win", Condition: `outcome == "ct_win" && streamer_side == "ct"`, FinalStateJSON: `{"result":"win"}`, FinalLabel: "final_ct_win"},
@@ -780,7 +792,69 @@ func TestWorkerProcessStreamerStopsFromPackageTransitionAndReturnsState(t *testi
 	if state["outcome"] != "ct_win" || state["streamer_side"] != "ct" || state["result"] != "win" {
 		t.Fatalf("expected merged terminal state, got %#v", state)
 	}
+	meta, _ := state["_scenario"].(map[string]any)
+	transition, _ := meta["transition"].(map[string]any)
+	if transition["status"] != "terminal_stop" {
+		t.Fatalf("expected terminal transition trace, got %#v", transition)
+	}
 	if decision.Label != "final_ct_win" {
 		t.Fatalf("expected final label in decision, got %s", decision.Label)
+	}
+}
+
+func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testing.T) {
+	decisions := &fakeDecisionStore{
+		items: []streamers.RecordDecisionRequest{
+			{StreamerID: "streamer-1", Stage: "initial", Label: "running", UpdatedStateJSON: `{"game":"cs2","mode":"no_match"}`},
+		},
+	}
+	rootPackage := prompts.ScenarioPackage{
+		ID:               "scenario-root",
+		GameSlug:         "global",
+		LLMModelConfigID: "cfg-default",
+		Steps: []prompts.ScenarioStep{
+			{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+		},
+		PackageTransitions: []prompts.ScenarioPackageTransition{
+			{ToPackageID: "scenario-cs2", Condition: `game == "cs2"`, Priority: 1},
+		},
+	}
+	cs2Package := prompts.ScenarioPackage{
+		ID:               "scenario-cs2",
+		GameSlug:         "cs2",
+		LLMModelConfigID: "cfg-default",
+		Steps: []prompts.ScenarioStep{
+			{ID: "cs2_initial", Name: "CS2 Initial", PromptTemplate: "cs2", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, EntryCondition: `mode == "match"`},
+		},
+	}
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
+		fakePromptResolver{
+			scenario: rootPackage,
+			scenariosByID: map[string]prompts.ScenarioPackage{
+				"scenario-root": rootPackage,
+				"scenario-cs2":  cs2Package,
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		decisions,
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	state := parseJSONMap(decision.UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	if meta["packageId"] != "scenario-root" {
+		t.Fatalf("expected to stay in root package, got %#v", state)
+	}
+	transition, _ := meta["transition"].(map[string]any)
+	if transition["status"] != "rejected" {
+		t.Fatalf("expected rejected transition trace, got %#v", transition)
 	}
 }

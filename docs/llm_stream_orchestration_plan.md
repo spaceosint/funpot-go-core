@@ -1,5 +1,8 @@
 # LLM Stream Orchestration Plan (Scenario Graph v2)
 
+> Extension for agent-facing implementation of package-to-package game scenarios:
+> `docs/agent_game_scenario_packages_plan_ru.md`.
+
 ## Goal
 Build a single orchestration model where admin-defined **scenario steps** drive the
 LLM analysis loop.

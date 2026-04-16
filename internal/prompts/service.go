@@ -11,6 +11,7 @@ type Service struct {
 	counter          int
 	configCounter    int
 	scenarioPackages map[string][]ScenarioPackage
+	gameScenarios    map[string][]GameScenario
 	modelConfigs     map[string]LLMModelConfig
 	modelConfigStore modelConfigStore
 	scenarioStore    scenarioPackageStore
@@ -19,6 +20,7 @@ type Service struct {
 func NewService() *Service {
 	return &Service{
 		scenarioPackages: map[string][]ScenarioPackage{},
+		gameScenarios:    map[string][]GameScenario{},
 		modelConfigs:     map[string]LLMModelConfig{},
 	}
 }

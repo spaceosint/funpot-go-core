@@ -225,7 +225,8 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		lastDecision.StreamerID = id
 		lastDecision.TransitionTerminal = true
 		lastDecision.Label = firstNonEmpty(strings.TrimSpace(execution.TerminalLabel), strings.TrimSpace(lastDecision.Label), "tracking_stopped")
-		lastDecision.UpdatedStateJSON = firstNonEmpty(strings.TrimSpace(execution.TerminalStateJSON), strings.TrimSpace(lastDecision.UpdatedStateJSON), w.resolvePreviousState(ctx, id))
+		terminalState := firstNonEmpty(strings.TrimSpace(execution.TerminalStateJSON), strings.TrimSpace(lastDecision.UpdatedStateJSON), w.resolvePreviousState(ctx, id))
+		lastDecision.UpdatedStateJSON = enrichScenarioState(`{}`, terminalState, execution.CurrentPackageID, lastDecision.Stage, execution.TransitionTrace)
 		return lastDecision, ErrTrackingStop
 	}
 
@@ -699,6 +700,7 @@ type scenarioExecutionPlan struct {
 	StopTracking          bool
 	TerminalStateJSON     string
 	TerminalLabel         string
+	TransitionTrace       map[string]any
 	PreviousState         string
 	StartPackageID        string
 	CurrentPackageID      string
@@ -715,6 +717,10 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 	}
 	activePackage := pkg
 	packageChanged := false
+	transitionTrace := map[string]any{
+		"status":      "no_transition",
+		"fromPackage": strings.TrimSpace(activePackage.ID),
+	}
 	if currentPackageID != "" && currentPackageID != startPackageID {
 		resolved, err := w.prompts.GetScenarioPackage(ctx, currentPackageID)
 		if err == nil {
@@ -724,10 +730,16 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 	resolution, resolveErr := activePackage.ResolveNextPackage(previousState)
 	if resolveErr == nil {
 		if resolution.StopTracking {
+			transitionTrace = map[string]any{
+				"status":      "terminal_stop",
+				"fromPackage": strings.TrimSpace(activePackage.ID),
+				"reason":      "terminal_condition_matched",
+			}
 			return scenarioExecutionPlan{
 				StopTracking:      true,
 				TerminalStateJSON: mergeJSONState(previousState, resolution.FinalStateJSON),
 				TerminalLabel:     firstNonEmpty(strings.TrimSpace(resolution.FinalLabel), "tracking_stopped"),
+				TransitionTrace:   transitionTrace,
 				PreviousState:     previousState,
 				StartPackageID:    startPackageID,
 				CurrentPackageID:  strings.TrimSpace(activePackage.ID),
@@ -736,9 +748,32 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 		if resolution.Changed {
 			nextPackage, pkgErr := w.prompts.GetScenarioPackage(ctx, resolution.PackageID)
 			if pkgErr == nil {
-				activePackage = nextPackage
-				currentPackageID = strings.TrimSpace(nextPackage.ID)
-				packageChanged = true
+				canEnter, enterErr := nextPackage.CanEnter(previousState)
+				if enterErr == nil && canEnter {
+					transitionTrace = map[string]any{
+						"status":      "accepted",
+						"fromPackage": strings.TrimSpace(activePackage.ID),
+						"toPackage":   strings.TrimSpace(nextPackage.ID),
+						"reason":      "transition_condition_and_entry_guard_matched",
+					}
+					activePackage = nextPackage
+					currentPackageID = strings.TrimSpace(nextPackage.ID)
+					packageChanged = true
+				} else {
+					transitionTrace = map[string]any{
+						"status":      "rejected",
+						"fromPackage": strings.TrimSpace(activePackage.ID),
+						"toPackage":   strings.TrimSpace(nextPackage.ID),
+						"reason":      "target_initial_entry_condition_failed",
+					}
+				}
+			} else {
+				transitionTrace = map[string]any{
+					"status":      "rejected",
+					"fromPackage": strings.TrimSpace(activePackage.ID),
+					"toPackage":   strings.TrimSpace(resolution.PackageID),
+					"reason":      "target_package_not_found",
+				}
 			}
 		}
 	}
@@ -776,6 +811,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, p
 		Step:                  step,
 		Entering:              entering,
 		StopTracking:          false,
+		TransitionTrace:       transitionTrace,
 		PreviousState:         previousState,
 		StartPackageID:        startPackageID,
 		CurrentPackageID:      strings.TrimSpace(activePackage.ID),
@@ -837,7 +873,7 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
-	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, pkg.ID, step.ID)
+	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, pkg.ID, step.ID, execution.TransitionTrace)
 	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
 	if err != nil {
 		return streamers.LLMDecision{}, err
@@ -901,7 +937,7 @@ func mergeJSONState(baseJSON, patchJSON string) string {
 	return string(body)
 }
 
-func enrichScenarioState(currentState, previousState, packageID, stepID string) string {
+func enrichScenarioState(currentState, previousState, packageID, stepID string, transitionTrace map[string]any) string {
 	base := parseJSONMap(previousState)
 	if existing, ok := base["_scenario"].(map[string]any); ok {
 		baseScenario := map[string]any{}
@@ -919,6 +955,9 @@ func enrichScenarioState(currentState, previousState, packageID, stepID string) 
 	scenarioMeta, _ := base["_scenario"].(map[string]any)
 	scenarioMeta["packageId"] = strings.TrimSpace(packageID)
 	scenarioMeta["stepId"] = strings.TrimSpace(stepID)
+	if len(transitionTrace) > 0 {
+		scenarioMeta["transition"] = transitionTrace
+	}
 	base["_scenario"] = scenarioMeta
 	body, err := json.Marshal(base)
 	if err != nil {
