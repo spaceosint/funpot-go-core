@@ -120,10 +120,21 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID string) prompts.GameScenarioCreateRequest {
 	nodes := make([]prompts.GameScenarioNode, 0, len(req.Nodes))
 	for _, node := range req.Nodes {
+		nodeTerminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(node.TerminalConditions))
+		for _, item := range node.TerminalConditions {
+			nodeTerminalConditions = append(nodeTerminalConditions, prompts.GameScenarioTerminalCondition{
+				ID:              item.ID,
+				Condition:       item.Condition,
+				ResultLabel:     item.ResultLabel,
+				ResultStateJSON: item.ResultStateJSON,
+				Priority:        item.Priority,
+			})
+		}
 		nodes = append(nodes, prompts.GameScenarioNode{
-			ID:                node.ID,
-			Alias:             node.Alias,
-			ScenarioPackageID: node.ScenarioPackageID,
+			ID:                 node.ID,
+			Alias:              node.Alias,
+			ScenarioPackageID:  node.ScenarioPackageID,
+			TerminalConditions: nodeTerminalConditions,
 		})
 	}
 	transitions := make([]prompts.GameScenarioTransition, 0, len(req.Transitions))
@@ -223,9 +234,10 @@ type scenarioPackageCreateRequest struct {
 }
 
 type gameScenarioNodeRequest struct {
-	ID                string `json:"id"`
-	Alias             string `json:"alias"`
-	ScenarioPackageID string `json:"scenarioPackageId"`
+	ID                 string                                 `json:"id"`
+	Alias              string                                 `json:"alias"`
+	ScenarioPackageID  string                                 `json:"scenarioPackageId"`
+	TerminalConditions []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
 }
 
 type gameScenarioTransitionRequest struct {

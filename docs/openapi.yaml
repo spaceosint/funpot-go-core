@@ -1650,6 +1650,11 @@ components:
           type: string
         scenarioPackageId:
           type: string
+        terminalConditions:
+          type: array
+          description: Terminal conditions scoped to this node (branch).
+          items:
+            $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTransition:
       type: object
       required: [fromNodeId, toNodeId, condition, priority]
@@ -1705,6 +1710,7 @@ components:
             $ref: '#/components/schemas/GameScenarioTransition'
         terminalConditions:
           type: array
+          description: Deprecated graph-wide terminal conditions; prefer node-level terminalConditions.
           items:
             $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenario:
