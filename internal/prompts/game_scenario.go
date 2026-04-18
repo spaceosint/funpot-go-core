@@ -16,9 +16,10 @@ var (
 )
 
 type GameScenarioNode struct {
-	ID                string `json:"id"`
-	Alias             string `json:"alias"`
-	ScenarioPackageID string `json:"scenarioPackageId"`
+	ID                 string                          `json:"id"`
+	Alias              string                          `json:"alias"`
+	ScenarioPackageID  string                          `json:"scenarioPackageId"`
+	TerminalConditions []GameScenarioTerminalCondition `json:"terminalConditions,omitempty"`
 }
 
 type GameScenarioTransition struct {
@@ -85,6 +86,17 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 		}
 		if _, err := pkg.InitialStep(); err != nil {
 			return fmt.Errorf("%w: package %s has no valid initial step", ErrInvalidGameScenario, node.ScenarioPackageID)
+		}
+		for _, tc := range node.TerminalConditions {
+			if strings.TrimSpace(tc.Condition) == "" {
+				return fmt.Errorf("%w: node %s terminal condition is required", ErrInvalidGameScenario, nodeID)
+			}
+			if err := validateScenarioCondition(tc.Condition); err != nil {
+				return fmt.Errorf("%w: node %s terminal condition: %v", ErrInvalidGameScenario, nodeID, err)
+			}
+			if strings.TrimSpace(tc.ResultStateJSON) != "" && !isValidJSON(tc.ResultStateJSON) {
+				return fmt.Errorf("%w: node %s terminal resultStateJson must be valid json", ErrInvalidGameScenario, nodeID)
+			}
 		}
 		nodeIDs[nodeID] = node
 	}
@@ -165,7 +177,7 @@ func (s *Service) CreateGameScenario(ctx context.Context, req GameScenarioCreate
 		CreatedBy:          strings.TrimSpace(req.ActorID),
 		CreatedAt:          now,
 	}
-	if len(versions) == 0 {
+	if !s.hasActiveGameScenarioLocked() {
 		item.IsActive = true
 		item.ActivatedBy = strings.TrimSpace(req.ActorID)
 		item.ActivatedAt = now
@@ -243,7 +255,11 @@ func (s *Service) DeleteGameScenario(ctx context.Context, id string) error {
 			if item.ID != lookup {
 				continue
 			}
+			removedActive := item.IsActive
 			s.gameScenarios[slug] = append(versions[:i], versions[i+1:]...)
+			if removedActive {
+				s.ensureAtLeastOneActiveLocked(item.ActivatedBy)
+			}
 			return nil
 		}
 	}
@@ -258,20 +274,29 @@ func (s *Service) ActivateGameScenario(ctx context.Context, id, actorID string) 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var (
+		foundSlug string
+		foundIdx  = -1
+	)
 	for slug, versions := range s.gameScenarios {
-		active := -1
 		for i := range versions {
 			if versions[i].ID == lookup {
-				active = i
+				foundSlug = slug
+				foundIdx = i
 				break
 			}
 		}
-		if active == -1 {
-			continue
+		if foundIdx >= 0 {
+			break
 		}
-		now := time.Now().UTC()
+	}
+	if foundIdx < 0 {
+		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	now := time.Now().UTC()
+	for slug, versions := range s.gameScenarios {
 		for i := range versions {
-			versions[i].IsActive = i == active
+			versions[i].IsActive = slug == foundSlug && i == foundIdx
 			if versions[i].IsActive {
 				versions[i].ActivatedBy = strings.TrimSpace(actorID)
 				versions[i].ActivatedAt = now
@@ -281,9 +306,8 @@ func (s *Service) ActivateGameScenario(ctx context.Context, id, actorID string) 
 			}
 		}
 		s.gameScenarios[slug] = versions
-		return versions[active], nil
 	}
-	return GameScenario{}, ErrGameScenarioNotFound
+	return s.gameScenarios[foundSlug][foundIdx], nil
 }
 
 func (s *Service) GetActiveGameScenario(ctx context.Context, gameSlug string) (GameScenario, error) {
@@ -298,6 +322,13 @@ func (s *Service) GetActiveGameScenario(ctx context.Context, gameSlug string) (G
 	for _, item := range versions {
 		if item.IsActive {
 			return item, nil
+		}
+	}
+	for _, versions := range s.gameScenarios {
+		for _, item := range versions {
+			if item.IsActive {
+				return item, nil
+			}
 		}
 	}
 	return GameScenario{}, ErrGameScenarioNotFound
@@ -316,9 +347,21 @@ func (g GameScenario) InitialNode() (GameScenarioNode, error) {
 	return GameScenarioNode{}, ErrInvalidGameScenario
 }
 
-func (g GameScenario) ResolveTerminalCondition(stateJSON string) (GameScenarioTerminalCondition, bool, error) {
+func (g GameScenario) ResolveTerminalCondition(nodeID, stateJSON string) (GameScenarioTerminalCondition, bool, error) {
 	state := parseJSONMap(stateJSON)
-	ordered := append([]GameScenarioTerminalCondition(nil), g.TerminalConditions...)
+	ordered := make([]GameScenarioTerminalCondition, 0)
+	lookupNodeID := strings.TrimSpace(nodeID)
+	if lookupNodeID != "" {
+		for _, node := range g.Nodes {
+			if strings.TrimSpace(node.ID) == lookupNodeID {
+				ordered = append(ordered, node.TerminalConditions...)
+				break
+			}
+		}
+	}
+	if len(ordered) == 0 {
+		ordered = append(ordered, g.TerminalConditions...)
+	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].Priority == ordered[j].Priority {
 			return strings.TrimSpace(ordered[i].ID) < strings.TrimSpace(ordered[j].ID)
@@ -335,6 +378,33 @@ func (g GameScenario) ResolveTerminalCondition(stateJSON string) (GameScenarioTe
 		}
 	}
 	return GameScenarioTerminalCondition{}, false, nil
+}
+
+func (s *Service) hasActiveGameScenarioLocked() bool {
+	for _, versions := range s.gameScenarios {
+		for _, item := range versions {
+			if item.IsActive {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) ensureAtLeastOneActiveLocked(actorID string) {
+	if s.hasActiveGameScenarioLocked() {
+		return
+	}
+	for slug, versions := range s.gameScenarios {
+		if len(versions) == 0 {
+			continue
+		}
+		versions[0].IsActive = true
+		versions[0].ActivatedBy = strings.TrimSpace(actorID)
+		versions[0].ActivatedAt = time.Now().UTC()
+		s.gameScenarios[slug] = versions
+		return
+	}
 }
 
 func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenarioNode, bool, error) {

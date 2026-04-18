@@ -102,3 +102,100 @@ func TestGameScenarioCreateRejectsMissingTransitionCondition(t *testing.T) {
 		t.Fatalf("expected ErrInvalidGameScenario, got %v", err)
 	}
 }
+
+func TestGameScenarioActivateKeepsSingleActiveAcrossSlugs(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	cfg := mustCreateModelConfig(t, svc)
+	rootPkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "root",
+		GameSlug:         "global",
+		LLMModelConfigID: cfg.ID,
+		ActorID:          "admin-1",
+		Steps:            []ScenarioStep{{ID: "root", Name: "root", PromptTemplate: "x", ResponseSchemaJSON: `{}`, Initial: true, Order: 1}},
+	})
+	if err != nil {
+		t.Fatalf("create root package: %v", err)
+	}
+
+	first, err := svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
+		Name:          "first",
+		GameSlug:      "global",
+		InitialNodeID: "n1",
+		Nodes:         []GameScenarioNode{{ID: "n1", ScenarioPackageID: rootPkg.ID}},
+		ActorID:       "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateGameScenario first: %v", err)
+	}
+	if !first.IsActive {
+		t.Fatalf("expected first scenario to be active")
+	}
+
+	second, err := svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
+		Name:          "second",
+		GameSlug:      "cs2",
+		InitialNodeID: "n2",
+		Nodes:         []GameScenarioNode{{ID: "n2", ScenarioPackageID: rootPkg.ID}},
+		ActorID:       "admin-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateGameScenario second: %v", err)
+	}
+	if second.IsActive {
+		t.Fatalf("expected second scenario to stay inactive before explicit activation")
+	}
+
+	if _, err := svc.ActivateGameScenario(context.Background(), second.ID, "admin-2"); err != nil {
+		t.Fatalf("ActivateGameScenario second: %v", err)
+	}
+	got, err := svc.GetActiveGameScenario(context.Background(), "global")
+	if err != nil {
+		t.Fatalf("GetActiveGameScenario fallback: %v", err)
+	}
+	if got.ID != second.ID {
+		t.Fatalf("expected globally active scenario %s, got %s", second.ID, got.ID)
+	}
+}
+
+func TestGameScenarioResolveTerminalConditionPrefersNodeScope(t *testing.T) {
+	t.Parallel()
+
+	scenario := GameScenario{
+		InitialNodeID: "n1",
+		Nodes: []GameScenarioNode{
+			{
+				ID: "n1",
+				TerminalConditions: []GameScenarioTerminalCondition{
+					{ID: "node-win", Condition: `winner == "ct"`, ResultLabel: "node", Priority: 100},
+				},
+			},
+		},
+		TerminalConditions: []GameScenarioTerminalCondition{
+			{ID: "global-win", Condition: `winner == "ct"`, ResultLabel: "global", Priority: 10},
+		},
+	}
+
+	terminal, ok, err := scenario.ResolveTerminalCondition("n1", `{"winner":"ct"}`)
+	if err != nil {
+		t.Fatalf("ResolveTerminalCondition(node): %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected node terminal condition to match")
+	}
+	if terminal.ID != "node-win" {
+		t.Fatalf("expected node-level terminal condition, got %s", terminal.ID)
+	}
+
+	terminal, ok, err = scenario.ResolveTerminalCondition("missing-node", `{"winner":"ct"}`)
+	if err != nil {
+		t.Fatalf("ResolveTerminalCondition(fallback): %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected fallback terminal condition to match")
+	}
+	if terminal.ID != "global-win" {
+		t.Fatalf("expected global fallback terminal condition, got %s", terminal.ID)
+	}
+}
