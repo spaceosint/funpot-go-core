@@ -124,6 +124,7 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 		for _, item := range node.TerminalConditions {
 			nodeTerminalConditions = append(nodeTerminalConditions, prompts.GameScenarioTerminalCondition{
 				ID:              item.ID,
+				TransitionID:    item.TransitionID,
 				Condition:       item.Condition,
 				ResultLabel:     item.ResultLabel,
 				ResultStateJSON: item.ResultStateJSON,
@@ -151,6 +152,7 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 	for _, item := range req.TerminalConditions {
 		terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
 			ID:              item.ID,
+			TransitionID:    item.TransitionID,
 			Condition:       item.Condition,
 			ResultLabel:     item.ResultLabel,
 			ResultStateJSON: item.ResultStateJSON,
@@ -250,6 +252,7 @@ type gameScenarioTransitionRequest struct {
 
 type gameScenarioTerminalConditionRequest struct {
 	ID              string `json:"id"`
+	TransitionID    string `json:"transitionId"`
 	Condition       string `json:"condition"`
 	ResultLabel     string `json:"resultLabel"`
 	ResultStateJSON string `json:"resultStateJson"`

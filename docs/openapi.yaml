@@ -1678,6 +1678,9 @@ components:
       properties:
         id:
           type: string
+        transitionId:
+          type: string
+          description: Optional transition ID for edge-scoped terminal conditions.
         condition:
           type: string
         resultLabel:

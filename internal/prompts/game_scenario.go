@@ -32,6 +32,7 @@ type GameScenarioTransition struct {
 
 type GameScenarioTerminalCondition struct {
 	ID              string `json:"id"`
+	TransitionID    string `json:"transitionId,omitempty"`
 	Condition       string `json:"condition"`
 	ResultLabel     string `json:"resultLabel,omitempty"`
 	ResultStateJSON string `json:"resultStateJson,omitempty"`
@@ -125,6 +126,14 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 			return fmt.Errorf("%w: transition target package %s has no initial step", ErrInvalidGameScenario, toNode.ScenarioPackageID)
 		}
 	}
+	transitionIDs := make(map[string]struct{}, len(req.Transitions))
+	for _, tr := range req.Transitions {
+		id := strings.TrimSpace(tr.ID)
+		if id == "" {
+			continue
+		}
+		transitionIDs[id] = struct{}{}
+	}
 	for _, tc := range req.TerminalConditions {
 		if strings.TrimSpace(tc.Condition) == "" {
 			return fmt.Errorf("%w: terminal condition is required", ErrInvalidGameScenario)
@@ -134,6 +143,11 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 		}
 		if strings.TrimSpace(tc.ResultStateJSON) != "" && !isValidJSON(tc.ResultStateJSON) {
 			return fmt.Errorf("%w: terminal resultStateJson must be valid json", ErrInvalidGameScenario)
+		}
+		if transitionID := strings.TrimSpace(tc.TransitionID); transitionID != "" {
+			if _, ok := transitionIDs[transitionID]; !ok {
+				return fmt.Errorf("%w: terminal transitionId %s not found", ErrInvalidGameScenario, transitionID)
+			}
 		}
 	}
 	return nil
@@ -347,11 +361,19 @@ func (g GameScenario) InitialNode() (GameScenarioNode, error) {
 	return GameScenarioNode{}, ErrInvalidGameScenario
 }
 
-func (g GameScenario) ResolveTerminalCondition(nodeID, stateJSON string) (GameScenarioTerminalCondition, bool, error) {
+func (g GameScenario) ResolveTerminalCondition(nodeID, transitionID, stateJSON string) (GameScenarioTerminalCondition, bool, error) {
 	state := parseJSONMap(stateJSON)
 	ordered := make([]GameScenarioTerminalCondition, 0)
+	lookupTransitionID := strings.TrimSpace(transitionID)
+	if lookupTransitionID != "" {
+		for _, terminal := range g.TerminalConditions {
+			if strings.TrimSpace(terminal.TransitionID) == lookupTransitionID {
+				ordered = append(ordered, terminal)
+			}
+		}
+	}
 	lookupNodeID := strings.TrimSpace(nodeID)
-	if lookupNodeID != "" {
+	if len(ordered) == 0 && lookupNodeID != "" {
 		for _, node := range g.Nodes {
 			if strings.TrimSpace(node.ID) == lookupNodeID {
 				ordered = append(ordered, node.TerminalConditions...)
@@ -360,7 +382,12 @@ func (g GameScenario) ResolveTerminalCondition(nodeID, stateJSON string) (GameSc
 		}
 	}
 	if len(ordered) == 0 {
-		ordered = append(ordered, g.TerminalConditions...)
+		for _, terminal := range g.TerminalConditions {
+			if strings.TrimSpace(terminal.TransitionID) != "" {
+				continue
+			}
+			ordered = append(ordered, terminal)
+		}
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].Priority == ordered[j].Priority {
@@ -407,11 +434,11 @@ func (s *Service) ensureAtLeastOneActiveLocked(actorID string) {
 	}
 }
 
-func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenarioNode, bool, error) {
+func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenarioNode, string, bool, error) {
 	activeNodeID := strings.TrimSpace(currentNodeID)
 	if activeNodeID == "" {
 		initial, err := g.InitialNode()
-		return initial, true, err
+		return initial, "", true, err
 	}
 	nodeByID := make(map[string]GameScenarioNode, len(g.Nodes))
 	for _, node := range g.Nodes {
@@ -420,7 +447,7 @@ func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenario
 	currentNode, ok := nodeByID[activeNodeID]
 	if !ok {
 		initial, err := g.InitialNode()
-		return initial, true, err
+		return initial, "", true, err
 	}
 	state := parseJSONMap(stateJSON)
 	ordered := append([]GameScenarioTransition(nil), g.Transitions...)
@@ -438,7 +465,7 @@ func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenario
 		}
 		matched, err := evaluateCondition(tr.Condition, state)
 		if err != nil {
-			return GameScenarioNode{}, false, err
+			return GameScenarioNode{}, "", false, err
 		}
 		if !matched {
 			continue
@@ -446,11 +473,11 @@ func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenario
 		targetID := strings.TrimSpace(tr.ToNodeID)
 		next, exists := nodeByID[targetID]
 		if !exists {
-			return GameScenarioNode{}, false, ErrInvalidGameScenario
+			return GameScenarioNode{}, "", false, ErrInvalidGameScenario
 		}
-		return next, targetID != strings.TrimSpace(currentNode.ID), nil
+		return next, strings.TrimSpace(tr.ID), targetID != strings.TrimSpace(currentNode.ID), nil
 	}
-	return currentNode, false, nil
+	return currentNode, "", false, nil
 }
 
 func isValidJSON(raw string) bool {

@@ -53,6 +53,7 @@ func (f fakeClassifier) Classify(_ context.Context, input StageRequest) (StageCl
 type fakePromptResolver struct {
 	prompts        []prompts.PromptVersion
 	gameScenario   prompts.GameScenario
+	gameScenarios  map[string]prompts.GameScenario
 	scenario       prompts.ScenarioPackage
 	scenariosByID  map[string]prompts.ScenarioPackage
 	scenarioErr    error
@@ -60,7 +61,11 @@ type fakePromptResolver struct {
 	llmConfigErr   error
 }
 
-func (f fakePromptResolver) GetActiveGameScenario(_ context.Context, _ string) (prompts.GameScenario, error) {
+func (f fakePromptResolver) GetActiveGameScenario(_ context.Context, gameSlug string) (prompts.GameScenario, error) {
+	lookup := strings.TrimSpace(gameSlug)
+	if item, ok := f.gameScenarios[lookup]; ok {
+		return item, nil
+	}
 	if strings.TrimSpace(f.gameScenario.ID) != "" {
 		return f.gameScenario, nil
 	}
@@ -883,5 +888,29 @@ func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testi
 	transition, _ := meta["transition"].(map[string]any)
 	if transition["status"] != "rejected" {
 		t.Fatalf("expected rejected transition trace, got %#v", transition)
+	}
+}
+
+func TestResolveGameScenarioSlug(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		state string
+		want  string
+	}{
+		{name: "top-level game", state: `{"game":"cs2"}`, want: "cs2"},
+		{name: "nested state game slug", state: `{"state":{"gameSlug":"dota2"}}`, want: "dota2"},
+		{name: "scenario meta fallback", state: `{"_scenario":{"gameSlug":"valorant"}}`, want: "valorant"},
+		{name: "default global", state: `{}`, want: "global"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolveGameScenarioSlug(tc.state); got != tc.want {
+				t.Fatalf("resolveGameScenarioSlug(%s) = %q, want %q", tc.state, got, tc.want)
+			}
+		})
 	}
 }

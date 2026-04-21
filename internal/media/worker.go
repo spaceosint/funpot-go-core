@@ -196,9 +196,14 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		logger.Info("streamer processing lock released", zap.String("streamerID", id), zap.String("lockKey", lockKey))
 	}()
 
-	gameScenario, err := w.prompts.GetActiveGameScenario(ctx, "global")
+	previousState := w.resolvePreviousState(ctx, id)
+	gameScenarioSlug := resolveGameScenarioSlug(previousState)
+	gameScenario, err := w.prompts.GetActiveGameScenario(ctx, gameScenarioSlug)
+	if err != nil && !strings.EqualFold(gameScenarioSlug, "global") {
+		gameScenario, err = w.prompts.GetActiveGameScenario(ctx, "global")
+	}
 	if err != nil {
-		logger.Error("active game scenario lookup failed", zap.String("streamerID", id), zap.String("gameSlug", "global"), zap.Error(err))
+		logger.Error("active game scenario lookup failed", zap.String("streamerID", id), zap.String("gameSlug", gameScenarioSlug), zap.Error(err))
 		w.metrics.recordFailure(ctx, id, "lookup_game_scenario")
 		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
@@ -739,7 +744,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 	previousState := w.resolvePreviousState(ctx, streamerID)
 	startPackageID := strings.TrimSpace(pkg.ID)
 	currentNodeID := scenarioStateNodeID(previousState)
-	resolvedNode, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, previousState)
+	resolvedNode, matchedTransitionID, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, previousState)
 	if err != nil {
 		return scenarioExecutionPlan{}, err
 	}
@@ -767,7 +772,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 		transitionTrace["status"] = "accepted"
 		transitionTrace["reason"] = "game_scenario_transition_matched"
 	}
-	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(resolvedNode.ID, previousState); terminalErr != nil {
+	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(resolvedNode.ID, matchedTransitionID, previousState); terminalErr != nil {
 		return scenarioExecutionPlan{}, terminalErr
 	} else if ok {
 		transitionTrace = map[string]any{
@@ -1055,4 +1060,39 @@ func scenarioStateNodeID(stateJSON string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(meta["gameScenarioNodeId"]))
+}
+
+func resolveGameScenarioSlug(stateJSON string) string {
+	state := parseJSONMap(stateJSON)
+	candidates := []string{
+		valueAsNonNilString(state, "game"),
+		valueAsNonNilString(state, "gameSlug"),
+		valueAsNonNilString(state, "detectedGameKey"),
+	}
+	if nested, ok := state["state"].(map[string]any); ok {
+		candidates = append(candidates,
+			valueAsNonNilString(nested, "game"),
+			valueAsNonNilString(nested, "gameSlug"),
+			valueAsNonNilString(nested, "detectedGameKey"),
+		)
+	}
+	if rawMeta, ok := state["_scenario"]; ok {
+		if meta, ok := rawMeta.(map[string]any); ok {
+			candidates = append(candidates, valueAsNonNilString(meta, "gameSlug"))
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate != "" {
+			return strings.ToLower(candidate)
+		}
+	}
+	return "global"
+}
+
+func valueAsNonNilString(payload map[string]any, key string) string {
+	raw, ok := payload[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(raw))
 }
