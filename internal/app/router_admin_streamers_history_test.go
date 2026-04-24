@@ -54,9 +54,9 @@ func TestAdminStreamerHistoryGetWithPagination(t *testing.T) {
 	)
 
 	for _, req := range []streamers.RecordDecisionRequest{
-		{RunID: "run-1", StreamerID: "str-1", Stage: "root_detect", Label: "cs_detected", Confidence: 0.9, UpdatedStateJSON: `{"state":{"game":"cs2"}}`},
-		{RunID: "run-1", StreamerID: "str-1", Stage: "mode_detect", Label: "competitive", Confidence: 0.8, UpdatedStateJSON: `{"state":{"mode":"competitive"}}`},
-		{RunID: "run-1", StreamerID: "str-1", Stage: "state_tracker", Label: "score_update", Confidence: 0.7, UpdatedStateJSON: `{"state":{"ct":10,"t":8}}`},
+		{RunID: "run-1", StreamerID: "str-1", Stage: "root_detect", Label: "cs_detected", Confidence: 0.9, UpdatedStateJSON: `{"state":{"game":"cs2"}}`, ChunkRef: "https://player.mediadelivery.net/play/lib-1/video-0"},
+		{RunID: "run-1", StreamerID: "str-1", Stage: "mode_detect", Label: "competitive", Confidence: 0.8, UpdatedStateJSON: `{"state":{"mode":"competitive"}}`, ChunkRef: "https://player.mediadelivery.net/play/lib-1/video-1"},
+		{RunID: "run-1", StreamerID: "str-1", Stage: "state_tracker", Label: "score_update", Confidence: 0.7, UpdatedStateJSON: `{"state":{"ct":10,"t":8}}`, ChunkRef: "https://player.mediadelivery.net/play/lib-1/video-2"},
 	} {
 		if _, err := streamersService.RecordLLMDecision(context.Background(), req); err != nil {
 			t.Fatalf("RecordLLMDecision() error = %v", err)
@@ -85,6 +85,9 @@ func TestAdminStreamerHistoryGetWithPagination(t *testing.T) {
 	item, _ := items[0].(map[string]any)
 	if item["stepName"] != "state_tracker" {
 		t.Fatalf("expected state_tracker step, got %#v", item["stepName"])
+	}
+	if item["videoData"] != "https://player.mediadelivery.net/play/lib-1/video-2" {
+		t.Fatalf("expected item videoData, got %#v", item["videoData"])
 	}
 	videos, ok := payload["videos"].([]any)
 	if !ok || len(videos) != 1 {

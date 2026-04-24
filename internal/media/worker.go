@@ -99,7 +99,7 @@ type Locker interface {
 }
 
 type ChunkPublisher interface {
-	Publish(ctx context.Context, streamerID string, chunk ChunkRef) error
+	Publish(ctx context.Context, streamerID string, chunk ChunkRef) (UploadedVideo, error)
 }
 
 type ChunkFinalizer interface {
@@ -311,14 +311,6 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		w.metrics.recordFailure(ctx, id, "execution_plan")
 		w.metrics.recordCycle(ctx, id, "failed")
 		return streamers.LLMDecision{}, err
-	}
-	if w.chunkPublisher != nil {
-		if err := w.chunkPublisher.Publish(ctx, id, chunk); err != nil {
-			logger.Error("chunk publish failed", zap.String("streamerID", id), zap.String("chunkRef", chunk.Reference), zap.Error(err))
-			w.metrics.recordFailure(ctx, id, "publish_chunk")
-			w.metrics.recordCycle(ctx, id, "failed")
-			return streamers.LLMDecision{}, err
-		}
 	}
 	w.metrics.recordCycle(ctx, id, "completed")
 	logger.Info("streamer processing cycle completed", zap.String("streamerID", id), zap.String("runID", runID), zap.String("finalStage", lastDecision.Stage), zap.String("finalLabel", lastDecision.Label), zap.Float64("finalConfidence", lastDecision.Confidence))
@@ -911,7 +903,18 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		finalPackageID = pkg.ID
 	}
 	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, execution.GameScenarioID, finalPackageID, step.ID, finalTransitionTrace)
-	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
+	decisionChunk := chunk
+	if w.chunkPublisher != nil {
+		uploadedVideo, publishErr := w.chunkPublisher.Publish(ctx, streamerID, chunk)
+		if publishErr != nil {
+			w.metrics.recordFailure(ctx, streamerID, "publish_chunk")
+			return streamers.LLMDecision{}, publishErr
+		}
+		if strings.TrimSpace(uploadedVideo.URL) != "" {
+			decisionChunk.Reference = strings.TrimSpace(uploadedVideo.URL)
+		}
+	}
+	decision, err := w.processStageResult(ctx, activePrompt, result, decisionChunk, runID, streamerID, previousState)
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
