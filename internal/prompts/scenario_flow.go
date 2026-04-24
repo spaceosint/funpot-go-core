@@ -812,12 +812,15 @@ func (s *Service) GetActiveScenarioPackage(ctx context.Context, gameSlug string)
 }
 
 func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioStep, bool, error) {
+	return p.ResolveStepWithState(currentStepID, parseJSONMap(stateJSON))
+}
+
+func (p ScenarioPackage) ResolveStepWithState(currentStepID string, state map[string]any) (ScenarioStep, bool, error) {
 	byID := make(map[string]ScenarioStep, len(p.Steps))
 	for _, step := range p.Steps {
 		byID[step.ID] = step
 	}
 
-	state := parseJSONMap(stateJSON)
 	current := strings.TrimSpace(currentStepID)
 	if current == "" {
 		entry, err := p.InitialStep()
@@ -840,12 +843,12 @@ func (p ScenarioPackage) ResolveStep(currentStepID, stateJSON string) (ScenarioS
 	}
 	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
 	for _, tr := range transitions {
-		ok, err := evaluateCondition(tr.Condition, state)
-		if err != nil || !ok {
+		matched, err := evaluateCondition(tr.Condition, state)
+		if err != nil || !matched {
 			continue
 		}
-		next, ok := byID[strings.TrimSpace(tr.ToStepID)]
-		if !ok {
+		next, exists := byID[strings.TrimSpace(tr.ToStepID)]
+		if !exists {
 			continue
 		}
 		return next, next.ID != current, nil
@@ -865,6 +868,43 @@ type ScenarioPackageResolution struct {
 	StopTracking   bool
 	FinalStateJSON string
 	FinalLabel     string
+}
+
+func (p ScenarioPackage) ResolveTerminal(stateJSON string) (ScenarioPackageResolution, error) {
+	return p.ResolveTerminalWithState(parseJSONMap(stateJSON))
+}
+
+func (p ScenarioPackage) ResolveTerminalWithState(state map[string]any) (ScenarioPackageResolution, error) {
+	currentPackageID := strings.TrimSpace(p.ID)
+	if len(p.PackageTransitions) == 0 {
+		return ScenarioPackageResolution{PackageID: currentPackageID}, nil
+	}
+	transitions := cloneScenarioPackageTransitions(p.PackageTransitions)
+	optionsByID := make(map[string]ScenarioFinalStateOption, len(p.FinalStateOptions))
+	for _, item := range p.FinalStateOptions {
+		optionsByID[strings.TrimSpace(item.ID)] = item
+	}
+	sort.Slice(transitions, func(i, j int) bool { return transitions[i].Priority > transitions[j].Priority })
+	for _, tr := range transitions {
+		if normalizeScenarioPackageTransitionAction(tr.Action) != ScenarioPackageTransitionActionStopTracking {
+			continue
+		}
+		matched, err := evaluateCondition(strings.TrimSpace(tr.Condition), state)
+		if err != nil || !matched {
+			continue
+		}
+		option := ScenarioFinalStateOption{}
+		if optionID := strings.TrimSpace(tr.FinalStateOptionID); optionID != "" {
+			option = optionsByID[optionID]
+		}
+		return ScenarioPackageResolution{
+			PackageID:      currentPackageID,
+			StopTracking:   true,
+			FinalStateJSON: strings.TrimSpace(option.FinalStateJSON),
+			FinalLabel:     strings.TrimSpace(option.FinalLabel),
+		}, nil
+	}
+	return ScenarioPackageResolution{PackageID: currentPackageID}, nil
 }
 
 func (p ScenarioPackage) ResolveNextPackage(stateJSON string) (ScenarioPackageResolution, error) {

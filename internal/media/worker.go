@@ -756,8 +756,9 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 	if previousPackageID == "" {
 		previousPackageID = startPackageID
 	}
+	previousStateMap := parseJSONMap(previousState)
 	currentNodeID := scenarioStateNodeID(previousState)
-	resolvedNode, matchedTransitionID, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, previousState)
+	resolvedNode, _, nodeChanged, err := gameScenario.ResolveNodeWithState(currentNodeID, previousStateMap)
 	if err != nil {
 		return scenarioExecutionPlan{}, err
 	}
@@ -788,33 +789,13 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 		transitionTrace["status"] = "accepted"
 		transitionTrace["reason"] = "game_scenario_transition_matched"
 	}
-	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(matchedTransitionID, previousState); terminalErr != nil {
-		return scenarioExecutionPlan{}, terminalErr
-	} else if ok {
-		transitionTrace = map[string]any{
-			"status":      "terminal_stop",
-			"fromNode":    strings.TrimSpace(resolvedNode.ID),
-			"fromPackage": strings.TrimSpace(activePackage.ID),
-			"reason":      "game_scenario_terminal_condition_matched",
-		}
-		return scenarioExecutionPlan{
-			StopTracking:      true,
-			TerminalStateJSON: mergeJSONState(previousState, terminal.ResultStateJSON),
-			TerminalLabel:     firstNonEmpty(strings.TrimSpace(terminal.ResultLabel), "tracking_stopped"),
-			TransitionTrace:   transitionTrace,
-			PreviousState:     previousState,
-			GameScenarioID:    strings.TrimSpace(gameScenario.ID),
-			StartPackageID:    startPackageID,
-			CurrentPackageID:  strings.TrimSpace(activePackage.ID),
-		}, nil
-	}
-	resolution, resolveErr := activePackage.ResolveNextPackage(previousState)
+	resolution, resolveErr := activePackage.ResolveTerminalWithState(previousStateMap)
 	if resolveErr == nil {
 		if resolution.StopTracking {
 			transitionTrace = map[string]any{
 				"status":      "terminal_stop",
 				"fromPackage": strings.TrimSpace(activePackage.ID),
-				"reason":      "terminal_condition_matched",
+				"reason":      "scenario_package_terminal_condition_matched",
 			}
 			return scenarioExecutionPlan{
 				StopTracking:      true,
@@ -827,46 +808,15 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 				CurrentPackageID:  strings.TrimSpace(activePackage.ID),
 			}, nil
 		}
-		if resolution.Changed {
-			nextPackage, pkgErr := w.prompts.GetScenarioPackage(ctx, resolution.PackageID)
-			if pkgErr == nil {
-				canEnter, enterErr := nextPackage.CanEnter(previousState)
-				if enterErr == nil && canEnter {
-					transitionTrace = map[string]any{
-						"status":      "accepted",
-						"fromPackage": strings.TrimSpace(activePackage.ID),
-						"toPackage":   strings.TrimSpace(nextPackage.ID),
-						"reason":      "transition_condition_and_entry_guard_matched",
-					}
-					activePackage = nextPackage
-					currentPackageID = strings.TrimSpace(nextPackage.ID)
-					packageChanged = true
-				} else {
-					transitionTrace = map[string]any{
-						"status":      "rejected",
-						"fromPackage": strings.TrimSpace(activePackage.ID),
-						"toPackage":   strings.TrimSpace(nextPackage.ID),
-						"reason":      "target_initial_entry_condition_failed",
-					}
-				}
-			} else {
-				transitionTrace = map[string]any{
-					"status":      "rejected",
-					"fromPackage": strings.TrimSpace(activePackage.ID),
-					"toPackage":   strings.TrimSpace(resolution.PackageID),
-					"reason":      "target_package_not_found",
-				}
-			}
-		}
 	}
 	currentStepID := strings.TrimSpace(latest.Stage)
 	if packageChanged {
 		currentStepID = ""
 	}
-	step, entering, err := activePackage.ResolveStep(currentStepID, previousState)
+	step, entering, err := activePackage.ResolveStepWithState(currentStepID, previousStateMap)
 	if err != nil {
 		if errors.Is(err, prompts.ErrScenarioStepNotFound) && strings.TrimSpace(latest.Stage) != "" {
-			step, entering, err = activePackage.ResolveStep("", previousState)
+			step, entering, err = activePackage.ResolveStepWithState("", previousStateMap)
 		}
 		if err != nil {
 			return scenarioExecutionPlan{}, err
