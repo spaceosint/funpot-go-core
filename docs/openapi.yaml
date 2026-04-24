@@ -1253,7 +1253,7 @@ components:
           type: integer
         videoData:
           type: string
-          description: Static placeholder string `video-data` returned for each decision entry.
+          description: Media reference for the analyzed chunk (for example a playback URL or storage reference).
         requestRef:
           type: string
         responseRef:
