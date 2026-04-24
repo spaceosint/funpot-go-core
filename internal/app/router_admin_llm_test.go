@@ -298,6 +298,40 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 	if getRes.Code != http.StatusOK {
 		t.Fatalf("game scenario get status=%d body=%s", getRes.Code, getRes.Body.String())
 	}
+	var loaded map[string]any
+	if err := json.Unmarshal(getRes.Body.Bytes(), &loaded); err != nil {
+		t.Fatalf("decode game scenario: %v", err)
+	}
+	if loaded["name"] != "cs2 game scenario" {
+		t.Fatalf("expected original name, got %#v", loaded["name"])
+	}
+
+	updateBody, _ := json.Marshal(map[string]any{
+		"name":          "cs2 game scenario updated",
+		"gameSlug":      "cs2",
+		"initialNodeId": "node-target",
+		"nodes": []map[string]any{
+			{"id": "node-root", "alias": "Root Node", "scenarioPackageId": rootPkg.ID},
+			{"id": "node-target", "alias": "Target Node", "scenarioPackageId": targetPkg.ID},
+		},
+		"transitions": []map[string]any{
+			{"id": "tr-2", "fromNodeId": "node-target", "toNodeId": "node-root", "condition": `game == "cs2"`, "priority": 9},
+		},
+	})
+	updateReq := httptest.NewRequest(http.MethodPut, "/api/admin/llm/game-scenarios/"+id, bytes.NewReader(updateBody))
+	updateReq.Header.Set("Authorization", "Bearer "+adminToken)
+	updateRes := httptest.NewRecorder()
+	handler.ServeHTTP(updateRes, updateReq)
+	if updateRes.Code != http.StatusOK {
+		t.Fatalf("game scenario update status=%d body=%s", updateRes.Code, updateRes.Body.String())
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(updateRes.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated game scenario: %v", err)
+	}
+	if updated["name"] != "cs2 game scenario updated" {
+		t.Fatalf("expected updated name, got %#v", updated["name"])
+	}
 
 	activateReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/game-scenarios/"+id+"/activate", nil)
 	activateReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -305,5 +339,13 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 	handler.ServeHTTP(activateRes, activateReq)
 	if activateRes.Code != http.StatusOK {
 		t.Fatalf("game scenario activate status=%d body=%s", activateRes.Code, activateRes.Body.String())
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/llm/game-scenarios/"+id, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteRes := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRes, deleteReq)
+	if deleteRes.Code != http.StatusNoContent {
+		t.Fatalf("game scenario delete status=%d body=%s", deleteRes.Code, deleteRes.Body.String())
 	}
 }
