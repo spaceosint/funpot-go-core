@@ -960,6 +960,74 @@ func TestWorkerProcessStreamerAppliesPostStepGameScenarioTransition(t *testing.T
 	}
 }
 
+func TestWorkerProcessStreamerKeepsCurrentScenarioPackageStepAcrossCycles(t *testing.T) {
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{
+			"root_detect":       {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"game":"cs2"}`},
+			"cs2_mode":          {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":1,"t_score":0}`},
+			"matchmaking-5vs5":  {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":2,"t_score":0}`},
+		}},
+		fakePromptResolver{
+			gameScenario: prompts.GameScenario{
+				ID:            "game-scenario-1",
+				Name:          "global-to-cs2",
+				GameSlug:      "global",
+				InitialNodeID: "global",
+				Nodes: []prompts.GameScenarioNode{
+					{ID: "global", ScenarioPackageID: "scenario-root"},
+					{ID: "cs2_node", ScenarioPackageID: "scenario-cs2"},
+				},
+				Transitions: []prompts.GameScenarioTransition{
+					{ID: "to_cs2", FromNodeID: "global", ToNodeID: "cs2_node", Condition: `game == "cs2"`, Priority: 1},
+				},
+				IsActive: true,
+			},
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-root",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "root_detect", Name: "Root detect", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+			},
+			scenariosByID: map[string]prompts.ScenarioPackage{
+				"scenario-cs2": {
+					ID:               "scenario-cs2",
+					GameSlug:         "global",
+					LLMModelConfigID: "cfg-default",
+					Steps: []prompts.ScenarioStep{
+						{ID: "cs2_mode", Name: "CS2 mode", PromptTemplate: "mode", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+						{ID: "matchmaking-5vs5", Name: "Matchmaking", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Order: 2},
+					},
+					Transitions: []prompts.ScenarioTransition{
+						{FromStepID: "cs2_mode", ToStepID: "matchmaking-5vs5", Condition: "mode=matchmaking-5vs5", Priority: 1},
+					},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	if _, err := worker.ProcessStreamer(context.Background(), "streamer-1"); err != nil {
+		t.Fatalf("first cycle error = %v", err)
+	}
+	if _, err := worker.ProcessStreamer(context.Background(), "streamer-1"); err != nil {
+		t.Fatalf("second cycle error = %v", err)
+	}
+	third, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if err != nil {
+		t.Fatalf("third cycle error = %v", err)
+	}
+	if third.Stage != "matchmaking-5vs5" {
+		t.Fatalf("expected transition to matchmaking-5vs5 on third cycle, got %q", third.Stage)
+	}
+}
+
 func TestResolveGameScenarioSlug(t *testing.T) {
 	t.Parallel()
 

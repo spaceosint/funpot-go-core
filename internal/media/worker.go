@@ -752,6 +752,10 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 	latest := w.latestDecisionByStreamer(ctx, streamerID)
 	previousState := w.resolvePreviousState(ctx, streamerID)
 	startPackageID := strings.TrimSpace(pkg.ID)
+	previousPackageID := scenarioStatePackageID(previousState)
+	if previousPackageID == "" {
+		previousPackageID = startPackageID
+	}
 	currentNodeID := scenarioStateNodeID(previousState)
 	resolvedNode, matchedTransitionID, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, previousState)
 	if err != nil {
@@ -769,12 +773,15 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 		}
 		activePackage = resolved
 	}
-	packageChanged := nodeChanged || currentPackageID != startPackageID
+	packageChanged := nodeChanged
+	if previousPackageID != "" && currentPackageID != "" && previousPackageID != currentPackageID {
+		packageChanged = true
+	}
 	transitionTrace := map[string]any{
 		"status":      "no_transition",
 		"fromNode":    firstNonEmpty(strings.TrimSpace(currentNodeID), strings.TrimSpace(gameScenario.InitialNodeID)),
 		"toNode":      strings.TrimSpace(resolvedNode.ID),
-		"fromPackage": strings.TrimSpace(startPackageID),
+		"fromPackage": strings.TrimSpace(previousPackageID),
 		"toPackage":   strings.TrimSpace(currentPackageID),
 	}
 	if nodeChanged {
