@@ -73,12 +73,12 @@ func TestBunnyChunkPublisherUploadsChunkImmediately(t *testing.T) {
 
 	dir := t.TempDir()
 	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
-		OutputDir:      dir,
-		FFmpegBinary:   "ffmpeg",
-		BaseURL:        api.URL,
-		LibraryID:      "lib-1",
-		APIKey:         "key",
-		HTTPTimeout:    time.Second,
+		OutputDir:    dir,
+		FFmpegBinary: "ffmpeg",
+		BaseURL:      api.URL,
+		LibraryID:    "lib-1",
+		APIKey:       "key",
+		HTTPTimeout:  time.Second,
 	})
 
 	chunkA := filepath.Join(dir, "a.mp4")
@@ -126,12 +126,12 @@ func TestBunnyChunkPublisherFinalizeIsNoop(t *testing.T) {
 
 	dir := t.TempDir()
 	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
-		OutputDir:      dir,
-		FFmpegBinary:   "ffmpeg",
-		BaseURL:        api.URL,
-		LibraryID:      "lib-1",
-		APIKey:         "key",
-		HTTPTimeout:    time.Second,
+		OutputDir:    dir,
+		FFmpegBinary: "ffmpeg",
+		BaseURL:      api.URL,
+		LibraryID:    "lib-1",
+		APIKey:       "key",
+		HTTPTimeout:  time.Second,
 	})
 	if err := publisher.Finalize(context.Background(), "str-1", time.Now().UTC()); err != nil {
 		t.Fatalf("finalize stream: %v", err)
