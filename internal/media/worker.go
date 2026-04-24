@@ -296,6 +296,10 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 	logger.Info("analysis run created", zap.String("streamerID", id), zap.String("runID", runID))
 
 	lastDecision, err := w.processExecutionPlan(ctx, runID, id, chunk, pkg, execution)
+	if errors.Is(err, ErrTrackingStop) {
+		w.metrics.recordCycle(ctx, id, "tracking_stop")
+		return lastDecision, ErrTrackingStop
+	}
 	if err != nil {
 		if execution.CurrentPackageID != "" && execution.StartPackageID != "" && execution.CurrentPackageID != execution.StartPackageID {
 			rootPkg, rootErr := w.prompts.GetScenarioPackage(ctx, execution.StartPackageID)
@@ -306,6 +310,10 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 				}
 			}
 		}
+	}
+	if errors.Is(err, ErrTrackingStop) {
+		w.metrics.recordCycle(ctx, id, "tracking_stop")
+		return lastDecision, ErrTrackingStop
 	}
 	if err != nil {
 		w.metrics.recordFailure(ctx, id, "execution_plan")
@@ -919,7 +927,62 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		return streamers.LLMDecision{}, err
 	}
 	decision.TransitionToStep = step.ID
+	decision, stopTracking, err := w.applyGameScenarioTerminalCondition(ctx, execution, finalTransitionTrace, decision)
+	if err != nil {
+		return streamers.LLMDecision{}, err
+	}
+	if stopTracking {
+		return decision, ErrTrackingStop
+	}
 	return decision, nil
+}
+
+func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, execution scenarioExecutionPlan, transitionTrace map[string]any, decision streamers.LLMDecision) (streamers.LLMDecision, bool, error) {
+	gameScenarioID := strings.TrimSpace(execution.GameScenarioID)
+	if gameScenarioID == "" {
+		return decision, false, nil
+	}
+	gameScenario, err := w.prompts.GetGameScenario(ctx, gameScenarioID)
+	if err != nil {
+		return decision, false, nil
+	}
+	currentState := strings.TrimSpace(decision.UpdatedStateJSON)
+	currentNodeID := strings.TrimSpace(fmt.Sprint(transitionTrace["toNode"]))
+	if currentNodeID == "" {
+		currentNodeID = scenarioStateNodeID(execution.PreviousState)
+	}
+	_, transitionID, _, err := gameScenario.ResolveNode(currentNodeID, currentState)
+	if err != nil {
+		return streamers.LLMDecision{}, false, err
+	}
+	terminal, matched, err := gameScenario.ResolveTerminalCondition(transitionID, currentState)
+	if err != nil {
+		return streamers.LLMDecision{}, false, err
+	}
+	if !matched {
+		return decision, false, nil
+	}
+	decision.TransitionTerminal = true
+	decision.Label = firstNonEmpty(strings.TrimSpace(terminal.ResultLabel), "tracking_stopped")
+	decision.TransitionOutcome = decision.Label
+	decision.UpdatedStateJSON = enrichScenarioState(
+		mergeJSONState(currentState, terminal.ResultStateJSON),
+		execution.PreviousState,
+		gameScenarioID,
+		scenarioStatePackageID(currentState),
+		decision.Stage,
+		map[string]any{
+			"status":               "terminal_stop",
+			"fromNode":             firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
+			"toNode":               currentNodeID,
+			"fromPackage":          scenarioStatePackageID(currentState),
+			"toPackage":            scenarioStatePackageID(currentState),
+			"reason":               "game_scenario_terminal_condition_matched",
+			"terminalId":           strings.TrimSpace(terminal.ID),
+			"terminalTransitionId": strings.TrimSpace(terminal.TransitionID),
+		},
+	)
+	return decision, true, nil
 }
 
 func (w *Worker) resolvePostStepScenarioTransition(ctx context.Context, execution scenarioExecutionPlan, currentState string) (string, map[string]any) {
