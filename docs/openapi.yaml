@@ -1650,11 +1650,6 @@ components:
           type: string
         scenarioPackageId:
           type: string
-        terminalConditions:
-          type: array
-          description: Terminal conditions scoped to this node (branch).
-          items:
-            $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTransition:
       type: object
       required: [fromNodeId, toNodeId, condition, priority]
@@ -1671,6 +1666,11 @@ components:
         priority:
           type: integer
           minimum: 1
+        terminalConditions:
+          type: array
+          description: Transition-scoped terminal conditions evaluated only when this transition is matched.
+          items:
+            $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTerminalCondition:
       type: object
       required: [condition]
@@ -1678,9 +1678,6 @@ components:
       properties:
         id:
           type: string
-        transitionId:
-          type: string
-          description: Optional transition ID for edge-scoped terminal conditions.
         condition:
           type: string
         resultLabel:
@@ -1711,11 +1708,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GameScenarioTransition'
-        terminalConditions:
-          type: array
-          description: Deprecated graph-wide terminal conditions; prefer node-level terminalConditions.
-          items:
-            $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenario:
       allOf:
         - $ref: '#/components/schemas/GameScenarioCreateRequest'

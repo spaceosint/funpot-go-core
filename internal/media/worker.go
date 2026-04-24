@@ -788,7 +788,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 		transitionTrace["status"] = "accepted"
 		transitionTrace["reason"] = "game_scenario_transition_matched"
 	}
-	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(resolvedNode.ID, matchedTransitionID, previousState); terminalErr != nil {
+	if terminal, ok, terminalErr := gameScenario.ResolveTerminalCondition(matchedTransitionID, previousState); terminalErr != nil {
 		return scenarioExecutionPlan{}, terminalErr
 	} else if ok {
 		transitionTrace = map[string]any{
