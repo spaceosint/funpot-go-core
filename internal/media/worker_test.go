@@ -964,9 +964,9 @@ func TestWorkerProcessStreamerKeepsCurrentScenarioPackageStepAcrossCycles(t *tes
 	worker := NewWorker(
 		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
 		fakeClassifier{results: map[string]StageClassification{
-			"root_detect":       {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"game":"cs2"}`},
-			"cs2_mode":          {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":1,"t_score":0}`},
-			"matchmaking-5vs5":  {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":2,"t_score":0}`},
+			"root_detect":      {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"game":"cs2"}`},
+			"cs2_mode":         {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":1,"t_score":0}`},
+			"matchmaking-5vs5": {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"matchmaking-5vs5","ct_score":2,"t_score":0}`},
 		}},
 		fakePromptResolver{
 			gameScenario: prompts.GameScenario{
