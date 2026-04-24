@@ -1024,6 +1024,69 @@ func TestWorkerProcessStreamerKeepsCurrentScenarioPackageStepAcrossCycles(t *tes
 	}
 }
 
+func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *testing.T) {
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{
+			"faceit": {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"faceit","ct_score":2,"t_score":6}`},
+		}},
+		fakePromptResolver{
+			gameScenario: prompts.GameScenario{
+				ID:            "game-scenario-1",
+				Name:          "faceit-terminal",
+				GameSlug:      "global",
+				InitialNodeID: "global",
+				Nodes: []prompts.GameScenarioNode{
+					{ID: "global", ScenarioPackageID: "scenario-root"},
+				},
+				Transitions: []prompts.GameScenarioTransition{
+					{
+						ID:         "stay-faceit",
+						FromNodeID: "global",
+						ToNodeID:   "global",
+						Condition:  `mode == "faceit"`,
+						Priority:   1,
+						TerminalConditions: []prompts.GameScenarioTerminalCondition{
+							{ID: "score-limit", Condition: `ct_score >= 6 | t_score >= 6`, ResultLabel: "match_finished", Priority: 1},
+						},
+					},
+				},
+				IsActive: true,
+			},
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-root",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "faceit", Name: "Faceit", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if !errors.Is(err, ErrTrackingStop) {
+		t.Fatalf("expected ErrTrackingStop, got %v", err)
+	}
+	if !decision.TransitionTerminal {
+		t.Fatalf("expected decision to be terminal")
+	}
+	if decision.Label != "match_finished" {
+		t.Fatalf("expected terminal label match_finished, got %q", decision.Label)
+	}
+	state := parseJSONMap(decision.UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	transition, _ := meta["transition"].(map[string]any)
+	if transition["reason"] != "game_scenario_terminal_condition_matched" {
+		t.Fatalf("expected game-scenario terminal trace, got %#v", transition)
+	}
+}
+
 func TestResolveGameScenarioSlug(t *testing.T) {
 	t.Parallel()
 
