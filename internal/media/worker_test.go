@@ -871,7 +871,7 @@ func TestWorkerProcessStreamerIgnoresScenarioPackageHopTransitions(t *testing.T)
 		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
 		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
 		fakePromptResolver{
-			scenario: rootPackage,
+			scenario:       rootPackage,
 			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
 		},
 		&InMemoryRunStore{},
