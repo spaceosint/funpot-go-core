@@ -130,7 +130,12 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 }
 
 func (s *Service) ListGameScenarios(ctx context.Context) []GameScenario {
-	_ = ctx
+	if s.gameScenarioStore != nil {
+		items, err := s.gameScenarioStore.List(ctx)
+		if err == nil {
+			return items
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	items := make([]GameScenario, 0)
@@ -149,6 +154,22 @@ func (s *Service) ListGameScenarios(ctx context.Context) []GameScenario {
 func (s *Service) CreateGameScenario(ctx context.Context, req GameScenarioCreateRequest) (GameScenario, error) {
 	if err := s.validateGameScenarioRequest(ctx, req); err != nil {
 		return GameScenario{}, err
+	}
+	if s.gameScenarioStore != nil {
+		item := GameScenario{
+			Name:          strings.TrimSpace(req.Name),
+			GameSlug:      strings.TrimSpace(req.GameSlug),
+			InitialNodeID: strings.TrimSpace(req.InitialNodeID),
+			Nodes:         append([]GameScenarioNode(nil), req.Nodes...),
+			Transitions:   append([]GameScenarioTransition(nil), req.Transitions...),
+			CreatedBy:     strings.TrimSpace(req.ActorID),
+			CreatedAt:     time.Now().UTC(),
+		}
+		created, err := s.gameScenarioStore.Create(ctx, item)
+		if err != nil {
+			return GameScenario{}, err
+		}
+		return created, nil
 	}
 	now := time.Now().UTC()
 	s.mu.Lock()
@@ -176,10 +197,12 @@ func (s *Service) CreateGameScenario(ctx context.Context, req GameScenarioCreate
 }
 
 func (s *Service) GetGameScenario(ctx context.Context, id string) (GameScenario, error) {
-	_ = ctx
 	lookup := strings.TrimSpace(id)
 	if lookup == "" {
 		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	if s.gameScenarioStore != nil {
+		return s.gameScenarioStore.GetByID(ctx, lookup)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -200,6 +223,18 @@ func (s *Service) UpdateGameScenario(ctx context.Context, id string, req GameSce
 	lookup := strings.TrimSpace(id)
 	if lookup == "" {
 		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	if s.gameScenarioStore != nil {
+		current, err := s.gameScenarioStore.GetByID(ctx, lookup)
+		if err != nil {
+			return GameScenario{}, err
+		}
+		current.Name = strings.TrimSpace(req.Name)
+		current.GameSlug = strings.TrimSpace(req.GameSlug)
+		current.InitialNodeID = strings.TrimSpace(req.InitialNodeID)
+		current.Nodes = append([]GameScenarioNode(nil), req.Nodes...)
+		current.Transitions = append([]GameScenarioTransition(nil), req.Transitions...)
+		return s.gameScenarioStore.Update(ctx, current)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -231,10 +266,12 @@ func (s *Service) UpdateGameScenario(ctx context.Context, id string, req GameSce
 }
 
 func (s *Service) DeleteGameScenario(ctx context.Context, id string) error {
-	_ = ctx
 	lookup := strings.TrimSpace(id)
 	if lookup == "" {
 		return ErrGameScenarioNotFound
+	}
+	if s.gameScenarioStore != nil {
+		return s.gameScenarioStore.Delete(ctx, lookup)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -255,10 +292,12 @@ func (s *Service) DeleteGameScenario(ctx context.Context, id string) error {
 }
 
 func (s *Service) ActivateGameScenario(ctx context.Context, id, actorID string) (GameScenario, error) {
-	_ = ctx
 	lookup := strings.TrimSpace(id)
 	if lookup == "" {
 		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	if s.gameScenarioStore != nil {
+		return s.gameScenarioStore.SetActive(ctx, lookup, strings.TrimSpace(actorID), time.Now().UTC())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,10 +338,18 @@ func (s *Service) ActivateGameScenario(ctx context.Context, id, actorID string) 
 }
 
 func (s *Service) GetActiveGameScenario(ctx context.Context, gameSlug string) (GameScenario, error) {
-	_ = ctx
 	lookup := strings.TrimSpace(gameSlug)
 	if lookup == "" {
 		return GameScenario{}, ErrGameScenarioNotFound
+	}
+	if s.gameScenarioStore != nil {
+		item, err := s.gameScenarioStore.GetActiveByGameSlug(ctx, lookup)
+		if err == nil {
+			return item, nil
+		}
+		if !errors.Is(err, ErrGameScenarioNotFound) {
+			return GameScenario{}, err
+		}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
