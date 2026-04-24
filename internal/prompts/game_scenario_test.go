@@ -208,7 +208,7 @@ func TestGameScenarioActivateKeepsSingleActiveAcrossSlugs(t *testing.T) {
 	}
 }
 
-func TestGameScenarioResolveTerminalConditionRequiresTransitionMatch(t *testing.T) {
+func TestGameScenarioResolveTerminalConditionFallsBackToGlobalScope(t *testing.T) {
 	t.Parallel()
 
 	scenario := GameScenario{
@@ -231,11 +231,14 @@ func TestGameScenarioResolveTerminalConditionRequiresTransitionMatch(t *testing.
 	if err != nil {
 		t.Fatalf("ResolveTerminalCondition(no-transition): %v", err)
 	}
-	if ok {
-		t.Fatalf("expected no terminal match without transition")
+	if !ok {
+		t.Fatalf("expected global terminal match without transition")
 	}
-	if terminal.ID != "" {
-		t.Fatalf("expected empty terminal, got %s", terminal.ID)
+	if terminal.ID != "edge-win" {
+		t.Fatalf("expected global terminal match edge-win, got %s", terminal.ID)
+	}
+	if terminal.TransitionID != "edge-1" {
+		t.Fatalf("expected transition reference edge-1, got %s", terminal.TransitionID)
 	}
 }
 
@@ -268,5 +271,49 @@ func TestGameScenarioResolveTerminalConditionPrefersTransitionScope(t *testing.T
 	}
 	if terminal.ID != "edge-win-high" {
 		t.Fatalf("expected edge-level terminal condition, got %s", terminal.ID)
+	}
+}
+
+func TestGameScenarioResolveTerminalConditionPrefersMatchedTransitionBeforeGlobal(t *testing.T) {
+	t.Parallel()
+
+	scenario := GameScenario{
+		InitialNodeID: "n1",
+		Transitions: []GameScenarioTransition{
+			{
+				ID:         "edge-1",
+				FromNodeID: "n1",
+				ToNodeID:   "n2",
+				Condition:  `winner == "ct"`,
+				Priority:   100,
+				TerminalConditions: []GameScenarioTerminalCondition{
+					{ID: "edge-win-local", Condition: `winner == "ct"`, ResultLabel: "local", Priority: 10},
+				},
+			},
+			{
+				ID:         "edge-2",
+				FromNodeID: "n2",
+				ToNodeID:   "n3",
+				Condition:  `winner == "ct"`,
+				Priority:   90,
+				TerminalConditions: []GameScenarioTerminalCondition{
+					{ID: "edge-win-global", Condition: `winner == "ct"`, ResultLabel: "global", Priority: 999},
+				},
+			},
+		},
+	}
+
+	terminal, ok, err := scenario.ResolveTerminalCondition("edge-1", `{"winner":"ct"}`)
+	if err != nil {
+		t.Fatalf("ResolveTerminalCondition(edge): %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected terminal condition to match")
+	}
+	if terminal.ID != "edge-win-local" {
+		t.Fatalf("expected transition-scoped terminal to be preferred, got %s", terminal.ID)
+	}
+	if terminal.TransitionID != "edge-1" {
+		t.Fatalf("expected transition reference edge-1, got %s", terminal.TransitionID)
 	}
 }

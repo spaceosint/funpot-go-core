@@ -1668,7 +1668,7 @@ components:
           minimum: 1
         terminalConditions:
           type: array
-          description: Transition-scoped terminal conditions evaluated only when this transition is matched.
+          description: Terminal conditions attached to a transition. Runtime first evaluates terminal conditions from the matched transition, then falls back to evaluating terminal conditions from other transitions globally when no matched-transition terminal condition succeeds.
           items:
             $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTerminalCondition:
