@@ -385,29 +385,56 @@ func (g GameScenario) InitialNode() (GameScenarioNode, error) {
 func (g GameScenario) ResolveTerminalCondition(transitionID, stateJSON string) (GameScenarioTerminalCondition, bool, error) {
 	state := parseJSONMap(stateJSON)
 	lookupTransitionID := strings.TrimSpace(transitionID)
-	if lookupTransitionID == "" {
-		return GameScenarioTerminalCondition{}, false, nil
-	}
-	ordered := make([]GameScenarioTerminalCondition, 0)
-	for _, tr := range g.Transitions {
-		if strings.TrimSpace(tr.ID) == lookupTransitionID {
-			for _, terminal := range tr.TerminalConditions {
-				terminal.TransitionID = lookupTransitionID
-				ordered = append(ordered, terminal)
+	orderedForTransition := make([]GameScenarioTerminalCondition, 0)
+	if lookupTransitionID != "" {
+		for _, tr := range g.Transitions {
+			if strings.TrimSpace(tr.ID) == lookupTransitionID {
+				for _, terminal := range tr.TerminalConditions {
+					terminal.TransitionID = lookupTransitionID
+					orderedForTransition = append(orderedForTransition, terminal)
+				}
+				break
 			}
-			break
 		}
 	}
-	if len(ordered) == 0 {
+	if terminal, ok, err := evaluateOrderedTerminals(orderedForTransition, state); err != nil {
+		return GameScenarioTerminalCondition{}, false, err
+	} else if ok {
+		return terminal, true, nil
+	}
+
+	orderedGlobal := make([]GameScenarioTerminalCondition, 0)
+	for _, tr := range g.Transitions {
+		transitionRef := strings.TrimSpace(tr.ID)
+		if transitionRef == lookupTransitionID {
+			continue
+		}
+		for _, terminal := range tr.TerminalConditions {
+			terminal.TransitionID = transitionRef
+			orderedGlobal = append(orderedGlobal, terminal)
+		}
+	}
+	if terminal, ok, err := evaluateOrderedTerminals(orderedGlobal, state); err != nil {
+		return GameScenarioTerminalCondition{}, false, err
+	} else if ok {
+		return terminal, true, nil
+	}
+	return GameScenarioTerminalCondition{}, false, nil
+}
+
+func evaluateOrderedTerminals(items []GameScenarioTerminalCondition, state map[string]any) (GameScenarioTerminalCondition, bool, error) {
+	if len(items) == 0 {
 		return GameScenarioTerminalCondition{}, false, nil
 	}
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].Priority == ordered[j].Priority {
-			return strings.TrimSpace(ordered[i].ID) < strings.TrimSpace(ordered[j].ID)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Priority == items[j].Priority {
+			left := strings.TrimSpace(items[i].TransitionID) + ":" + strings.TrimSpace(items[i].ID)
+			right := strings.TrimSpace(items[j].TransitionID) + ":" + strings.TrimSpace(items[j].ID)
+			return left < right
 		}
-		return ordered[i].Priority > ordered[j].Priority
+		return items[i].Priority > items[j].Priority
 	})
-	for _, terminal := range ordered {
+	for _, terminal := range items {
 		ok, err := evaluateCondition(terminal.Condition, state)
 		if err != nil {
 			return GameScenarioTerminalCondition{}, false, err
