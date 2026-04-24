@@ -850,7 +850,7 @@ func TestWorkerProcessStreamerStopsFromPackageTransitionAndReturnsState(t *testi
 	}
 }
 
-func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testing.T) {
+func TestWorkerProcessStreamerIgnoresScenarioPackageHopTransitions(t *testing.T) {
 	decisions := &fakeDecisionStore{
 		items: []streamers.RecordDecisionRequest{
 			{StreamerID: "streamer-1", Stage: "initial", Label: "running", UpdatedStateJSON: `{"game":"cs2","mode":"no_match"}`},
@@ -867,23 +867,11 @@ func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testi
 			{ToPackageID: "scenario-cs2", Condition: `game == "cs2"`, Priority: 1},
 		},
 	}
-	cs2Package := prompts.ScenarioPackage{
-		ID:               "scenario-cs2",
-		GameSlug:         "cs2",
-		LLMModelConfigID: "cfg-default",
-		Steps: []prompts.ScenarioStep{
-			{ID: "cs2_initial", Name: "CS2 Initial", PromptTemplate: "cs2", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, EntryCondition: `mode == "match"`},
-		},
-	}
 	worker := NewWorker(
 		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
 		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "ok", Confidence: 0.9}}},
 		fakePromptResolver{
 			scenario: rootPackage,
-			scenariosByID: map[string]prompts.ScenarioPackage{
-				"scenario-root": rootPackage,
-				"scenario-cs2":  cs2Package,
-			},
 			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
 		},
 		&InMemoryRunStore{},
@@ -902,8 +890,8 @@ func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testi
 		t.Fatalf("expected to stay in root package, got %#v", state)
 	}
 	transition, _ := meta["transition"].(map[string]any)
-	if transition["status"] != "rejected" {
-		t.Fatalf("expected rejected transition trace, got %#v", transition)
+	if transition["status"] != "accepted" || transition["toPackage"] != "scenario-root" {
+		t.Fatalf("expected accepted transition trace within same package, got %#v", transition)
 	}
 }
 

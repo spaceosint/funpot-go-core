@@ -384,6 +384,10 @@ func (g GameScenario) InitialNode() (GameScenarioNode, error) {
 
 func (g GameScenario) ResolveTerminalCondition(transitionID, stateJSON string) (GameScenarioTerminalCondition, bool, error) {
 	state := parseJSONMap(stateJSON)
+	return g.ResolveTerminalConditionWithState(transitionID, state)
+}
+
+func (g GameScenario) ResolveTerminalConditionWithState(transitionID string, state map[string]any) (GameScenarioTerminalCondition, bool, error) {
 	lookupTransitionID := strings.TrimSpace(transitionID)
 	orderedForTransition := make([]GameScenarioTerminalCondition, 0)
 	if lookupTransitionID != "" {
@@ -474,6 +478,10 @@ func (s *Service) ensureAtLeastOneActiveLocked(actorID string) {
 }
 
 func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenarioNode, string, bool, error) {
+	return g.ResolveNodeWithState(currentNodeID, parseJSONMap(stateJSON))
+}
+
+func (g GameScenario) ResolveNodeWithState(currentNodeID string, state map[string]any) (GameScenarioNode, string, bool, error) {
 	activeNodeID := strings.TrimSpace(currentNodeID)
 	if activeNodeID == "" {
 		initial, err := g.InitialNode()
@@ -488,20 +496,22 @@ func (g GameScenario) ResolveNode(currentNodeID, stateJSON string) (GameScenario
 		initial, err := g.InitialNode()
 		return initial, "", true, err
 	}
-	state := parseJSONMap(stateJSON)
-	ordered := append([]GameScenarioTransition(nil), g.Transitions...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].Priority == ordered[j].Priority {
-			left := strings.TrimSpace(ordered[i].ID) + strings.TrimSpace(ordered[i].ToNodeID)
-			right := strings.TrimSpace(ordered[j].ID) + strings.TrimSpace(ordered[j].ToNodeID)
-			return left < right
-		}
-		return ordered[i].Priority > ordered[j].Priority
-	})
-	for _, tr := range ordered {
+	outgoing := make([]GameScenarioTransition, 0)
+	for _, tr := range g.Transitions {
 		if strings.TrimSpace(tr.FromNodeID) != activeNodeID {
 			continue
 		}
+		outgoing = append(outgoing, tr)
+	}
+	sort.SliceStable(outgoing, func(i, j int) bool {
+		if outgoing[i].Priority == outgoing[j].Priority {
+			left := strings.TrimSpace(outgoing[i].ID) + strings.TrimSpace(outgoing[i].ToNodeID)
+			right := strings.TrimSpace(outgoing[j].ID) + strings.TrimSpace(outgoing[j].ToNodeID)
+			return left < right
+		}
+		return outgoing[i].Priority > outgoing[j].Priority
+	})
+	for _, tr := range outgoing {
 		matched, err := evaluateCondition(tr.Condition, state)
 		if err != nil {
 			return GameScenarioNode{}, "", false, err
