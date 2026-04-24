@@ -949,13 +949,52 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
-	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, execution.GameScenarioID, pkg.ID, step.ID, execution.TransitionTrace)
+	finalPackageID, finalTransitionTrace := w.resolvePostStepScenarioTransition(ctx, execution, result.UpdatedStateJSON)
+	if strings.TrimSpace(finalPackageID) == "" {
+		finalPackageID = pkg.ID
+	}
+	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, execution.GameScenarioID, finalPackageID, step.ID, finalTransitionTrace)
 	decision, err := w.processStageResult(ctx, activePrompt, result, chunk, runID, streamerID, previousState)
 	if err != nil {
 		return streamers.LLMDecision{}, err
 	}
 	decision.TransitionToStep = step.ID
 	return decision, nil
+}
+
+func (w *Worker) resolvePostStepScenarioTransition(ctx context.Context, execution scenarioExecutionPlan, currentState string) (string, map[string]any) {
+	trace := execution.TransitionTrace
+	currentPackageID := strings.TrimSpace(execution.CurrentPackageID)
+	if currentPackageID == "" {
+		currentPackageID = strings.TrimSpace(execution.StartPackageID)
+	}
+	if strings.TrimSpace(execution.GameScenarioID) == "" {
+		return currentPackageID, trace
+	}
+	gameScenario, err := w.prompts.GetGameScenario(ctx, execution.GameScenarioID)
+	if err != nil {
+		return currentPackageID, trace
+	}
+	currentNodeID := strings.TrimSpace(fmt.Sprint(trace["toNode"]))
+	if currentNodeID == "" {
+		currentNodeID = scenarioStateNodeID(execution.PreviousState)
+	}
+	resolvedNode, _, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, currentState)
+	if err != nil || !nodeChanged {
+		return currentPackageID, trace
+	}
+	nextPackageID := strings.TrimSpace(resolvedNode.ScenarioPackageID)
+	if nextPackageID == "" {
+		nextPackageID = currentPackageID
+	}
+	return nextPackageID, map[string]any{
+		"status":      "accepted",
+		"fromNode":    firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
+		"toNode":      strings.TrimSpace(resolvedNode.ID),
+		"fromPackage": currentPackageID,
+		"toPackage":   nextPackageID,
+		"reason":      "game_scenario_transition_matched",
+	}
 }
 
 func (w *Worker) latestDecisionByStreamer(ctx context.Context, streamerID string) streamers.LLMDecision {

@@ -907,6 +907,59 @@ func TestWorkerProcessStreamerDoesNotSwitchPackageWhenInitialGuardFails(t *testi
 	}
 }
 
+func TestWorkerProcessStreamerAppliesPostStepGameScenarioTransition(t *testing.T) {
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{"initial": {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"game":"cs2"}`}}},
+		fakePromptResolver{
+			gameScenario: prompts.GameScenario{
+				ID:            "game-scenario-1",
+				Name:          "global-to-cs2",
+				GameSlug:      "global",
+				InitialNodeID: "global",
+				Nodes: []prompts.GameScenarioNode{
+					{ID: "global", ScenarioPackageID: "scenario-root"},
+					{ID: "cs2_node", ScenarioPackageID: "scenario-cs2"},
+				},
+				Transitions: []prompts.GameScenarioTransition{
+					{ID: "to_cs2", FromNodeID: "global", ToNodeID: "cs2_node", Condition: `game == "cs2"`, Priority: 1},
+				},
+				IsActive: true,
+			},
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-root",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	state := parseJSONMap(decision.UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	if meta["gameScenarioNodeId"] != "cs2_node" {
+		t.Fatalf("expected game scenario node transition to cs2_node, got %#v", meta)
+	}
+	if meta["packageId"] != "scenario-cs2" {
+		t.Fatalf("expected package to switch to scenario-cs2 in state metadata, got %#v", meta)
+	}
+	transition, _ := meta["transition"].(map[string]any)
+	if transition["status"] != "accepted" || transition["toNode"] != "cs2_node" {
+		t.Fatalf("expected accepted transition to cs2_node, got %#v", transition)
+	}
+}
+
 func TestResolveGameScenarioSlug(t *testing.T) {
 	t.Parallel()
 
