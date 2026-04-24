@@ -200,7 +200,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - When Streamlink reports that a Twitch URL has no playable streams (for example, the stream ended or is offline), the scheduler treats that cycle as a graceful skip instead of a hard worker failure and retries on the next 10-second window.
 - `GET /api/streamers/{streamerId}/status` – returns the latest aggregated LLM match-session / state-tracker status for a streamer, including full chronological LLM call history (`history`) with request/response payloads per decision.
 - `DELETE /api/streamers/{streamerId}/tracking` – stops the active Streamlink/LLM tracking loop for a streamer and returns the updated `stopped` status so the client can disable the tracking button immediately.
-- `GET /api/admin/streamers/{streamerId}/llm-history?page=1&pageSize=20` – admin timeline endpoint with paginated LLM decision history (step name, LLM response, global state delta, event timestamps) plus uploaded Bunny video metadata for the streamer.
+- `GET /api/admin/streamers/{streamerId}/llm-history?page=1&pageSize=20` – admin timeline endpoint with paginated LLM decision history (step name, LLM response, global state delta, event timestamps). Each LLM event now carries its own Bunny video fragment URL in `videoData`, plus the endpoint returns uploaded Bunny video metadata for the streamer.
 - `DELETE /api/admin/streamers/{streamerId}/llm-history` – admin cleanup endpoint that deletes persisted LLM decision history and removes tracked Bunny videos for the streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.

@@ -75,76 +75,41 @@ func NewBunnyChunkPublisher(cfg BunnyChunkPublisherConfig) *BunnyChunkPublisher 
 	}
 }
 
-func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, chunk ChunkRef) error {
+func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, chunk ChunkRef) (UploadedVideo, error) {
 	if p == nil {
-		return nil
+		return UploadedVideo{}, nil
 	}
 	if strings.TrimSpace(p.cfg.LibraryID) == "" || strings.TrimSpace(p.cfg.APIKey) == "" {
-		return nil
+		return UploadedVideo{}, nil
 	}
 	chunkPath := strings.TrimSpace(chunk.Reference)
 	if chunkPath == "" {
-		return fmt.Errorf("publish chunk: empty chunk reference")
+		return UploadedVideo{}, fmt.Errorf("publish chunk: empty chunk reference")
 	}
-
-	segmentsDir := filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID), "segments")
-	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
-		return err
-	}
-	nextIndex, err := p.nextSegmentIndex(segmentsDir)
+	videoID, title, err := p.createVideo(ctx, streamerID, chunk.CapturedAt)
 	if err != nil {
-		return err
+		return UploadedVideo{}, err
 	}
-	segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", nextIndex))
-	if err := os.Rename(chunkPath, segmentPath); err != nil {
-		return err
+	if err := p.uploadVideo(ctx, videoID, chunkPath); err != nil {
+		return UploadedVideo{}, err
 	}
-
-	return nil
+	uploaded := UploadedVideo{
+		ID:        videoID,
+		Title:     title,
+		URL:       bunnyPlaybackURL(p.cfg.LibraryID, videoID),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	p.appendUploadedVideo(ctx, streamerID, uploaded)
+	return uploaded, nil
 }
 
 func (p *BunnyChunkPublisher) Finalize(ctx context.Context, streamerID string, capturedAt time.Time) error {
 	if p == nil {
 		return nil
 	}
-	if strings.TrimSpace(p.cfg.LibraryID) == "" || strings.TrimSpace(p.cfg.APIKey) == "" {
-		return nil
-	}
-	segmentsDir := filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID), "segments")
-	segments, err := p.listSegments(segmentsDir)
-	if err != nil {
-		if errorsIsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if len(segments) == 0 {
-		return nil
-	}
-	windowPath, err := p.concatSegments(ctx, streamerID, segmentsDir, segments)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(windowPath) //nolint:errcheck
-
-	videoID, title, err := p.createVideo(ctx, streamerID, capturedAt)
-	if err != nil {
-		return err
-	}
-	if err := p.uploadVideo(ctx, videoID, windowPath); err != nil {
-		return err
-	}
-	p.appendUploadedVideo(ctx, streamerID, UploadedVideo{
-		ID:        videoID,
-		Title:     title,
-		URL:       bunnyPlaybackURL(p.cfg.LibraryID, videoID),
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-	})
-	for _, segment := range segments {
-		_ = os.Remove(segment)
-	}
-	_ = os.RemoveAll(segmentsDir)
-	_ = os.Remove(filepath.Join(p.cfg.OutputDir, sanitizeToken(streamerID)))
+	_ = ctx
+	_ = streamerID
+	_ = capturedAt
 	return nil
 }
 

@@ -207,8 +207,9 @@ type flakyClassifier struct {
 }
 
 type fakeChunkPublisher struct {
-	err   error
-	calls int
+	err      error
+	calls    int
+	uploaded UploadedVideo
 }
 
 func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (StageClassification, error) {
@@ -225,9 +226,9 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 	return f.result, nil
 }
 
-func (f *fakeChunkPublisher) Publish(_ context.Context, _ string, _ ChunkRef) error {
+func (f *fakeChunkPublisher) Publish(_ context.Context, _ string, _ ChunkRef) (UploadedVideo, error) {
 	f.calls++
-	return f.err
+	return f.uploaded, f.err
 }
 
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
@@ -452,13 +453,20 @@ func TestWorkerProcessStreamerRetriesStageClassification(t *testing.T) {
 }
 
 func TestWorkerProcessStreamerPublishesChunkAfterAnalysis(t *testing.T) {
-	publisher := &fakeChunkPublisher{}
-	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, ChunkPublisher: publisher})
+	publisher := &fakeChunkPublisher{uploaded: UploadedVideo{URL: "https://player.mediadelivery.net/play/lib-1/video-1"}}
+	decisions := &fakeDecisionStore{}
+	worker := NewWorker(&fakeCapture{chunk: ChunkRef{Reference: "chunk-1"}}, fakeClassifier{results: map[string]StageClassification{"custom": {Label: "ok", Confidence: 0.9}}}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, &InMemoryRunStore{}, decisions, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5, ChunkPublisher: publisher})
 	if _, err := worker.ProcessStreamer(context.Background(), "str-1"); err != nil {
 		t.Fatalf("ProcessStreamer() error = %v", err)
 	}
 	if publisher.calls != 1 {
 		t.Fatalf("publisher calls = %d, want 1", publisher.calls)
+	}
+	if len(decisions.items) != 1 {
+		t.Fatalf("recorded decisions = %d, want 1", len(decisions.items))
+	}
+	if decisions.items[0].ChunkRef != publisher.uploaded.URL {
+		t.Fatalf("decision chunkRef = %q, want uploaded URL", decisions.items[0].ChunkRef)
 	}
 }
 

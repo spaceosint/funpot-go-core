@@ -55,7 +55,7 @@ func (f *fakePublishRunner) Run(_ context.Context, _ io.Writer, _ io.Writer, nam
 	return nil
 }
 
-func TestBunnyChunkPublisherUploadsOnlyOnFinalize(t *testing.T) {
+func TestBunnyChunkPublisherUploadsChunkImmediately(t *testing.T) {
 	uploadCalls := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -71,13 +71,10 @@ func TestBunnyChunkPublisherUploadsOnlyOnFinalize(t *testing.T) {
 	}))
 	defer api.Close()
 
-	runner := &fakePublishRunner{}
 	dir := t.TempDir()
 	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
 		OutputDir:      dir,
 		FFmpegBinary:   "ffmpeg",
-		Runner:         runner,
-		AggregateCount: 2,
 		BaseURL:        api.URL,
 		LibraryID:      "lib-1",
 		APIKey:         "key",
@@ -88,48 +85,30 @@ func TestBunnyChunkPublisherUploadsOnlyOnFinalize(t *testing.T) {
 	if err := os.WriteFile(chunkA, []byte("A"), 0o644); err != nil {
 		t.Fatalf("write chunkA: %v", err)
 	}
-	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()}); err != nil {
+	uploadedA, err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()})
+	if err != nil {
 		t.Fatalf("publish first chunk: %v", err)
 	}
-	if uploadCalls != 0 {
-		t.Fatalf("uploadCalls = %d, want 0 before batch ready", uploadCalls)
+	if uploadCalls != 1 {
+		t.Fatalf("uploadCalls = %d, want 1 after first publish", uploadCalls)
+	}
+	if uploadedA.URL == "" {
+		t.Fatalf("uploadedA.URL is empty")
 	}
 
 	chunkB := filepath.Join(dir, "b.mp4")
 	if err := os.WriteFile(chunkB, []byte("B"), 0o644); err != nil {
 		t.Fatalf("write chunkB: %v", err)
 	}
-	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
+	if _, err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("publish second chunk: %v", err)
 	}
-	if uploadCalls != 0 {
-		t.Fatalf("uploadCalls = %d, want 0 before finalize", uploadCalls)
-	}
-	if err := publisher.Finalize(context.Background(), "str-1", time.Now().UTC()); err != nil {
-		t.Fatalf("finalize stream: %v", err)
-	}
-	if uploadCalls != 1 {
-		t.Fatalf("uploadCalls = %d, want 1 after finalize", uploadCalls)
-	}
-	segmentsDir := filepath.Join(dir, "str-1", "segments")
-	if _, err := os.Stat(segmentsDir); !os.IsNotExist(err) {
-		t.Fatalf("segments dir should be removed after finalize, stat err=%v", err)
+	if uploadCalls != 2 {
+		t.Fatalf("uploadCalls = %d, want 2 after second publish", uploadCalls)
 	}
 }
 
-func TestBunnyChunkPublisherConcatListUsesAbsolutePaths(t *testing.T) {
-	originalWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	testWD := t.TempDir()
-	if err := os.Chdir(testWD); err != nil {
-		t.Fatalf("chdir test wd: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Chdir(originalWD)
-	})
-
+func TestBunnyChunkPublisherFinalizeIsNoop(t *testing.T) {
 	uploadCalls := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -145,57 +124,20 @@ func TestBunnyChunkPublisherConcatListUsesAbsolutePaths(t *testing.T) {
 	}))
 	defer api.Close()
 
-	runner := &fakePublishRunner{}
+	dir := t.TempDir()
 	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
-		OutputDir:      "tmp/stream_chunks",
+		OutputDir:      dir,
 		FFmpegBinary:   "ffmpeg",
-		Runner:         runner,
-		AggregateCount: 2,
 		BaseURL:        api.URL,
 		LibraryID:      "lib-1",
 		APIKey:         "key",
 		HTTPTimeout:    time.Second,
 	})
-
-	if err := os.MkdirAll("tmp/input", 0o755); err != nil {
-		t.Fatalf("mkdir input: %v", err)
-	}
-	chunkA := filepath.Join("tmp/input", "a.mp4")
-	if err := os.WriteFile(chunkA, []byte("A"), 0o644); err != nil {
-		t.Fatalf("write chunkA: %v", err)
-	}
-	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()}); err != nil {
-		t.Fatalf("publish first chunk: %v", err)
-	}
-
-	chunkB := filepath.Join("tmp/input", "b.mp4")
-	if err := os.WriteFile(chunkB, []byte("B"), 0o644); err != nil {
-		t.Fatalf("write chunkB: %v", err)
-	}
-	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
-		t.Fatalf("publish second chunk: %v", err)
-	}
 	if err := publisher.Finalize(context.Background(), "str-1", time.Now().UTC()); err != nil {
 		t.Fatalf("finalize stream: %v", err)
 	}
-	if uploadCalls != 1 {
-		t.Fatalf("uploadCalls = %d, want 1", uploadCalls)
-	}
-	if len(runner.concatInputs) == 0 {
-		t.Fatalf("concatInputs is empty")
-	}
-	for _, line := range strings.Split(runner.concatInputs[len(runner.concatInputs)-1], "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "file '") {
-			t.Fatalf("concat line = %q, want prefix file '", line)
-		}
-		pathValue := strings.TrimSuffix(strings.TrimPrefix(line, "file '"), "'")
-		if !filepath.IsAbs(pathValue) {
-			t.Fatalf("concat path = %q, want absolute path", pathValue)
-		}
+	if uploadCalls != 0 {
+		t.Fatalf("uploadCalls = %d, want 0 for finalize noop", uploadCalls)
 	}
 }
 
@@ -303,12 +245,10 @@ func TestBunnyChunkPublisherCreateVideoTitleIncludesStreamerAndDayFolders(t *tes
 	}))
 	defer api.Close()
 
-	runner := &fakePublishRunner{}
 	dir := t.TempDir()
 	publisher := NewBunnyChunkPublisher(BunnyChunkPublisherConfig{
 		OutputDir:    dir,
 		FFmpegBinary: "ffmpeg",
-		Runner:       runner,
 		BaseURL:      api.URL,
 		LibraryID:    "lib-1",
 		APIKey:       "key",
@@ -322,12 +262,9 @@ func TestBunnyChunkPublisherCreateVideoTitleIncludesStreamerAndDayFolders(t *tes
 	if err := os.WriteFile(chunkA, []byte("A"), 0o644); err != nil {
 		t.Fatalf("write chunkA: %v", err)
 	}
-	if err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: time.Now().UTC()}); err != nil {
-		t.Fatalf("publish chunk: %v", err)
-	}
 	at := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
-	if err := publisher.Finalize(context.Background(), "str-1", at); err != nil {
-		t.Fatalf("finalize: %v", err)
+	if _, err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkA, CapturedAt: at}); err != nil {
+		t.Fatalf("publish chunk: %v", err)
 	}
 	if !strings.HasPrefix(title, "str-1_best_streamer/2026-04-10/") {
 		t.Fatalf("title = %q, want folder prefix", title)
