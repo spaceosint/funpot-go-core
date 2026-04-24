@@ -61,6 +61,22 @@ type fakePromptResolver struct {
 	llmConfigErr   error
 }
 
+func (f fakePromptResolver) GetGameScenario(_ context.Context, id string) (prompts.GameScenario, error) {
+	lookup := strings.TrimSpace(id)
+	if lookup == "" {
+		return prompts.GameScenario{}, prompts.ErrGameScenarioNotFound
+	}
+	if strings.TrimSpace(f.gameScenario.ID) == lookup {
+		return f.gameScenario, nil
+	}
+	for _, item := range f.gameScenarios {
+		if strings.TrimSpace(item.ID) == lookup {
+			return item, nil
+		}
+	}
+	return prompts.GameScenario{}, prompts.ErrGameScenarioNotFound
+}
+
 func (f fakePromptResolver) GetActiveGameScenario(_ context.Context, gameSlug string) (prompts.GameScenario, error) {
 	lookup := strings.TrimSpace(gameSlug)
 	if item, ok := f.gameScenarios[lookup]; ok {
