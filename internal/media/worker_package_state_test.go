@@ -5,7 +5,7 @@ import "testing"
 func TestEnrichScenarioState(t *testing.T) {
 	t.Parallel()
 
-	got := enrichScenarioState(`{"game":"cs2"}`, `{"state":{"round":3}}`, "pkg-2", "step-a", map[string]any{
+	got := enrichScenarioState(`{"game":"cs2"}`, `{"state":{"round":3}}`, "game-scenario-1", "pkg-2", "step-a", map[string]any{
 		"status": "accepted",
 	})
 	if got == "" {
