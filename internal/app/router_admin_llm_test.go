@@ -267,10 +267,12 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 			{"id": "node-target", "alias": "Target Node", "scenarioPackageId": targetPkg.ID},
 		},
 		"transitions": []map[string]any{
-			{"id": "tr-1", "fromNodeId": "node-root", "toNodeId": "node-target", "condition": `game == "cs2"`, "priority": 10},
-		},
-		"terminalConditions": []map[string]any{
-			{"id": "tm-1", "condition": `winner == "ct" && side == "ct"`, "resultLabel": "ct_win", "resultStateJson": `{"result":"win"}`, "priority": 100},
+			{
+				"id": "tr-1", "fromNodeId": "node-root", "toNodeId": "node-target", "condition": `game == "cs2"`, "priority": 10,
+				"terminalConditions": []map[string]any{
+					{"id": "tm-1", "condition": `winner == "ct" && side == "ct"`, "resultLabel": "ct_win", "resultStateJson": `{"result":"win"}`, "priority": 100},
+				},
+			},
 		},
 	})
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/llm/game-scenarios", bytes.NewReader(createBody))

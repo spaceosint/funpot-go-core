@@ -44,9 +44,17 @@ func TestGameScenarioCRUD(t *testing.T) {
 			{ID: "n1", ScenarioPackageID: rootPkg.ID},
 			{ID: "n2", ScenarioPackageID: nextPkg.ID},
 		},
-		Transitions:        []GameScenarioTransition{{FromNodeID: "n1", ToNodeID: "n2", Condition: `game == "cs2"`, Priority: 10}},
-		TerminalConditions: []GameScenarioTerminalCondition{{Condition: `winner == "ct"`, ResultLabel: "ct_win", ResultStateJSON: `{"result":"win"}`, Priority: 100}},
-		ActorID:            "admin-1",
+		Transitions: []GameScenarioTransition{{
+			ID:         "tr-1",
+			FromNodeID: "n1",
+			ToNodeID:   "n2",
+			Condition:  `game == "cs2"`,
+			Priority:   10,
+			TerminalConditions: []GameScenarioTerminalCondition{
+				{ID: "tm-1", Condition: `winner == "ct"`, ResultLabel: "ct_win", ResultStateJSON: `{"result":"win"}`, Priority: 100},
+			},
+		}},
+		ActorID: "admin-1",
 	})
 	if err != nil {
 		t.Fatalf("CreateGameScenario() error = %v", err)
@@ -103,7 +111,7 @@ func TestGameScenarioCreateRejectsMissingTransitionCondition(t *testing.T) {
 	}
 }
 
-func TestGameScenarioCreateRejectsUnknownTerminalTransition(t *testing.T) {
+func TestGameScenarioCreateRejectsInvalidTransitionTerminalJSON(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
@@ -120,13 +128,20 @@ func TestGameScenarioCreateRejectsUnknownTerminalTransition(t *testing.T) {
 	}
 
 	_, err = svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
-		Name:          "invalid-terminal-transition",
+		Name:          "invalid-transition-terminal-json",
 		GameSlug:      "cs2",
 		InitialNodeID: "n1",
 		Nodes:         []GameScenarioNode{{ID: "n1", ScenarioPackageID: pkg.ID}},
-		TerminalConditions: []GameScenarioTerminalCondition{
-			{TransitionID: "missing-edge", Condition: `winner == "ct"`, Priority: 1},
-		},
+		Transitions: []GameScenarioTransition{{
+			ID:         "tr-1",
+			FromNodeID: "n1",
+			ToNodeID:   "n1",
+			Condition:  `winner == "ct"`,
+			Priority:   1,
+			TerminalConditions: []GameScenarioTerminalCondition{
+				{Condition: `winner == "ct"`, ResultStateJSON: `{"broken"`, Priority: 1},
+			},
+		}},
 		ActorID: "admin-1",
 	})
 	if err == nil {
@@ -193,44 +208,34 @@ func TestGameScenarioActivateKeepsSingleActiveAcrossSlugs(t *testing.T) {
 	}
 }
 
-func TestGameScenarioResolveTerminalConditionPrefersNodeScope(t *testing.T) {
+func TestGameScenarioResolveTerminalConditionRequiresTransitionMatch(t *testing.T) {
 	t.Parallel()
 
 	scenario := GameScenario{
 		InitialNodeID: "n1",
-		Nodes: []GameScenarioNode{
+		Transitions: []GameScenarioTransition{
 			{
-				ID: "n1",
+				ID:         "edge-1",
+				FromNodeID: "n1",
+				ToNodeID:   "n2",
+				Condition:  `winner == "ct"`,
+				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "node-win", Condition: `winner == "ct"`, ResultLabel: "node", Priority: 100},
+					{ID: "edge-win", Condition: `winner == "ct"`, ResultLabel: "edge", Priority: 100},
 				},
 			},
 		},
-		TerminalConditions: []GameScenarioTerminalCondition{
-			{ID: "global-win", Condition: `winner == "ct"`, ResultLabel: "global", Priority: 10},
-		},
 	}
 
-	terminal, ok, err := scenario.ResolveTerminalCondition("n1", "", `{"winner":"ct"}`)
+	terminal, ok, err := scenario.ResolveTerminalCondition("", `{"winner":"ct"}`)
 	if err != nil {
-		t.Fatalf("ResolveTerminalCondition(node): %v", err)
+		t.Fatalf("ResolveTerminalCondition(no-transition): %v", err)
 	}
-	if !ok {
-		t.Fatalf("expected node terminal condition to match")
+	if ok {
+		t.Fatalf("expected no terminal match without transition")
 	}
-	if terminal.ID != "node-win" {
-		t.Fatalf("expected node-level terminal condition, got %s", terminal.ID)
-	}
-
-	terminal, ok, err = scenario.ResolveTerminalCondition("missing-node", "", `{"winner":"ct"}`)
-	if err != nil {
-		t.Fatalf("ResolveTerminalCondition(fallback): %v", err)
-	}
-	if !ok {
-		t.Fatalf("expected fallback terminal condition to match")
-	}
-	if terminal.ID != "global-win" {
-		t.Fatalf("expected global fallback terminal condition, got %s", terminal.ID)
+	if terminal.ID != "" {
+		t.Fatalf("expected empty terminal, got %s", terminal.ID)
 	}
 }
 
@@ -240,22 +245,28 @@ func TestGameScenarioResolveTerminalConditionPrefersTransitionScope(t *testing.T
 	scenario := GameScenario{
 		InitialNodeID: "n1",
 		Transitions: []GameScenarioTransition{
-			{ID: "edge-1", FromNodeID: "n1", ToNodeID: "n2", Condition: `winner == "ct"`, Priority: 100},
-		},
-		TerminalConditions: []GameScenarioTerminalCondition{
-			{ID: "edge-win", TransitionID: "edge-1", Condition: `winner == "ct"`, ResultLabel: "edge", Priority: 200},
-			{ID: "global-win", Condition: `winner == "ct"`, ResultLabel: "global", Priority: 10},
+			{
+				ID:         "edge-1",
+				FromNodeID: "n1",
+				ToNodeID:   "n2",
+				Condition:  `winner == "ct"`,
+				Priority:   100,
+				TerminalConditions: []GameScenarioTerminalCondition{
+					{ID: "edge-win-high", Condition: `winner == "ct"`, ResultLabel: "edge", Priority: 200},
+					{ID: "edge-win-low", Condition: `winner == "ct"`, ResultLabel: "edge-low", Priority: 10},
+				},
+			},
 		},
 	}
 
-	terminal, ok, err := scenario.ResolveTerminalCondition("n2", "edge-1", `{"winner":"ct"}`)
+	terminal, ok, err := scenario.ResolveTerminalCondition("edge-1", `{"winner":"ct"}`)
 	if err != nil {
 		t.Fatalf("ResolveTerminalCondition(edge): %v", err)
 	}
 	if !ok {
 		t.Fatalf("expected edge terminal condition to match")
 	}
-	if terminal.ID != "edge-win" {
+	if terminal.ID != "edge-win-high" {
 		t.Fatalf("expected edge-level terminal condition, got %s", terminal.ID)
 	}
 }

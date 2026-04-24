@@ -120,53 +120,40 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID string) prompts.GameScenarioCreateRequest {
 	nodes := make([]prompts.GameScenarioNode, 0, len(req.Nodes))
 	for _, node := range req.Nodes {
-		nodeTerminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(node.TerminalConditions))
-		for _, item := range node.TerminalConditions {
-			nodeTerminalConditions = append(nodeTerminalConditions, prompts.GameScenarioTerminalCondition{
+		nodes = append(nodes, prompts.GameScenarioNode{
+			ID:                node.ID,
+			Alias:             node.Alias,
+			ScenarioPackageID: node.ScenarioPackageID,
+		})
+	}
+	transitions := make([]prompts.GameScenarioTransition, 0, len(req.Transitions))
+	for _, tr := range req.Transitions {
+		terminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(tr.TerminalConditions))
+		for _, item := range tr.TerminalConditions {
+			terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
 				ID:              item.ID,
-				TransitionID:    item.TransitionID,
 				Condition:       item.Condition,
 				ResultLabel:     item.ResultLabel,
 				ResultStateJSON: item.ResultStateJSON,
 				Priority:        item.Priority,
 			})
 		}
-		nodes = append(nodes, prompts.GameScenarioNode{
-			ID:                 node.ID,
-			Alias:              node.Alias,
-			ScenarioPackageID:  node.ScenarioPackageID,
-			TerminalConditions: nodeTerminalConditions,
-		})
-	}
-	transitions := make([]prompts.GameScenarioTransition, 0, len(req.Transitions))
-	for _, tr := range req.Transitions {
 		transitions = append(transitions, prompts.GameScenarioTransition{
-			ID:         tr.ID,
-			FromNodeID: tr.FromNodeID,
-			ToNodeID:   tr.ToNodeID,
-			Condition:  tr.Condition,
-			Priority:   tr.Priority,
-		})
-	}
-	terminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(req.TerminalConditions))
-	for _, item := range req.TerminalConditions {
-		terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
-			ID:              item.ID,
-			TransitionID:    item.TransitionID,
-			Condition:       item.Condition,
-			ResultLabel:     item.ResultLabel,
-			ResultStateJSON: item.ResultStateJSON,
-			Priority:        item.Priority,
+			ID:                 tr.ID,
+			FromNodeID:         tr.FromNodeID,
+			ToNodeID:           tr.ToNodeID,
+			Condition:          tr.Condition,
+			Priority:           tr.Priority,
+			TerminalConditions: terminalConditions,
 		})
 	}
 	return prompts.GameScenarioCreateRequest{
-		Name:               req.Name,
-		GameSlug:           req.GameSlug,
-		InitialNodeID:      req.InitialNodeID,
-		Nodes:              nodes,
-		Transitions:        transitions,
-		TerminalConditions: terminalConditions,
-		ActorID:            actorID,
+		Name:          req.Name,
+		GameSlug:      req.GameSlug,
+		InitialNodeID: req.InitialNodeID,
+		Nodes:         nodes,
+		Transitions:   transitions,
+		ActorID:       actorID,
 	}
 }
 
@@ -236,23 +223,22 @@ type scenarioPackageCreateRequest struct {
 }
 
 type gameScenarioNodeRequest struct {
-	ID                 string                                 `json:"id"`
-	Alias              string                                 `json:"alias"`
-	ScenarioPackageID  string                                 `json:"scenarioPackageId"`
-	TerminalConditions []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
+	ID                string `json:"id"`
+	Alias             string `json:"alias"`
+	ScenarioPackageID string `json:"scenarioPackageId"`
 }
 
 type gameScenarioTransitionRequest struct {
-	ID         string `json:"id"`
-	FromNodeID string `json:"fromNodeId"`
-	ToNodeID   string `json:"toNodeId"`
-	Condition  string `json:"condition"`
-	Priority   int    `json:"priority"`
+	ID                 string                                 `json:"id"`
+	FromNodeID         string                                 `json:"fromNodeId"`
+	ToNodeID           string                                 `json:"toNodeId"`
+	Condition          string                                 `json:"condition"`
+	Priority           int                                    `json:"priority"`
+	TerminalConditions []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
 }
 
 type gameScenarioTerminalConditionRequest struct {
 	ID              string `json:"id"`
-	TransitionID    string `json:"transitionId"`
 	Condition       string `json:"condition"`
 	ResultLabel     string `json:"resultLabel"`
 	ResultStateJSON string `json:"resultStateJson"`
@@ -260,12 +246,11 @@ type gameScenarioTerminalConditionRequest struct {
 }
 
 type gameScenarioCreateRequest struct {
-	Name               string                                 `json:"name"`
-	GameSlug           string                                 `json:"gameSlug"`
-	InitialNodeID      string                                 `json:"initialNodeId"`
-	Nodes              []gameScenarioNodeRequest              `json:"nodes"`
-	Transitions        []gameScenarioTransitionRequest        `json:"transitions"`
-	TerminalConditions []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
+	Name          string                          `json:"name"`
+	GameSlug      string                          `json:"gameSlug"`
+	InitialNodeID string                          `json:"initialNodeId"`
+	Nodes         []gameScenarioNodeRequest       `json:"nodes"`
+	Transitions   []gameScenarioTransitionRequest `json:"transitions"`
 }
 
 type llmModelConfigUpsertRequest struct {
