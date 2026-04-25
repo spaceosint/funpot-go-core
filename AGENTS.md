@@ -1,4 +1,4 @@
-# Repository Guidelines
+ # Repository Guidelines
 
 This repository contains the backend modular monolith for the FunPot Telegram Mini App platform. Use Go for all backend services unless an architectural document explicitly states an alternative.
 
