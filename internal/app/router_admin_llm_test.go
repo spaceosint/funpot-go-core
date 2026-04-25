@@ -270,7 +270,18 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 			{
 				"id": "tr-1", "fromNodeId": "node-root", "toNodeId": "node-target", "condition": `game == "cs2"`, "priority": 10,
 				"terminalConditions": []map[string]any{
-					{"id": "tm-1", "condition": `winner == "ct" && side == "ct"`, "resultLabel": "ct_win", "resultStateJson": `{"result":"win"}`, "priority": 100},
+					{
+						"id":              "tm-1",
+						"condition":       `winner == "ct" && side == "ct"`,
+						"gameTitle":       map[string]string{"ru": "Победа CT", "en": "CT win"},
+						"defaultLanguage": "ru",
+						"outcomesCount":   2,
+						"outcomeTemplates": []map[string]any{
+							{"id": "ct", "title": map[string]string{"ru": "CT", "en": "CT"}},
+							{"id": "t", "title": map[string]string{"ru": "T", "en": "T"}},
+						},
+						"priority": 100,
+					},
 				},
 			},
 		},

@@ -1047,7 +1047,18 @@ func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *te
 						Condition:  `mode == "faceit"`,
 						Priority:   1,
 						TerminalConditions: []prompts.GameScenarioTerminalCondition{
-							{ID: "score-limit", Condition: `ct_score >= 6 | t_score >= 6`, ResultLabel: "match_finished", Priority: 1},
+							{
+								ID:              "score-limit",
+								Condition:       `ct_score >= 6 | t_score >= 6`,
+								GameTitle:       map[string]string{"ru": "Победитель карты"},
+								DefaultLanguage: "ru",
+								OutcomesCount:   2,
+								OutcomeTemplates: []prompts.GameScenarioOutcomeTemplate{
+									{ID: "ct", Title: map[string]string{"ru": "CT"}},
+									{ID: "t", Title: map[string]string{"ru": "T"}},
+								},
+								Priority: 1,
+							},
 						},
 					},
 				},
@@ -1070,14 +1081,8 @@ func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *te
 	)
 
 	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
-	if !errors.Is(err, ErrTrackingStop) {
-		t.Fatalf("expected ErrTrackingStop, got %v", err)
-	}
-	if !decision.TransitionTerminal {
-		t.Fatalf("expected decision to be terminal")
-	}
-	if decision.Label != "match_finished" {
-		t.Fatalf("expected terminal label match_finished, got %q", decision.Label)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
 	state := parseJSONMap(decision.UpdatedStateJSON)
 	meta, _ := state["_scenario"].(map[string]any)

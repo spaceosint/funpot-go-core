@@ -51,7 +51,18 @@ func TestGameScenarioCRUD(t *testing.T) {
 			Condition:  `game == "cs2"`,
 			Priority:   10,
 			TerminalConditions: []GameScenarioTerminalCondition{
-				{ID: "tm-1", Condition: `winner == "ct"`, ResultLabel: "ct_win", ResultStateJSON: `{"result":"win"}`, Priority: 100},
+				{
+					ID:              "tm-1",
+					Condition:       `winner == "ct"`,
+					GameTitle:       map[string]string{"ru": "Победа CT", "en": "CT win"},
+					DefaultLanguage: "ru",
+					OutcomesCount:   2,
+					OutcomeTemplates: []GameScenarioOutcomeTemplate{
+						{ID: "ct", Title: map[string]string{"ru": "CT", "en": "CT"}},
+						{ID: "t", Title: map[string]string{"ru": "T", "en": "T"}},
+					},
+					Priority: 100,
+				},
 			},
 		}},
 		ActorID: "admin-1",
@@ -111,7 +122,7 @@ func TestGameScenarioCreateRejectsMissingTransitionCondition(t *testing.T) {
 	}
 }
 
-func TestGameScenarioCreateRejectsInvalidTransitionTerminalJSON(t *testing.T) {
+func TestGameScenarioCreateRejectsTerminalWithoutOutcomes(t *testing.T) {
 	t.Parallel()
 
 	svc := NewService()
@@ -128,7 +139,7 @@ func TestGameScenarioCreateRejectsInvalidTransitionTerminalJSON(t *testing.T) {
 	}
 
 	_, err = svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
-		Name:          "invalid-transition-terminal-json",
+		Name:          "invalid-terminal",
 		GameSlug:      "cs2",
 		InitialNodeID: "n1",
 		Nodes:         []GameScenarioNode{{ID: "n1", ScenarioPackageID: pkg.ID}},
@@ -139,7 +150,7 @@ func TestGameScenarioCreateRejectsInvalidTransitionTerminalJSON(t *testing.T) {
 			Condition:  `winner == "ct"`,
 			Priority:   1,
 			TerminalConditions: []GameScenarioTerminalCondition{
-				{Condition: `winner == "ct"`, ResultStateJSON: `{"broken"`, Priority: 1},
+				{Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 0, Priority: 1},
 			},
 		}},
 		ActorID: "admin-1",
@@ -221,7 +232,7 @@ func TestGameScenarioResolveTerminalConditionFallsBackToGlobalScope(t *testing.T
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win", Condition: `winner == "ct"`, ResultLabel: "edge", Priority: 100},
+					{ID: "edge-win", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 100},
 				},
 			},
 		},
@@ -255,8 +266,8 @@ func TestGameScenarioResolveTerminalConditionPrefersTransitionScope(t *testing.T
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-high", Condition: `winner == "ct"`, ResultLabel: "edge", Priority: 200},
-					{ID: "edge-win-low", Condition: `winner == "ct"`, ResultLabel: "edge-low", Priority: 10},
+					{ID: "edge-win-high", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 200},
+					{ID: "edge-win-low", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 10},
 				},
 			},
 		},
@@ -287,7 +298,7 @@ func TestGameScenarioResolveTerminalConditionPrefersMatchedTransitionBeforeGloba
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-local", Condition: `winner == "ct"`, ResultLabel: "local", Priority: 10},
+					{ID: "edge-win-local", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 10},
 				},
 			},
 			{
@@ -297,7 +308,7 @@ func TestGameScenarioResolveTerminalConditionPrefersMatchedTransitionBeforeGloba
 				Condition:  `winner == "ct"`,
 				Priority:   90,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-global", Condition: `winner == "ct"`, ResultLabel: "global", Priority: 999},
+					{ID: "edge-win-global", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 999},
 				},
 			},
 		},

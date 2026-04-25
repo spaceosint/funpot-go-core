@@ -138,7 +138,12 @@ func main() {
 		&media.InMemoryRunStore{},
 		streamersService,
 		media.NewInMemoryLocker(),
-		media.WorkerConfig{LockTTL: streamWorkerLockTTL(cfg), MinConfidence: 0.5, ChunkPublisher: chunkPublisher},
+		media.WorkerConfig{
+			LockTTL:        streamWorkerLockTTL(cfg),
+			MinConfidence:  0.5,
+			ChunkPublisher: chunkPublisher,
+			LiveEvents:     eventsService,
+		},
 	)
 	streamWorker.SetLogger(logger.Named("stream_worker"))
 	streamScheduler := media.NewScheduler(streamWorker, streamProcessInterval(cfg))

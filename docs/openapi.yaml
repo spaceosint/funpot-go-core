@@ -871,12 +871,17 @@ paths:
                   $ref: '#/components/schemas/LiveEvent'
         default:
           $ref: '#/components/responses/Error'
-  /api/votes:
+  /api/events/{eventId}/vote:
     post:
-      summary: Cast a vote
+      summary: Cast a vote for live event outcome
       security:
         - bearerAuth: []
       parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema:
+            type: string
         - in: header
           name: Idempotency-Key
           required: true
@@ -887,24 +892,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [eventId, optionId]
-              properties:
-                eventId:
-                  type: string
-                  format: uuid
-                optionId:
-                  type: string
-                cost:
-                  type: integer
-                  minimum: 0
+              $ref: '#/components/schemas/EventVoteRequest'
       responses:
         '200':
-          description: Vote accepted response
+          description: Updated live event after vote
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoteResponse'
+                $ref: '#/components/schemas/LiveEvent'
         default:
           $ref: '#/components/responses/Error'
   /api/wallet:
@@ -1882,21 +1877,41 @@ components:
             $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTerminalCondition:
       type: object
-      required: [condition]
+      required: [condition, defaultLanguage, outcomesCount]
       additionalProperties: false
       properties:
         id:
           type: string
         condition:
           type: string
-        resultLabel:
+        gameTitle:
+          type: object
+          additionalProperties:
+            type: string
+        defaultLanguage:
           type: string
-        resultStateJson:
-          type: string
-          description: Optional JSON patch applied to final state on terminal match.
+          description: Primary locale key used to validate required localized title fields.
+        outcomesCount:
+          type: integer
+          minimum: 1
+        outcomeTemplates:
+          type: array
+          items:
+            $ref: '#/components/schemas/GameScenarioOutcomeTemplate'
         priority:
           type: integer
           minimum: 1
+    GameScenarioOutcomeTemplate:
+      type: object
+      required: [id]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        title:
+          type: object
+          additionalProperties:
+            type: string
     GameScenarioCreateRequest:
       type: object
       required: [name, gameSlug, initialNodeId, nodes]
@@ -2020,51 +2035,65 @@ components:
       properties:
         id:
           type: string
-          format: uuid
-        gameId:
+        templateId:
           type: string
-          format: uuid
-          nullable: true
+        scenarioId:
+          type: string
+        transitionId:
+          type: string
+        terminalId:
+          type: string
         title:
+          type: object
+          additionalProperties:
+            type: string
+        defaultLanguage:
           type: string
         options:
           type: array
           items:
             $ref: '#/components/schemas/EventOption'
+        createdAt:
+          type: string
+          format: date-time
         closesAt:
           type: string
           format: date-time
+        status:
+          type: string
         totals:
           type: object
           additionalProperties:
             type: integer
         userVote:
-          type: object
-          properties:
-            optionId:
-              type: string
-        costPerVote:
-          type: integer
+          $ref: '#/components/schemas/UserVote'
     EventOption:
       type: object
       properties:
         id:
           type: string
-        label:
-          type: string
-    VoteResponse:
+        title:
+          type: object
+          additionalProperties:
+            type: string
+    UserVote:
       type: object
       properties:
-        voteId:
-          type: string
-          format: uuid
-        newBalance:
-          type: integer
-        eventId:
-          type: string
-          format: uuid
         optionId:
           type: string
+        totalAmount:
+          type: integer
+    EventVoteRequest:
+      type: object
+      required: [streamerId, optionId, amountINT]
+      properties:
+        streamerId:
+          type: string
+        optionId:
+          type: string
+        amountINT:
+          type: integer
+          minimum: 1
     Wallet:
       type: object
       properties:

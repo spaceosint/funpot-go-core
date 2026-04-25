@@ -131,12 +131,21 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 	for _, tr := range req.Transitions {
 		terminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(tr.TerminalConditions))
 		for _, item := range tr.TerminalConditions {
+			outcomeTemplates := make([]prompts.GameScenarioOutcomeTemplate, 0, len(item.OutcomeTemplates))
+			for _, outcome := range item.OutcomeTemplates {
+				outcomeTemplates = append(outcomeTemplates, prompts.GameScenarioOutcomeTemplate{
+					ID:    outcome.ID,
+					Title: outcome.Title,
+				})
+			}
 			terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
-				ID:              item.ID,
-				Condition:       item.Condition,
-				ResultLabel:     item.ResultLabel,
-				ResultStateJSON: item.ResultStateJSON,
-				Priority:        item.Priority,
+				ID:               item.ID,
+				Condition:        item.Condition,
+				GameTitle:        item.GameTitle,
+				DefaultLanguage:  item.DefaultLanguage,
+				OutcomesCount:    item.OutcomesCount,
+				OutcomeTemplates: outcomeTemplates,
+				Priority:         item.Priority,
 			})
 		}
 		transitions = append(transitions, prompts.GameScenarioTransition{
@@ -239,11 +248,18 @@ type gameScenarioTransitionRequest struct {
 }
 
 type gameScenarioTerminalConditionRequest struct {
-	ID              string `json:"id"`
-	Condition       string `json:"condition"`
-	ResultLabel     string `json:"resultLabel"`
-	ResultStateJSON string `json:"resultStateJson"`
-	Priority        int    `json:"priority"`
+	ID               string                                     `json:"id"`
+	Condition        string                                     `json:"condition"`
+	GameTitle        map[string]string                          `json:"gameTitle"`
+	DefaultLanguage  string                                     `json:"defaultLanguage"`
+	OutcomesCount    int                                        `json:"outcomesCount"`
+	OutcomeTemplates []gameScenarioTerminalOutcomeTemplateInput `json:"outcomeTemplates"`
+	Priority         int                                        `json:"priority"`
+}
+
+type gameScenarioTerminalOutcomeTemplateInput struct {
+	ID    string            `json:"id"`
+	Title map[string]string `json:"title"`
 }
 
 type gameScenarioCreateRequest struct {
@@ -270,6 +286,12 @@ type llmModelConfigUpsertRequest struct {
 type meResponse struct {
 	users.Profile
 	IsAdmin bool `json:"isAdmin"`
+}
+
+type eventVoteRequest struct {
+	StreamerID string `json:"streamerId"`
+	OptionID   string `json:"optionId"`
+	AmountINT  int64  `json:"amountINT"`
 }
 
 type adminUsersResponse struct {
@@ -1550,6 +1572,89 @@ func NewHandler(
 					return
 				}
 				writeJSON(w, http.StatusOK, eventsService.ListLiveByStreamer(r.Context(), streamerID))
+			})))
+
+			mux.Handle("/api/events/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+				if !strings.HasSuffix(path, "/vote") {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				eventID := strings.TrimSuffix(path, "/vote")
+				eventID = strings.TrimSuffix(eventID, "/")
+				eventID = strings.TrimSpace(eventID)
+				if eventID == "" {
+					writeError(w, http.StatusBadRequest, "event id is required")
+					return
+				}
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+				if idempotencyKey == "" {
+					writeError(w, http.StatusBadRequest, wallet.ErrIdempotencyRequired.Error())
+					return
+				}
+				defer r.Body.Close() //nolint:errcheck
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to read request body")
+					return
+				}
+				var req eventVoteRequest
+				if err := decodeJSONStrict(body, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
+				if _, _, err := walletService.Post(wallet.PostRequest{
+					UserID:         claims.Subject,
+					Type:           wallet.EntryTypeDebit,
+					Amount:         req.AmountINT,
+					Currency:       "FPC",
+					Reason:         "event_vote",
+					IdempotencyKey: idempotencyKey,
+					ActorID:        claims.Subject,
+				}); err != nil {
+					switch {
+					case errors.Is(err, wallet.ErrInvalidAmount), errors.Is(err, wallet.ErrIdempotencyRequired):
+						writeError(w, http.StatusBadRequest, err.Error())
+					case errors.Is(err, wallet.ErrInsufficientFunds):
+						writeError(w, http.StatusConflict, err.Error())
+					default:
+						logger.Error("failed to debit wallet for vote", zap.String("userID", claims.Subject), zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to process vote")
+					}
+					return
+				}
+				event, err := eventsService.Vote(r.Context(), events.VoteRequest{
+					EventID:        eventID,
+					StreamerID:     req.StreamerID,
+					UserID:         claims.Subject,
+					OptionID:       req.OptionID,
+					Amount:         req.AmountINT,
+					IdempotencyKey: idempotencyKey,
+				})
+				if err != nil {
+					switch {
+					case errors.Is(err, events.ErrInvalidVote):
+						writeError(w, http.StatusBadRequest, err.Error())
+					case errors.Is(err, events.ErrEventNotFound):
+						writeError(w, http.StatusNotFound, err.Error())
+					case errors.Is(err, events.ErrEventClosed):
+						writeError(w, http.StatusConflict, err.Error())
+					default:
+						logger.Error("failed to process event vote", zap.String("eventID", eventID), zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to process vote")
+					}
+					return
+				}
+				writeJSON(w, http.StatusOK, event)
 			})))
 		}
 	}
