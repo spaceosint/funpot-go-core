@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -16,6 +17,17 @@ import (
 
 func TestAdminUsersCRUD(t *testing.T) {
 	userService := users.NewService(users.NewInMemoryRepository())
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{
+		ID:           101,
+		Username:     "alice",
+		FirstName:    "Alice",
+		LastName:     "Smith",
+		LanguageCode: "en",
+	})
+	if err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
@@ -30,22 +42,6 @@ func TestAdminUsersCRUD(t *testing.T) {
 		nil,
 		ClientConfigResponse{},
 	)
-
-	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/users", strings.NewReader(`{"telegramId":101,"username":"alice","firstName":"Alice","lastName":"Smith","languageCode":"en"}`))
-	createReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
-	createRes := httptest.NewRecorder()
-	handler.ServeHTTP(createRes, createReq)
-	if createRes.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", createRes.Code, createRes.Body.String())
-	}
-
-	var created users.Profile
-	if err := json.Unmarshal(createRes.Body.Bytes(), &created); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if created.ID == "" {
-		t.Fatalf("expected created id")
-	}
 
 	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/users/"+created.ID, nil)
 	getReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
@@ -63,20 +59,28 @@ func TestAdminUsersCRUD(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", updateRes.Code, updateRes.Body.String())
 	}
 
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/users/"+created.ID, nil)
-	deleteReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
-	deleteRes := httptest.NewRecorder()
-	handler.ServeHTTP(deleteRes, deleteReq)
-	if deleteRes.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d: %s", deleteRes.Code, deleteRes.Body.String())
+	banReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID+"/ban", strings.NewReader(`{"isBanned":true,"reason":"manual"}`))
+	banReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	banRes := httptest.NewRecorder()
+	handler.ServeHTTP(banRes, banReq)
+	if banRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", banRes.Code, banRes.Body.String())
 	}
 
-	missingReq := httptest.NewRequest(http.MethodGet, "/api/admin/users/"+created.ID, nil)
-	missingReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
-	missingRes := httptest.NewRecorder()
-	handler.ServeHTTP(missingRes, missingReq)
-	if missingRes.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d: %s", missingRes.Code, missingRes.Body.String())
+	var banned users.Profile
+	if err := json.Unmarshal(banRes.Body.Bytes(), &banned); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if !banned.IsBanned {
+		t.Fatalf("expected user to be banned")
+	}
+
+	unbanReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID+"/ban", strings.NewReader(`{"isBanned":false}`))
+	unbanReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	unbanRes := httptest.NewRecorder()
+	handler.ServeHTTP(unbanRes, unbanReq)
+	if unbanRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", unbanRes.Code, unbanRes.Body.String())
 	}
 }
 
@@ -152,6 +156,90 @@ func TestAdminUsersRouteRequiresAdmin(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
 	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+func TestAdminUsersCreateAndDeleteAreDisabled(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	seeded, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{
+		ID:           404,
+		Username:     "seeded",
+		FirstName:    "Seed",
+		LastName:     "User",
+		LanguageCode: "en",
+	})
+	if err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		userService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/users", strings.NewReader(`{"telegramId":505}`))
+	createReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	createRes := httptest.NewRecorder()
+	handler.ServeHTTP(createRes, createReq)
+	if createRes.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", createRes.Code)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/admin/users/"+seeded.ID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	deleteRes := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRes, deleteReq)
+	if deleteRes.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", deleteRes.Code)
+	}
+}
+
+func TestBannedUserIsBlockedByMiddleware(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	seeded, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{
+		ID:           606,
+		Username:     "blocked",
+		FirstName:    "Blocked",
+		LastName:     "User",
+		LanguageCode: "en",
+	})
+	if err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+	if _, err := userService.BanByID(context.Background(), seeded.ID, "manual", time.Time{}); err != nil {
+		t.Fatalf("BanByID() error = %v", err)
+	}
+
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		userService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, seeded.ID))
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusForbidden {

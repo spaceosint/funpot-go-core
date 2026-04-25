@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // PostgresRepository persists user profiles in PostgreSQL.
@@ -20,9 +21,11 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 
 // GetByID returns a profile identified by internal user ID.
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, error) {
-	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at FROM users WHERE id = $1`
+	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE id = $1`
 
 	var profile Profile
+	var bannedAt sql.NullTime
+	var bannedUntil sql.NullTime
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&profile.ID,
 		&profile.TelegramID,
@@ -31,6 +34,10 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, e
 		&profile.LastName,
 		&profile.LanguageCode,
 		&profile.ReferralCode,
+		&profile.IsBanned,
+		&profile.BanReason,
+		&bannedAt,
+		&bannedUntil,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
@@ -40,14 +47,17 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, e
 		}
 		return Profile{}, fmt.Errorf("select user by id: %w", err)
 	}
+	applyBanTimes(&profile, bannedAt, bannedUntil)
 	return profile, nil
 }
 
 // GetByTelegramID returns a profile identified by the Telegram ID.
 func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int64) (Profile, error) {
-	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at FROM users WHERE telegram_id = $1`
+	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE telegram_id = $1`
 
 	var profile Profile
+	var bannedAt sql.NullTime
+	var bannedUntil sql.NullTime
 	err := r.db.QueryRowContext(ctx, query, telegramID).Scan(
 		&profile.ID,
 		&profile.TelegramID,
@@ -56,6 +66,10 @@ func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int
 		&profile.LastName,
 		&profile.LanguageCode,
 		&profile.ReferralCode,
+		&profile.IsBanned,
+		&profile.BanReason,
+		&bannedAt,
+		&bannedUntil,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
@@ -65,6 +79,7 @@ func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int
 		}
 		return Profile{}, fmt.Errorf("select user by telegram id: %w", err)
 	}
+	applyBanTimes(&profile, bannedAt, bannedUntil)
 	return profile, nil
 }
 
@@ -96,7 +111,7 @@ WHERE $1 = ''
 	}
 
 	const listQuery = `
-SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at
+SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at
 FROM users
 WHERE $1 = ''
    OR id ILIKE $2
@@ -118,6 +133,8 @@ LIMIT $3 OFFSET $4`
 	items := make([]Profile, 0, pageSize)
 	for rows.Next() {
 		var profile Profile
+		var bannedAt sql.NullTime
+		var bannedUntil sql.NullTime
 		if err := rows.Scan(
 			&profile.ID,
 			&profile.TelegramID,
@@ -126,11 +143,16 @@ LIMIT $3 OFFSET $4`
 			&profile.LastName,
 			&profile.LanguageCode,
 			&profile.ReferralCode,
+			&profile.IsBanned,
+			&profile.BanReason,
+			&bannedAt,
+			&bannedUntil,
 			&profile.CreatedAt,
 			&profile.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan user: %w", err)
 		}
+		applyBanTimes(&profile, bannedAt, bannedUntil)
 		items = append(items, profile)
 	}
 	if err := rows.Err(); err != nil {
@@ -143,8 +165,8 @@ LIMIT $3 OFFSET $4`
 // Create inserts a new profile. Existing records are left untouched.
 func (r *PostgresRepository) Create(ctx context.Context, profile Profile) error {
 	const query = `
-INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (telegram_id) DO NOTHING`
 
 	if _, err := r.db.ExecContext(ctx, query,
@@ -155,6 +177,10 @@ ON CONFLICT (telegram_id) DO NOTHING`
 		profile.LastName,
 		profile.LanguageCode,
 		profile.ReferralCode,
+		profile.IsBanned,
+		profile.BanReason,
+		nullableTime(profile.BannedAt),
+		nullableTime(profile.BannedUntil),
 		profile.CreatedAt,
 		profile.UpdatedAt,
 	); err != nil {
@@ -173,7 +199,11 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 		    last_name = $4,
 		    language_code = $5,
 		    referral_code = $6,
-		    updated_at = $7
+		    is_banned = $7,
+		    ban_reason = $8,
+		    banned_at = $9,
+		    banned_until = $10,
+		    updated_at = $11
 		WHERE telegram_id = $1
 	`
 
@@ -184,6 +214,10 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 		profile.LastName,
 		profile.LanguageCode,
 		profile.ReferralCode,
+		profile.IsBanned,
+		profile.BanReason,
+		nullableTime(profile.BannedAt),
+		nullableTime(profile.BannedUntil),
 		profile.UpdatedAt,
 	)
 	if err != nil {
@@ -197,6 +231,29 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
+}
+
+func applyBanTimes(profile *Profile, bannedAt, bannedUntil sql.NullTime) {
+	if profile == nil {
+		return
+	}
+	if bannedAt.Valid {
+		profile.BannedAt = bannedAt.Time.UTC()
+	} else {
+		profile.BannedAt = time.Time{}
+	}
+	if bannedUntil.Valid {
+		profile.BannedUntil = bannedUntil.Time.UTC()
+	} else {
+		profile.BannedUntil = time.Time{}
+	}
 }
 
 // DeleteByID deletes a user by internal ID.

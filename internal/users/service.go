@@ -11,6 +11,7 @@ import (
 )
 
 var ErrAlreadyExists = errors.New("user already exists")
+var ErrBanUntilBeforeNow = errors.New("banUntil must be in the future")
 
 // Service orchestrates business logic around user profiles.
 type Service struct {
@@ -92,6 +93,45 @@ func (s *Service) UpdateByID(ctx context.Context, id string, profile TelegramPro
 		return Profile{}, err
 	}
 	return updated, nil
+}
+
+// BanByID blocks a user either temporarily (banUntil > zero) or permanently (zero).
+func (s *Service) BanByID(ctx context.Context, id, reason string, banUntil time.Time) (Profile, error) {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return Profile{}, err
+	}
+	now := s.now().UTC()
+	if !banUntil.IsZero() && !banUntil.UTC().After(now) {
+		return Profile{}, ErrBanUntilBeforeNow
+	}
+
+	existing.IsBanned = true
+	existing.BanReason = strings.TrimSpace(reason)
+	existing.BannedAt = now
+	existing.BannedUntil = banUntil.UTC()
+	existing.UpdatedAt = now
+	if err := s.repo.Update(ctx, existing); err != nil {
+		return Profile{}, err
+	}
+	return existing, nil
+}
+
+// UnbanByID restores user access.
+func (s *Service) UnbanByID(ctx context.Context, id string) (Profile, error) {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return Profile{}, err
+	}
+	existing.IsBanned = false
+	existing.BanReason = ""
+	existing.BannedAt = time.Time{}
+	existing.BannedUntil = time.Time{}
+	existing.UpdatedAt = s.now().UTC()
+	if err := s.repo.Update(ctx, existing); err != nil {
+		return Profile{}, err
+	}
+	return existing, nil
 }
 
 func (s *Service) newProfile(profile TelegramProfile) Profile {

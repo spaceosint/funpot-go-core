@@ -287,6 +287,12 @@ type adminUserUpsertRequest struct {
 	LanguageCode string `json:"languageCode"`
 }
 
+type adminUserBanRequest struct {
+	IsBanned   bool   `json:"isBanned"`
+	Reason     string `json:"reason"`
+	DurationMS int64  `json:"durationMs"`
+}
+
 type withdrawRequest struct {
 	AmountINT int64 `json:"amountINT"`
 }
@@ -342,6 +348,8 @@ func NewHandler(
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
 ) http.Handler {
+	const rateLimitAutoBanDuration = 15 * time.Minute
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -402,6 +410,8 @@ func NewHandler(
 				switch {
 				case errors.Is(err, auth.ErrInvalidHash), errors.Is(err, auth.ErrExpired):
 					status = http.StatusUnauthorized
+				case errors.Is(err, auth.ErrUserBanned):
+					status = http.StatusForbidden
 				case errors.Is(err, auth.ErrMissingHash), errors.Is(err, auth.ErrMissingAuthDate), errors.Is(err, auth.ErrMissingUser):
 					status = http.StatusBadRequest
 				default:
@@ -493,7 +503,8 @@ func NewHandler(
 			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		})
 
-		authed := authService.ClaimsMiddleware()
+		baseAuthed := authService.ClaimsMiddleware()
+		authed := withUserBanGuard(baseAuthed, userService)
 
 		mux.Handle("/api/auth/logout-all", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
@@ -579,39 +590,6 @@ func NewHandler(
 					Total:    total,
 					Items:    items,
 				})
-			case http.MethodPost:
-				defer r.Body.Close() //nolint:errcheck
-				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "failed to read request body")
-					return
-				}
-				var req adminUserUpsertRequest
-				if err := decodeJSONStrict(body, &req); err != nil {
-					writeError(w, http.StatusBadRequest, "invalid request body")
-					return
-				}
-				if req.TelegramID <= 0 {
-					writeError(w, http.StatusBadRequest, "telegramId must be a positive integer")
-					return
-				}
-				profile, err := userService.Create(r.Context(), users.TelegramProfile{
-					ID:           req.TelegramID,
-					Username:     req.Username,
-					FirstName:    req.FirstName,
-					LastName:     req.LastName,
-					LanguageCode: req.LanguageCode,
-				})
-				if err != nil {
-					if errors.Is(err, users.ErrAlreadyExists) {
-						writeError(w, http.StatusBadRequest, err.Error())
-						return
-					}
-					logger.Error("failed to create user", zap.Error(err))
-					writeError(w, http.StatusInternalServerError, "failed to create user")
-					return
-				}
-				writeJSON(w, http.StatusCreated, profile)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
@@ -622,13 +600,27 @@ func NewHandler(
 				writeError(w, http.StatusForbidden, "admin role is required")
 				return
 			}
-			userID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/users/"), "/")
-			if userID == "" || strings.Contains(userID, "/") {
+			path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/users/"), "/")
+			if path == "" {
 				writeError(w, http.StatusBadRequest, "user id is required")
 				return
 			}
+			parts := strings.Split(path, "/")
+			userID := strings.TrimSpace(parts[0])
+			if userID == "" {
+				writeError(w, http.StatusBadRequest, "user id is required")
+				return
+			}
+			action := ""
+			if len(parts) > 1 {
+				action = strings.TrimSpace(parts[1])
+			}
 			switch r.Method {
 			case http.MethodGet:
+				if action != "" {
+					writeError(w, http.StatusNotFound, "user route not found")
+					return
+				}
 				item, err := userService.GetByID(r.Context(), userID)
 				if err != nil {
 					if errors.Is(err, users.ErrNotFound) {
@@ -641,6 +633,58 @@ func NewHandler(
 				}
 				writeJSON(w, http.StatusOK, item)
 			case http.MethodPut:
+				if action == "ban" {
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req adminUserBanRequest
+					if err := decodeJSONStrict(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					if !req.IsBanned {
+						profile, err := userService.UnbanByID(r.Context(), userID)
+						if err != nil {
+							if errors.Is(err, users.ErrNotFound) {
+								writeError(w, http.StatusNotFound, err.Error())
+								return
+							}
+							logger.Error("failed to unban user", zap.String("userID", userID), zap.Error(err))
+							writeError(w, http.StatusInternalServerError, "failed to update user ban")
+							return
+						}
+						writeJSON(w, http.StatusOK, profile)
+						return
+					}
+
+					banUntil := time.Time{}
+					if req.DurationMS > 0 {
+						banUntil = time.Now().UTC().Add(time.Duration(req.DurationMS) * time.Millisecond)
+					}
+					profile, err := userService.BanByID(r.Context(), userID, req.Reason, banUntil)
+					if err != nil {
+						switch {
+						case errors.Is(err, users.ErrNotFound):
+							writeError(w, http.StatusNotFound, err.Error())
+						case errors.Is(err, users.ErrBanUntilBeforeNow):
+							writeError(w, http.StatusBadRequest, err.Error())
+						default:
+							logger.Error("failed to ban user", zap.String("userID", userID), zap.Error(err))
+							writeError(w, http.StatusInternalServerError, "failed to update user ban")
+						}
+						return
+					}
+					writeJSON(w, http.StatusOK, profile)
+					return
+				}
+				if action != "" {
+					writeError(w, http.StatusNotFound, "user route not found")
+					return
+				}
+
 				defer r.Body.Close() //nolint:errcheck
 				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 				if err != nil {
@@ -669,17 +713,6 @@ func NewHandler(
 					return
 				}
 				writeJSON(w, http.StatusOK, profile)
-			case http.MethodDelete:
-				if err := userService.DeleteByID(r.Context(), userID); err != nil {
-					if errors.Is(err, users.ErrNotFound) {
-						writeError(w, http.StatusNotFound, err.Error())
-						return
-					}
-					logger.Error("failed to delete user", zap.String("userID", userID), zap.Error(err))
-					writeError(w, http.StatusInternalServerError, "failed to delete user")
-					return
-				}
-				w.WriteHeader(http.StatusNoContent)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
@@ -866,6 +899,11 @@ func NewHandler(
 							return
 						}
 						if errors.Is(err, streamers.ErrRateLimited) {
+							if userService != nil {
+								if _, banErr := userService.BanByID(r.Context(), claims.Subject, "auto-ban: streamer submission rate limit exceeded", time.Now().UTC().Add(rateLimitAutoBanDuration)); banErr != nil && !errors.Is(banErr, users.ErrNotFound) {
+									logger.Error("failed to auto-ban user after rate limit", zap.String("userID", claims.Subject), zap.Error(banErr))
+								}
+							}
 							writeError(w, http.StatusTooManyRequests, err.Error())
 							return
 						}
@@ -1531,6 +1569,35 @@ func requireAdmin(w http.ResponseWriter, r *http.Request, adminService *admin.Se
 	}
 
 	return true
+}
+
+func withUserBanGuard(base func(http.Handler) http.Handler, userService *users.Service) func(http.Handler) http.Handler {
+	if userService == nil {
+		return base
+	}
+	return func(next http.Handler) http.Handler {
+		return base(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok || strings.TrimSpace(claims.Subject) == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			profile, err := userService.GetByID(r.Context(), claims.Subject)
+			if err != nil {
+				if errors.Is(err, users.ErrNotFound) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to load user profile")
+				return
+			}
+			if profile.IsAccessBlocked(time.Now().UTC()) {
+				writeError(w, http.StatusForbidden, "user is banned")
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

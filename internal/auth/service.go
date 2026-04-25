@@ -24,6 +24,7 @@ const (
 var (
 	ErrRefreshTokenRequired = errors.New("refresh token is required")
 	ErrInvalidRefreshToken  = errors.New("invalid refresh token")
+	ErrUserBanned           = errors.New("user is banned")
 )
 
 // Service coordinates Telegram verification and JWT issuance.
@@ -92,7 +93,6 @@ func (s *Service) Authenticate(ctx context.Context, initData string, now time.Ti
 	if err != nil {
 		return TokenResponse{}, err
 	}
-
 	profile, err := s.userService.SyncTelegramProfile(ctx, users.TelegramProfile{
 		ID:           payload.User.ID,
 		Username:     payload.User.Username,
@@ -102,6 +102,9 @@ func (s *Service) Authenticate(ctx context.Context, initData string, now time.Ti
 	})
 	if err != nil {
 		return TokenResponse{}, err
+	}
+	if profile.IsAccessBlocked(now.UTC()) {
+		return TokenResponse{}, ErrUserBanned
 	}
 
 	token, expiresAt, err := s.issuer.Issue(profile.ID, payload.User.ID, now)

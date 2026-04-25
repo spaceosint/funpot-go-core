@@ -21,10 +21,10 @@ func TestPostgresRepository_GetByTelegramID(t *testing.T) {
 	repo := NewPostgresRepository(db)
 	now := time.Now().UTC()
 
-	rows := sqlmock.NewRows([]string{"id", "telegram_id", "username", "first_name", "last_name", "language_code", "referral_code", "created_at", "updated_at"}).
-		AddRow("tg_1", int64(1), "user", "First", "Last", "en", "ABC123", now, now)
+	rows := sqlmock.NewRows([]string{"id", "telegram_id", "username", "first_name", "last_name", "language_code", "referral_code", "is_banned", "ban_reason", "banned_at", "banned_until", "created_at", "updated_at"}).
+		AddRow("tg_1", int64(1), "user", "First", "Last", "en", "ABC123", false, "", nil, nil, now, now)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at FROM users WHERE telegram_id = $1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE telegram_id = $1")).
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
 
@@ -50,7 +50,7 @@ func TestPostgresRepository_GetByTelegramID_NotFound(t *testing.T) {
 
 	repo := NewPostgresRepository(db)
 
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at FROM users WHERE telegram_id = $1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE telegram_id = $1")).
 		WithArgs(int64(99)).
 		WillReturnError(sql.ErrNoRows)
 
@@ -85,7 +85,7 @@ func TestPostgresRepository_Create(t *testing.T) {
 		UpdatedAt:    now,
 	}
 
-	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, created_at, updated_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\nON CONFLICT (telegram_id) DO NOTHING")).
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at)\nVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)\nON CONFLICT (telegram_id) DO NOTHING")).
 		WithArgs(
 			profile.ID,
 			profile.TelegramID,
@@ -94,6 +94,10 @@ func TestPostgresRepository_Create(t *testing.T) {
 			profile.LastName,
 			profile.LanguageCode,
 			profile.ReferralCode,
+			profile.IsBanned,
+			profile.BanReason,
+			nil,
+			nil,
 			profile.CreatedAt,
 			profile.UpdatedAt,
 		).
@@ -129,7 +133,7 @@ func TestPostgresRepository_Update(t *testing.T) {
 		UpdatedAt:    now,
 	}
 
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    updated_at = $7\nWHERE telegram_id = $1")).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    is_banned = $7,\n    ban_reason = $8,\n    banned_at = $9,\n    banned_until = $10,\n    updated_at = $11\nWHERE telegram_id = $1")).
 		WithArgs(
 			profile.TelegramID,
 			profile.Username,
@@ -137,6 +141,10 @@ func TestPostgresRepository_Update(t *testing.T) {
 			profile.LastName,
 			profile.LanguageCode,
 			profile.ReferralCode,
+			profile.IsBanned,
+			profile.BanReason,
+			nil,
+			nil,
 			profile.UpdatedAt,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -161,8 +169,8 @@ func TestPostgresRepository_UpdateNotFound(t *testing.T) {
 	now := time.Now().UTC()
 	profile := Profile{TelegramID: 42, UpdatedAt: now}
 
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    updated_at = $7\nWHERE telegram_id = $1")).
-		WithArgs(profile.TelegramID, "", "", "", "", "", profile.UpdatedAt).
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE users\nSET username = $2,\n    first_name = $3,\n    last_name = $4,\n    language_code = $5,\n    referral_code = $6,\n    is_banned = $7,\n    ban_reason = $8,\n    banned_at = $9,\n    banned_until = $10,\n    updated_at = $11\nWHERE telegram_id = $1")).
+		WithArgs(profile.TelegramID, "", "", "", "", "", false, "", nil, nil, profile.UpdatedAt).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	err = repo.Update(context.Background(), profile)
