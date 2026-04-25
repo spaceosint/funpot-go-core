@@ -23,6 +23,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
+	"github.com/funpot/funpot-go-core/internal/wallet"
 )
 
 type readinessState struct {
@@ -286,6 +287,17 @@ type adminUserUpsertRequest struct {
 	LanguageCode string `json:"languageCode"`
 }
 
+type withdrawRequest struct {
+	AmountINT int64 `json:"amountINT"`
+}
+
+type adminWalletAdjustRequest struct {
+	UserID   string `json:"userId"`
+	DeltaINT int64  `json:"deltaINT"`
+	Reason   string `json:"reason"`
+	Currency string `json:"currency,omitempty"`
+}
+
 type adminHistoryEvent struct {
 	EventTime        string  `json:"eventTime"`
 	StepName         string  `json:"stepName"`
@@ -358,6 +370,8 @@ func NewHandler(
 	})
 
 	if authService != nil {
+		walletService := wallet.NewService()
+
 		mux.HandleFunc("/api/auth/telegram", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -677,6 +691,131 @@ func NewHandler(
 				return
 			}
 			writeJSON(w, http.StatusOK, clientConfig)
+		})))
+
+		mux.Handle("/api/wallet", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+			writeJSON(w, http.StatusOK, walletService.Get(claims.Subject))
+		})))
+
+		mux.Handle("/api/wallet/withdraw", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+			idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+			if idempotencyKey == "" {
+				writeError(w, http.StatusBadRequest, wallet.ErrIdempotencyRequired.Error())
+				return
+			}
+			defer r.Body.Close() //nolint:errcheck
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "failed to read request body")
+				return
+			}
+			var req withdrawRequest
+			if err := decodeJSONStrict(body, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			_, newBalance, err := walletService.Post(wallet.PostRequest{
+				UserID:         claims.Subject,
+				Type:           wallet.EntryTypeDebit,
+				Amount:         req.AmountINT,
+				Currency:       "FPC",
+				Reason:         "withdraw",
+				IdempotencyKey: idempotencyKey,
+				ActorID:        claims.Subject,
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, wallet.ErrInvalidAmount), errors.Is(err, wallet.ErrIdempotencyRequired):
+					writeError(w, http.StatusBadRequest, err.Error())
+				case errors.Is(err, wallet.ErrInsufficientFunds):
+					writeError(w, http.StatusConflict, err.Error())
+				default:
+					logger.Error("failed to withdraw from wallet", zap.String("userID", claims.Subject), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to withdraw")
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":     "done",
+				"newBalance": newBalance,
+			})
+		})))
+
+		mux.Handle("/api/admin/wallet/adjust", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !requireAdmin(w, r, adminService) {
+				writeError(w, http.StatusForbidden, "admin role is required")
+				return
+			}
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+			idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+			if idempotencyKey == "" {
+				writeError(w, http.StatusBadRequest, wallet.ErrIdempotencyRequired.Error())
+				return
+			}
+			defer r.Body.Close() //nolint:errcheck
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "failed to read request body")
+				return
+			}
+			var req adminWalletAdjustRequest
+			if err := decodeJSONStrict(body, &req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid request body")
+				return
+			}
+			entry, newBalance, err := walletService.Adjust(wallet.AdjustRequest{
+				UserID:         req.UserID,
+				Delta:          req.DeltaINT,
+				Reason:         req.Reason,
+				Currency:       req.Currency,
+				IdempotencyKey: idempotencyKey,
+				ActorID:        claims.Subject,
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, wallet.ErrInvalidAmount),
+					errors.Is(err, wallet.ErrInvalidDelta),
+					errors.Is(err, wallet.ErrUserIDRequired),
+					errors.Is(err, wallet.ErrIdempotencyRequired):
+					writeError(w, http.StatusBadRequest, err.Error())
+				case errors.Is(err, wallet.ErrInsufficientFunds):
+					writeError(w, http.StatusConflict, err.Error())
+				default:
+					logger.Error("failed to apply admin wallet adjustment", zap.String("userID", req.UserID), zap.String("actorID", claims.Subject), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to adjust wallet")
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"entry":      entry,
+				"newBalance": newBalance,
+			})
 		})))
 
 		if streamersService != nil {
