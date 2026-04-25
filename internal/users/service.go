@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+var ErrAlreadyExists = errors.New("user already exists")
 
 // Service orchestrates business logic around user profiles.
 type Service struct {
@@ -57,6 +60,40 @@ func (s *Service) SyncTelegramProfile(ctx context.Context, profile TelegramProfi
 	return updated, nil
 }
 
+// Create creates a user profile from explicit profile data.
+func (s *Service) Create(ctx context.Context, profile TelegramProfile) (Profile, error) {
+	if _, err := s.repo.GetByTelegramID(ctx, profile.ID); err == nil {
+		return Profile{}, ErrAlreadyExists
+	} else if !errors.Is(err, ErrNotFound) {
+		return Profile{}, err
+	}
+
+	created := s.newProfile(profile)
+	if err := s.repo.Create(ctx, created); err != nil {
+		return Profile{}, err
+	}
+	return created, nil
+}
+
+// UpdateByID updates profile fields by user id.
+func (s *Service) UpdateByID(ctx context.Context, id string, profile TelegramProfile) (Profile, error) {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return Profile{}, err
+	}
+	updated := existing
+	updated.Username = profile.Username
+	updated.FirstName = profile.FirstName
+	updated.LastName = profile.LastName
+	updated.LanguageCode = profile.LanguageCode
+	updated.UpdatedAt = s.now().UTC()
+
+	if err := s.repo.Update(ctx, updated); err != nil {
+		return Profile{}, err
+	}
+	return updated, nil
+}
+
 func (s *Service) newProfile(profile TelegramProfile) Profile {
 	now := s.now().UTC()
 	referralCode := generateReferralCode(profile.ID)
@@ -85,7 +122,22 @@ func generateReferralCode(telegramID int64) string {
 	return encoded
 }
 
+// GetByID fetches a user profile by internal ID.
+func (s *Service) GetByID(ctx context.Context, id string) (Profile, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
 // GetByTelegramID fetches a user profile without mutating it.
 func (s *Service) GetByTelegramID(ctx context.Context, telegramID int64) (Profile, error) {
 	return s.repo.GetByTelegramID(ctx, telegramID)
+}
+
+// List fetches paginated users with optional search query.
+func (s *Service) List(ctx context.Context, query string, page, pageSize int) ([]Profile, int, error) {
+	return s.repo.List(ctx, query, page, pageSize)
+}
+
+// DeleteByID removes a user by internal ID.
+func (s *Service) DeleteByID(ctx context.Context, id string) error {
+	return s.repo.DeleteByID(ctx, id)
 }

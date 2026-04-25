@@ -214,6 +214,118 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/admin/users:
+    get:
+      summary: List users with search and pagination (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: query
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        '200':
+          description: Paginated users list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUsersResponse'
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      summary: Create user (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpsertRequest'
+      responses:
+        '201':
+          description: Created user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+
+  /api/admin/users/{userId}:
+    get:
+      summary: Get user by id (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update user by id (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserUpsertRequest'
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      summary: Delete user by id (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: User deleted
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/admin/games:
     get:
       summary: List games (admin)
@@ -1124,6 +1236,33 @@ components:
         isAdmin:
           type: boolean
           description: Indicates whether the authenticated user has admin privileges.
+    AdminUserUpsertRequest:
+      type: object
+      properties:
+        telegramId:
+          type: integer
+          minimum: 1
+        username:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        languageCode:
+          type: string
+    AdminUsersResponse:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserProfile'
     ClientConfig:
       type: object
       properties:

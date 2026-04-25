@@ -271,6 +271,21 @@ type meResponse struct {
 	IsAdmin bool `json:"isAdmin"`
 }
 
+type adminUsersResponse struct {
+	Page     int             `json:"page"`
+	PageSize int             `json:"pageSize"`
+	Total    int             `json:"total"`
+	Items    []users.Profile `json:"items"`
+}
+
+type adminUserUpsertRequest struct {
+	TelegramID   int64  `json:"telegramId"`
+	Username     string `json:"username"`
+	FirstName    string `json:"firstName"`
+	LastName     string `json:"lastName"`
+	LanguageCode string `json:"languageCode"`
+}
+
 type adminHistoryEvent struct {
 	EventTime        string  `json:"eventTime"`
 	StepName         string  `json:"stepName"`
@@ -508,6 +523,152 @@ func NewHandler(
 			}
 			isAdmin := adminService != nil && adminService.IsAdmin(claims.Subject)
 			writeJSON(w, http.StatusOK, meResponse{Profile: profile, IsAdmin: isAdmin})
+		})))
+
+		mux.Handle("/api/admin/users", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !requireAdmin(w, r, adminService) {
+				writeError(w, http.StatusForbidden, "admin role is required")
+				return
+			}
+
+			switch r.Method {
+			case http.MethodGet:
+				pageRaw := strings.TrimSpace(r.URL.Query().Get("page"))
+				page := 1
+				if pageRaw != "" {
+					parsed, err := strconv.Atoi(pageRaw)
+					if err != nil || parsed <= 0 {
+						writeError(w, http.StatusBadRequest, "page must be a positive integer")
+						return
+					}
+					page = parsed
+				}
+				pageSizeRaw := strings.TrimSpace(r.URL.Query().Get("pageSize"))
+				pageSize := 20
+				if pageSizeRaw != "" {
+					parsed, err := strconv.Atoi(pageSizeRaw)
+					if err != nil || parsed <= 0 {
+						writeError(w, http.StatusBadRequest, "pageSize must be a positive integer")
+						return
+					}
+					pageSize = parsed
+				}
+				items, total, err := userService.List(r.Context(), r.URL.Query().Get("query"), page, pageSize)
+				if err != nil {
+					logger.Error("failed to list users", zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to list users")
+					return
+				}
+				writeJSON(w, http.StatusOK, adminUsersResponse{
+					Page:     page,
+					PageSize: pageSize,
+					Total:    total,
+					Items:    items,
+				})
+			case http.MethodPost:
+				defer r.Body.Close() //nolint:errcheck
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to read request body")
+					return
+				}
+				var req adminUserUpsertRequest
+				if err := decodeJSONStrict(body, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
+				if req.TelegramID <= 0 {
+					writeError(w, http.StatusBadRequest, "telegramId must be a positive integer")
+					return
+				}
+				profile, err := userService.Create(r.Context(), users.TelegramProfile{
+					ID:           req.TelegramID,
+					Username:     req.Username,
+					FirstName:    req.FirstName,
+					LastName:     req.LastName,
+					LanguageCode: req.LanguageCode,
+				})
+				if err != nil {
+					if errors.Is(err, users.ErrAlreadyExists) {
+						writeError(w, http.StatusBadRequest, err.Error())
+						return
+					}
+					logger.Error("failed to create user", zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to create user")
+					return
+				}
+				writeJSON(w, http.StatusCreated, profile)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		})))
+
+		mux.Handle("/api/admin/users/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !requireAdmin(w, r, adminService) {
+				writeError(w, http.StatusForbidden, "admin role is required")
+				return
+			}
+			userID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/users/"), "/")
+			if userID == "" || strings.Contains(userID, "/") {
+				writeError(w, http.StatusBadRequest, "user id is required")
+				return
+			}
+			switch r.Method {
+			case http.MethodGet:
+				item, err := userService.GetByID(r.Context(), userID)
+				if err != nil {
+					if errors.Is(err, users.ErrNotFound) {
+						writeError(w, http.StatusNotFound, err.Error())
+						return
+					}
+					logger.Error("failed to get user", zap.String("userID", userID), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to get user")
+					return
+				}
+				writeJSON(w, http.StatusOK, item)
+			case http.MethodPut:
+				defer r.Body.Close() //nolint:errcheck
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to read request body")
+					return
+				}
+				var req adminUserUpsertRequest
+				if err := decodeJSONStrict(body, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
+				profile, err := userService.UpdateByID(r.Context(), userID, users.TelegramProfile{
+					ID:           req.TelegramID,
+					Username:     req.Username,
+					FirstName:    req.FirstName,
+					LastName:     req.LastName,
+					LanguageCode: req.LanguageCode,
+				})
+				if err != nil {
+					if errors.Is(err, users.ErrNotFound) {
+						writeError(w, http.StatusNotFound, err.Error())
+						return
+					}
+					logger.Error("failed to update user", zap.String("userID", userID), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to update user")
+					return
+				}
+				writeJSON(w, http.StatusOK, profile)
+			case http.MethodDelete:
+				if err := userService.DeleteByID(r.Context(), userID); err != nil {
+					if errors.Is(err, users.ErrNotFound) {
+						writeError(w, http.StatusNotFound, err.Error())
+						return
+					}
+					logger.Error("failed to delete user", zap.String("userID", userID), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to delete user")
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
 		})))
 
 		mux.Handle("/api/config", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
