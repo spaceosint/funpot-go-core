@@ -275,25 +275,6 @@ paths:
                 $ref: '#/components/schemas/AdminUsersResponse'
         default:
           $ref: '#/components/responses/Error'
-    post:
-      summary: Create user (admin)
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AdminUserUpsertRequest'
-      responses:
-        '201':
-          description: Created user profile
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserProfile'
-        default:
-          $ref: '#/components/responses/Error'
 
   /api/admin/users/{userId}:
     get:
@@ -340,8 +321,9 @@ paths:
                 $ref: '#/components/schemas/UserProfile'
         default:
           $ref: '#/components/responses/Error'
-    delete:
-      summary: Delete user by id (admin)
+  /api/admin/users/{userId}/ban:
+    put:
+      summary: Ban or unban user by id (admin)
       security:
         - bearerAuth: []
       parameters:
@@ -350,9 +332,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminUserBanRequest'
       responses:
-        '204':
-          description: User deleted
+        '200':
+          description: Updated user profile with ban state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1290,6 +1282,16 @@ components:
         flags:
           type: object
           additionalProperties: true
+        isBanned:
+          type: boolean
+        banReason:
+          type: string
+        bannedAt:
+          type: string
+          format: date-time
+        bannedUntil:
+          type: string
+          format: date-time
         isAdmin:
           type: boolean
           description: Indicates whether the authenticated user has admin privileges.
@@ -1320,6 +1322,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/UserProfile'
+    AdminUserBanRequest:
+      type: object
+      required: [isBanned]
+      properties:
+        isBanned:
+          type: boolean
+        reason:
+          type: string
+        durationMs:
+          type: integer
+          minimum: 0
     ClientConfig:
       type: object
       properties:
