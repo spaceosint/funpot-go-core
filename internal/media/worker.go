@@ -12,6 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
@@ -120,7 +121,13 @@ type Worker struct {
 	captureRetryCount   int
 	captureRetryBackoff time.Duration
 	chunkPublisher      ChunkPublisher
+	liveEvents          LiveEventStore
+	eventDuration       time.Duration
 	sleepFn             func(context.Context, time.Duration) error
+}
+
+type LiveEventStore interface {
+	CreateLiveEvent(ctx context.Context, req events.CreateLiveEventRequest) (events.LiveEvent, error)
 }
 
 type WorkerConfig struct {
@@ -129,6 +136,8 @@ type WorkerConfig struct {
 	CaptureRetryCount   int
 	CaptureRetryBackoff time.Duration
 	ChunkPublisher      ChunkPublisher
+	LiveEvents          LiveEventStore
+	EventDuration       time.Duration
 }
 
 func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver PromptResolver, runs RunStore, decisions DecisionStore, locker Locker, cfg WorkerConfig) *Worker {
@@ -158,6 +167,8 @@ func NewWorker(capture StreamCapture, classifier StageClassifier, promptResolver
 		captureRetryCount:   cfg.CaptureRetryCount,
 		captureRetryBackoff: cfg.CaptureRetryBackoff,
 		chunkPublisher:      cfg.ChunkPublisher,
+		liveEvents:          cfg.LiveEvents,
+		eventDuration:       cfg.EventDuration,
 		sleepFn:             sleepContext,
 	}
 }
@@ -746,6 +757,9 @@ type scenarioExecutionPlan struct {
 	StartPackageID        string
 	CurrentPackageID      string
 	CurrentPackageChanged bool
+	TransitionID          string
+	MatchedTerminal       prompts.GameScenarioTerminalCondition
+	HasMatchedTerminal    bool
 }
 
 func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, gameScenario prompts.GameScenario, pkg prompts.ScenarioPackage) (scenarioExecutionPlan, error) {
@@ -758,7 +772,7 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 	}
 	previousStateMap := parseJSONMap(previousState)
 	currentNodeID := scenarioStateNodeID(previousState)
-	resolvedNode, _, nodeChanged, err := gameScenario.ResolveNodeWithState(currentNodeID, previousStateMap)
+	resolvedNode, transitionID, nodeChanged, err := gameScenario.ResolveNodeWithState(currentNodeID, previousStateMap)
 	if err != nil {
 		return scenarioExecutionPlan{}, err
 	}
@@ -788,6 +802,15 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 	if nodeChanged {
 		transitionTrace["status"] = "accepted"
 		transitionTrace["reason"] = "game_scenario_transition_matched"
+		transitionTrace["transitionId"] = strings.TrimSpace(transitionID)
+	}
+	matchedTerminal := prompts.GameScenarioTerminalCondition{}
+	hasMatchedTerminal := false
+	if nodeChanged {
+		matchedTerminal, hasMatchedTerminal, err = gameScenario.ResolveTerminalConditionWithState(transitionID, previousStateMap)
+		if err != nil {
+			return scenarioExecutionPlan{}, err
+		}
 	}
 	resolution, resolveErr := activePackage.ResolveTerminalWithState(previousStateMap)
 	if resolveErr == nil {
@@ -849,6 +872,9 @@ func (w *Worker) planScenarioExecution(ctx context.Context, streamerID string, g
 		StartPackageID:        startPackageID,
 		CurrentPackageID:      strings.TrimSpace(activePackage.ID),
 		CurrentPackageChanged: packageChanged,
+		TransitionID:          strings.TrimSpace(transitionID),
+		MatchedTerminal:       matchedTerminal,
+		HasMatchedTerminal:    hasMatchedTerminal,
 	}, nil
 }
 
@@ -878,6 +904,7 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	entering := execution.Entering
 	previousState := execution.PreviousState
 	logger.Info("scenario step selected", zap.String("streamerID", streamerID), zap.String("scenarioPackageID", pkg.ID), zap.String("stepID", step.ID), zap.Int("segmentSeconds", step.SegmentSeconds), zap.Int("maxRequests", step.MaxRequests))
+	w.emitLiveEventFromTerminal(ctx, streamerID, execution)
 	if strings.TrimSpace(pkg.LLMModelConfigID) == "" {
 		return streamers.LLMDecision{}, prompts.ErrInvalidScenarioModelRef
 	}
@@ -937,6 +964,34 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	return decision, nil
 }
 
+func (w *Worker) emitLiveEventFromTerminal(ctx context.Context, streamerID string, execution scenarioExecutionPlan) {
+	if w == nil || w.liveEvents == nil || !execution.HasMatchedTerminal {
+		return
+	}
+	terminal := execution.MatchedTerminal
+	outcomes := make([]events.Option, 0, len(terminal.OutcomeTemplates))
+	for _, item := range terminal.OutcomeTemplates {
+		outcomes = append(outcomes, events.Option{
+			ID:    strings.TrimSpace(item.ID),
+			Title: item.Title,
+		})
+	}
+	duration := w.eventDuration
+	if duration <= 0 {
+		duration = 5 * time.Minute
+	}
+	_, _ = w.liveEvents.CreateLiveEvent(ctx, events.CreateLiveEventRequest{
+		StreamerID:      streamerID,
+		ScenarioID:      strings.TrimSpace(execution.GameScenarioID),
+		TransitionID:    strings.TrimSpace(execution.TransitionID),
+		TerminalID:      strings.TrimSpace(terminal.ID),
+		Title:           terminal.GameTitle,
+		DefaultLanguage: strings.TrimSpace(terminal.DefaultLanguage),
+		Options:         outcomes,
+		Duration:        duration,
+	})
+}
+
 func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, execution scenarioExecutionPlan, transitionTrace map[string]any, decision streamers.LLMDecision) (streamers.LLMDecision, bool, error) {
 	gameScenarioID := strings.TrimSpace(execution.GameScenarioID)
 	if gameScenarioID == "" {
@@ -962,27 +1017,17 @@ func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, executi
 	if !matched {
 		return decision, false, nil
 	}
-	decision.TransitionTerminal = true
-	decision.Label = firstNonEmpty(strings.TrimSpace(terminal.ResultLabel), "tracking_stopped")
-	decision.TransitionOutcome = decision.Label
-	decision.UpdatedStateJSON = enrichScenarioState(
-		mergeJSONState(currentState, terminal.ResultStateJSON),
-		execution.PreviousState,
-		gameScenarioID,
-		scenarioStatePackageID(currentState),
-		decision.Stage,
-		map[string]any{
-			"status":               "terminal_stop",
-			"fromNode":             firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
-			"toNode":               currentNodeID,
-			"fromPackage":          scenarioStatePackageID(currentState),
-			"toPackage":            scenarioStatePackageID(currentState),
-			"reason":               "game_scenario_terminal_condition_matched",
-			"terminalId":           strings.TrimSpace(terminal.ID),
-			"terminalTransitionId": strings.TrimSpace(terminal.TransitionID),
-		},
-	)
-	return decision, true, nil
+	decision.UpdatedStateJSON = enrichScenarioState(currentState, execution.PreviousState, gameScenarioID, scenarioStatePackageID(currentState), decision.Stage, map[string]any{
+		"status":               "terminal_condition_matched",
+		"fromNode":             firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
+		"toNode":               currentNodeID,
+		"fromPackage":          scenarioStatePackageID(currentState),
+		"toPackage":            scenarioStatePackageID(currentState),
+		"reason":               "game_scenario_terminal_condition_matched",
+		"terminalId":           strings.TrimSpace(terminal.ID),
+		"terminalTransitionId": strings.TrimSpace(terminal.TransitionID),
+	})
+	return decision, false, nil
 }
 
 func (w *Worker) resolvePostStepScenarioTransition(ctx context.Context, execution scenarioExecutionPlan, currentState string) (string, map[string]any) {

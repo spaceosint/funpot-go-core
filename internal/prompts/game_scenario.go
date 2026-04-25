@@ -31,12 +31,19 @@ type GameScenarioTransition struct {
 }
 
 type GameScenarioTerminalCondition struct {
-	ID              string `json:"id"`
-	TransitionID    string `json:"transitionId,omitempty"`
-	Condition       string `json:"condition"`
-	ResultLabel     string `json:"resultLabel,omitempty"`
-	ResultStateJSON string `json:"resultStateJson,omitempty"`
-	Priority        int    `json:"priority"`
+	ID               string                        `json:"id"`
+	TransitionID     string                        `json:"transitionId,omitempty"`
+	Condition        string                        `json:"condition"`
+	GameTitle        map[string]string             `json:"gameTitle,omitempty"`
+	DefaultLanguage  string                        `json:"defaultLanguage,omitempty"`
+	OutcomesCount    int                           `json:"outcomesCount"`
+	OutcomeTemplates []GameScenarioOutcomeTemplate `json:"outcomeTemplates,omitempty"`
+	Priority         int                           `json:"priority"`
+}
+
+type GameScenarioOutcomeTemplate struct {
+	ID    string            `json:"id"`
+	Title map[string]string `json:"title,omitempty"`
 }
 
 type GameScenario struct {
@@ -121,8 +128,25 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 			if err := validateScenarioCondition(tc.Condition); err != nil {
 				return fmt.Errorf("%w: transition %s terminal condition: %v", ErrInvalidGameScenario, strings.TrimSpace(tr.ID), err)
 			}
-			if strings.TrimSpace(tc.ResultStateJSON) != "" && !isValidJSON(tc.ResultStateJSON) {
-				return fmt.Errorf("%w: transition %s terminal resultStateJson must be valid json", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			if tc.OutcomesCount <= 0 {
+				return fmt.Errorf("%w: transition %s terminal outcomesCount must be positive", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			}
+			if len(tc.OutcomeTemplates) != tc.OutcomesCount {
+				return fmt.Errorf("%w: transition %s terminal outcomesCount must match outcomeTemplates", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			}
+			if strings.TrimSpace(tc.DefaultLanguage) == "" {
+				return fmt.Errorf("%w: transition %s terminal defaultLanguage is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			}
+			if strings.TrimSpace(tc.GameTitle[tc.DefaultLanguage]) == "" {
+				return fmt.Errorf("%w: transition %s terminal gameTitle for default language is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			}
+			for _, outcome := range tc.OutcomeTemplates {
+				if strings.TrimSpace(outcome.ID) == "" {
+					return fmt.Errorf("%w: transition %s terminal outcome id is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+				}
+				if strings.TrimSpace(outcome.Title[tc.DefaultLanguage]) == "" {
+					return fmt.Errorf("%w: transition %s terminal outcome title for default language is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+				}
 			}
 		}
 	}
