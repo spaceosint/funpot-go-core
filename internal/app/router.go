@@ -558,7 +558,10 @@ func NewHandler(
 
 					submission, err := streamersService.Submit(r.Context(), nickname, claims.Subject)
 					if err != nil {
-						if errors.Is(err, streamers.ErrInvalidUsername) || errors.Is(err, streamers.ErrTwitchUnavailable) {
+						if errors.Is(err, streamers.ErrInvalidUsername) ||
+							errors.Is(err, streamers.ErrTwitchUnavailable) ||
+							errors.Is(err, streamers.ErrStreamerOffline) ||
+							errors.Is(err, streamers.ErrInsufficientLive) {
 							writeError(w, http.StatusBadRequest, err.Error())
 							return
 						}

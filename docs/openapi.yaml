@@ -154,10 +154,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [twitchNickname]
+              anyOf:
+                - required: [twitchNickname]
+                - required: [twitchUsername]
               properties:
                 twitchNickname:
                   type: string
+                  description: Twitch login to track (preferred field).
+                twitchUsername:
+                  type: string
+                  description: Legacy alias for twitchNickname.
+                  deprecated: true
       responses:
         '200':
           description: Streamer submission result
@@ -165,6 +172,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StreamerSubmission'
+        '400':
+          description: Invalid payload or streamer is not eligible for tracking (offline / low audience / invalid username)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidUsername:
+                  summary: Missing username
+                  value:
+                    error: twitchNickname is required
+                twitchUnavailable:
+                  summary: Twitch validation failed
+                  value:
+                    error: failed to validate twitch username
+                streamerOffline:
+                  summary: Streamer is offline
+                  value:
+                    error: streamer is offline
+                insufficientViewers:
+                  summary: Viewers below threshold
+                  value:
+                    error: streamer has insufficient live viewers
         '429':
           description: Rate limit exceeded
           content:

@@ -19,6 +19,20 @@ func (v validatorStub) ValidateUsername(_ context.Context, _ string) (string, er
 	return v.displayName, nil
 }
 
+type audienceValidatorStub struct {
+	validatorStub
+	online      bool
+	viewers     int
+	audienceErr error
+}
+
+func (v audienceValidatorStub) GetLiveAudience(_ context.Context, _ string) (bool, int, error) {
+	if v.audienceErr != nil {
+		return false, 0, v.audienceErr
+	}
+	return v.online, v.viewers, nil
+}
+
 func TestServiceSubmitValidationAndListing(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -54,6 +68,69 @@ func TestServiceSubmitValidationAndListing(t *testing.T) {
 			}
 			if items[0].TwitchNickname != "best_streamer" {
 				t.Fatalf("unexpected twitch nickname: %s", items[0].TwitchNickname)
+			}
+		})
+	}
+}
+
+func TestServiceSubmitPersistsLiveAudienceAndValidatesThreshold(t *testing.T) {
+	svc := NewServiceWithValidator(audienceValidatorStub{
+		validatorStub: validatorStub{displayName: "Best Streamer"},
+		online:        true,
+		viewers:       125,
+	})
+	svc.SetMinLiveViewers(100)
+
+	if _, err := svc.Submit(context.Background(), "Best_Streamer", "user-1"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	items := svc.List(context.Background(), "best_streamer", "pending", 1)
+	if len(items) != 1 {
+		t.Fatalf("expected one result, got %d", len(items))
+	}
+	if !items[0].Online || items[0].Viewers != 125 {
+		t.Fatalf("expected online with 125 viewers, got online=%v viewers=%d", items[0].Online, items[0].Viewers)
+	}
+}
+
+func TestServiceSubmitRejectsOfflineOrLowAudience(t *testing.T) {
+	tests := []struct {
+		name      string
+		validator TwitchValidator
+		min       int
+		wantErr   error
+	}{
+		{
+			name: "offline",
+			validator: audienceValidatorStub{
+				validatorStub: validatorStub{displayName: "Offline Streamer"},
+				online:        false,
+				viewers:       0,
+			},
+			min:     10,
+			wantErr: ErrStreamerOffline,
+		},
+		{
+			name: "below min viewers",
+			validator: audienceValidatorStub{
+				validatorStub: validatorStub{displayName: "Small Streamer"},
+				online:        true,
+				viewers:       42,
+			},
+			min:     100,
+			wantErr: ErrInsufficientLive,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewServiceWithValidator(tt.validator)
+			svc.SetMinLiveViewers(tt.min)
+
+			_, err := svc.Submit(context.Background(), "Best_Streamer", "user-1")
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected error %v, got %v", tt.wantErr, err)
 			}
 		})
 	}

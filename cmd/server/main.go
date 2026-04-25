@@ -104,7 +104,19 @@ func main() {
 
 	userService := users.NewService(userRepo)
 	adminService := admin.NewService(cfg.Admin.UserIDs)
-	streamersService := streamers.NewService()
+	streamerValidator := streamers.TwitchValidator(streamers.NewTwitchAPIValidator(
+		cfg.Twitch.ClientID,
+		cfg.Twitch.ClientSecret,
+		cfg.Twitch.TokenURL,
+		cfg.Twitch.APIBaseURL,
+		nil,
+	))
+	if cfg.Twitch.ClientID == "" || cfg.Twitch.ClientSecret == "" {
+		logger.Warn("twitch credentials are not configured; submission live audience validation is disabled")
+		streamerValidator = nil
+	}
+	streamersService := streamers.NewServiceWithValidator(streamerValidator)
+	streamersService.SetMinLiveViewers(cfg.Client.MinViewers)
 	streamersService.SetLogger(logger.Named("streamers"))
 	gamesService := games.NewService()
 	promptsService := prompts.NewService()

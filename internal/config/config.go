@@ -23,6 +23,7 @@ type Config struct {
 	Redis       RedisConfig
 	Database    DatabaseConfig
 	Streamlink  StreamlinkConfig
+	Twitch      TwitchConfig
 	Gemini      GeminiConfig
 	Features    FeatureConfig
 	Client      ClientConfig
@@ -49,6 +50,14 @@ type GeminiConfig struct {
 	BaseURL        string
 	MaxInlineBytes int64
 	ChatMaxTokens  int
+}
+
+// TwitchConfig controls Twitch API integration used for streamer validation and live audience checks.
+type TwitchConfig struct {
+	ClientID     string
+	ClientSecret string
+	TokenURL     string
+	APIBaseURL   string
 }
 
 // AdminConfig controls role-based admin access.
@@ -443,6 +452,12 @@ func Load() (Config, error) {
 			BunnyBaseURL:   getString("FUNPOT_STREAMLINK_BUNNY_BASE_URL", "https://video.bunnycdn.com"),
 			BunnyLibraryID: strings.TrimSpace(os.Getenv("FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID")),
 			BunnyAPIKey:    strings.TrimSpace(os.Getenv("FUNPOT_STREAMLINK_BUNNY_API_KEY")),
+		},
+		Twitch: TwitchConfig{
+			ClientID:     strings.TrimSpace(os.Getenv("FUNPOT_TWITCH_CLIENT_ID")),
+			ClientSecret: strings.TrimSpace(os.Getenv("FUNPOT_TWITCH_CLIENT_SECRET")),
+			TokenURL:     getString("FUNPOT_TWITCH_TOKEN_URL", "https://id.twitch.tv/oauth2/token"),
+			APIBaseURL:   getString("FUNPOT_TWITCH_API_BASE_URL", "https://api.twitch.tv/helix"),
 		},
 		Gemini: GeminiConfig{
 			APIKey:         os.Getenv("FUNPOT_GEMINI_API_KEY"),

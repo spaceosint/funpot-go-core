@@ -50,6 +50,10 @@ FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT=5
 FUNPOT_STREAMLINK_BUNNY_BASE_URL=https://video.bunnycdn.com
 FUNPOT_STREAMLINK_BUNNY_LIBRARY_ID=
 FUNPOT_STREAMLINK_BUNNY_API_KEY=
+FUNPOT_TWITCH_CLIENT_ID=
+FUNPOT_TWITCH_CLIENT_SECRET=
+FUNPOT_TWITCH_TOKEN_URL=https://id.twitch.tv/oauth2/token
+FUNPOT_TWITCH_API_BASE_URL=https://api.twitch.tv/helix
 FUNPOT_GEMINI_API_KEY=<google_ai_studio_api_key>
 FUNPOT_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
 FUNPOT_GEMINI_MAX_INLINE_BYTES=19922944
@@ -106,6 +110,10 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > Set `FUNPOT_GEMINI_API_KEY` to enable real Gemini stage classification. When
 > it is unset, the server falls back to the deterministic placeholder
 > classifier used in early development.
+
+> Set `FUNPOT_TWITCH_CLIENT_ID` + `FUNPOT_TWITCH_CLIENT_SECRET` to enable
+> real-time Twitch audience validation during streamer submission (online/offline
+> and viewer count threshold checks).
 >
 > `FUNPOT_GEMINI_CHAT_MAX_TOKENS` controls how long the backend keeps one
 > Gemini chat session alive per streamer before rotating to a new chat and
