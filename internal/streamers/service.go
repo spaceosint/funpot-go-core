@@ -18,6 +18,8 @@ var (
 	ErrInvalidStatus     = errors.New("status filter is invalid")
 	ErrRateLimited       = errors.New("submission rate limit exceeded")
 	ErrTwitchUnavailable = errors.New("failed to validate twitch username")
+	ErrStreamerOffline   = errors.New("streamer is offline")
+	ErrInsufficientLive  = errors.New("streamer has insufficient live viewers")
 	ErrNotFound          = errors.New("streamer not found")
 )
 
@@ -25,6 +27,10 @@ var twitchUsernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{4,25}$`)
 
 type TwitchValidator interface {
 	ValidateUsername(ctx context.Context, username string) (displayName string, err error)
+}
+
+type TwitchAudienceValidator interface {
+	GetLiveAudience(ctx context.Context, username string) (online bool, viewers int, err error)
 }
 
 type noopTwitchValidator struct{}
@@ -60,6 +66,7 @@ type Service struct {
 	onSubmitted      func(context.Context, string) error
 	onTrackingStopMu sync.RWMutex
 	onTrackingStop   func(context.Context, string) error
+	minLiveViewers   int
 }
 
 func NewService() *Service {
@@ -77,10 +84,23 @@ func NewServiceWithValidator(validator TwitchValidator) *Service {
 		analysis:       make(map[string]analysisState),
 		validator:      validator,
 		rateLimitByKey: make(map[string]submissionLimit),
+		minLiveViewers: 0,
 		nowFn: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (s *Service) SetMinLiveViewers(min int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if min < 0 {
+		min = 0
+	}
+	s.minLiveViewers = min
+	s.mu.Unlock()
 }
 
 func (s *Service) SetLogger(logger *zap.Logger) {
@@ -212,6 +232,28 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 	}
 	logger.Info("streamer submission validated", zap.String("twitchNickname", nickname), zap.String("displayName", displayName))
 
+	online := false
+	viewers := 0
+	if audienceValidator, ok := s.validator.(TwitchAudienceValidator); ok {
+		online, viewers, err = audienceValidator.GetLiveAudience(ctx, nickname)
+		if err != nil {
+			logger.Warn("streamer audience validation failed", zap.String("twitchNickname", nickname), zap.Error(err))
+			return Submission{}, fmt.Errorf("%w: %v", ErrTwitchUnavailable, err)
+		}
+		if !online {
+			logger.Warn("streamer rejected: offline", zap.String("twitchNickname", nickname))
+			return Submission{}, ErrStreamerOffline
+		}
+		if viewers < s.minLiveViewers {
+			logger.Warn("streamer rejected: low audience",
+				zap.String("twitchNickname", nickname),
+				zap.Int("viewers", viewers),
+				zap.Int("minLiveViewers", s.minLiveViewers),
+			)
+			return Submission{}, fmt.Errorf("%w: got=%d required=%d", ErrInsufficientLive, viewers, s.minLiveViewers)
+		}
+	}
+
 	now := s.nowFn().UnixNano()
 	id := fmt.Sprintf("str_%d", now)
 	streamer := Streamer{
@@ -219,8 +261,8 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 		Platform:       "twitch",
 		TwitchNickname: strings.ToLower(nickname),
 		DisplayName:    displayName,
-		Online:         false,
-		Viewers:        0,
+		Online:         online,
+		Viewers:        viewers,
 		AddedBy:        addedBy,
 		Status:         "pending",
 	}
