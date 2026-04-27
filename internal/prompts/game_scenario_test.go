@@ -122,6 +122,38 @@ func TestGameScenarioCreateRejectsMissingTransitionCondition(t *testing.T) {
 	}
 }
 
+func TestGameScenarioCreateRejectsMissingTransitionID(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	cfg := mustCreateModelConfig(t, svc)
+	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "root",
+		GameSlug:         "global",
+		LLMModelConfigID: cfg.ID,
+		ActorID:          "admin-1",
+		Steps:            []ScenarioStep{{ID: "root", Name: "root", PromptTemplate: "x", ResponseSchemaJSON: `{}`, Initial: true, Order: 1}},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+
+	_, err = svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
+		Name:          "invalid-transition-id",
+		GameSlug:      "cs2",
+		InitialNodeID: "n1",
+		Nodes:         []GameScenarioNode{{ID: "n1", ScenarioPackageID: pkg.ID}},
+		Transitions:   []GameScenarioTransition{{FromNodeID: "n1", ToNodeID: "n1", Condition: `winner == "ct"`, Priority: 1}},
+		ActorID:       "admin-1",
+	})
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !errors.Is(err, ErrInvalidGameScenario) {
+		t.Fatalf("expected ErrInvalidGameScenario, got %v", err)
+	}
+}
+
 func TestGameScenarioCreateRejectsTerminalWithoutOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -151,6 +183,47 @@ func TestGameScenarioCreateRejectsTerminalWithoutOutcomes(t *testing.T) {
 			Priority:   1,
 			TerminalConditions: []GameScenarioTerminalCondition{
 				{Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 0, Priority: 1},
+			},
+		}},
+		ActorID: "admin-1",
+	})
+	if err == nil {
+		t.Fatalf("expected validation error")
+	}
+	if !errors.Is(err, ErrInvalidGameScenario) {
+		t.Fatalf("expected ErrInvalidGameScenario, got %v", err)
+	}
+}
+
+func TestGameScenarioCreateRejectsTerminalWithoutID(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService()
+	cfg := mustCreateModelConfig(t, svc)
+	pkg, err := svc.CreateScenarioPackage(context.Background(), ScenarioPackageCreateRequest{
+		Name:             "root",
+		GameSlug:         "global",
+		LLMModelConfigID: cfg.ID,
+		ActorID:          "admin-1",
+		Steps:            []ScenarioStep{{ID: "root", Name: "root", PromptTemplate: "x", ResponseSchemaJSON: `{}`, Initial: true, Order: 1}},
+	})
+	if err != nil {
+		t.Fatalf("create scenario package: %v", err)
+	}
+
+	_, err = svc.CreateGameScenario(context.Background(), GameScenarioCreateRequest{
+		Name:          "invalid-terminal-id",
+		GameSlug:      "cs2",
+		InitialNodeID: "n1",
+		Nodes:         []GameScenarioNode{{ID: "n1", ScenarioPackageID: pkg.ID}},
+		Transitions: []GameScenarioTransition{{
+			ID:         "tr-1",
+			FromNodeID: "n1",
+			ToNodeID:   "n1",
+			Condition:  `winner == "ct"`,
+			Priority:   1,
+			TerminalConditions: []GameScenarioTerminalCondition{
+				{Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt-1", Title: map[string]string{"ru": "Опция"}}}, Priority: 1},
 			},
 		}},
 		ActorID: "admin-1",
