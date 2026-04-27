@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -937,6 +938,9 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 		finalPackageID = pkg.ID
 	}
 	result.UpdatedStateJSON = enrichScenarioState(result.UpdatedStateJSON, execution.PreviousState, execution.GameScenarioID, finalPackageID, step.ID, finalTransitionTrace)
+	if err := w.emitLiveEventFromScenarioTransition(ctx, streamerID, execution.GameScenarioID, finalTransitionTrace); err != nil {
+		return streamers.LLMDecision{}, err
+	}
 	decisionChunk := chunk
 	if w.chunkPublisher != nil {
 		uploadedVideo, publishErr := w.chunkPublisher.Publish(ctx, streamerID, chunk)
@@ -1039,9 +1043,7 @@ func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, executi
 	if w.logger != nil {
 		w.logger.Debug("game-scenario terminal condition matched", zap.String("streamerID", decision.StreamerID), zap.String("gameScenarioID", gameScenarioID), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)), zap.String("stage", decision.Stage))
 	}
-	if err := w.emitLiveEventFromTerminal(ctx, decision.StreamerID, gameScenarioID, strings.TrimSpace(transitionID), terminal); err != nil {
-		return streamers.LLMDecision{}, false, err
-	}
+	decision.TransitionTerminal = true
 	decision.UpdatedStateJSON = enrichScenarioState(currentState, execution.PreviousState, gameScenarioID, scenarioStatePackageID(currentState), decision.Stage, map[string]any{
 		"status":               "terminal_condition_matched",
 		"fromNode":             firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
@@ -1072,7 +1074,7 @@ func (w *Worker) resolvePostStepScenarioTransition(ctx context.Context, executio
 	if currentNodeID == "" {
 		currentNodeID = scenarioStateNodeID(execution.PreviousState)
 	}
-	resolvedNode, _, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, currentState)
+	resolvedNode, transitionID, nodeChanged, err := gameScenario.ResolveNode(currentNodeID, currentState)
 	if err != nil || !nodeChanged {
 		return currentPackageID, trace
 	}
@@ -1081,13 +1083,66 @@ func (w *Worker) resolvePostStepScenarioTransition(ctx context.Context, executio
 		nextPackageID = currentPackageID
 	}
 	return nextPackageID, map[string]any{
-		"status":      "accepted",
-		"fromNode":    firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
-		"toNode":      strings.TrimSpace(resolvedNode.ID),
-		"fromPackage": currentPackageID,
-		"toPackage":   nextPackageID,
-		"reason":      "game_scenario_transition_matched",
+		"status":       "accepted",
+		"fromNode":     firstNonEmpty(currentNodeID, strings.TrimSpace(gameScenario.InitialNodeID)),
+		"toNode":       strings.TrimSpace(resolvedNode.ID),
+		"fromPackage":  currentPackageID,
+		"toPackage":    nextPackageID,
+		"transitionId": strings.TrimSpace(transitionID),
+		"reason":       "game_scenario_transition_matched",
 	}
+}
+
+func (w *Worker) emitLiveEventFromScenarioTransition(ctx context.Context, streamerID, scenarioID string, transitionTrace map[string]any) error {
+	if w == nil || w.liveEvents == nil {
+		return nil
+	}
+	if strings.TrimSpace(scenarioID) == "" {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(fmt.Sprint(transitionTrace["status"])), "accepted") {
+		return nil
+	}
+	transitionID := strings.TrimSpace(fmt.Sprint(transitionTrace["transitionId"]))
+	if transitionID == "" {
+		return nil
+	}
+	gameScenario, err := w.prompts.GetGameScenario(ctx, strings.TrimSpace(scenarioID))
+	if err != nil {
+		return err
+	}
+	terminal, ok := selectTransitionTerminalTemplate(gameScenario, transitionID)
+	if !ok {
+		return nil
+	}
+	return w.emitLiveEventFromTerminal(ctx, streamerID, scenarioID, transitionID, terminal)
+}
+
+func selectTransitionTerminalTemplate(gameScenario prompts.GameScenario, transitionID string) (prompts.GameScenarioTerminalCondition, bool) {
+	target := strings.TrimSpace(transitionID)
+	if target == "" {
+		return prompts.GameScenarioTerminalCondition{}, false
+	}
+	candidates := make([]prompts.GameScenarioTerminalCondition, 0)
+	for _, transition := range gameScenario.Transitions {
+		if strings.TrimSpace(transition.ID) != target {
+			continue
+		}
+		for _, terminal := range transition.TerminalConditions {
+			candidates = append(candidates, terminal)
+		}
+		break
+	}
+	if len(candidates) == 0 {
+		return prompts.GameScenarioTerminalCondition{}, false
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Priority == candidates[j].Priority {
+			return strings.TrimSpace(candidates[i].ID) < strings.TrimSpace(candidates[j].ID)
+		}
+		return candidates[i].Priority > candidates[j].Priority
+	})
+	return candidates[0], true
 }
 
 func (w *Worker) latestDecisionByStreamer(ctx context.Context, streamerID string) streamers.LLMDecision {

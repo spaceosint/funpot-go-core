@@ -1043,7 +1043,89 @@ func TestWorkerProcessStreamerKeepsCurrentScenarioPackageStepAcrossCycles(t *tes
 	}
 }
 
-func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *testing.T) {
+func TestWorkerProcessStreamerEmitsLiveEventOnGameScenarioTransition(t *testing.T) {
+	liveEvents := &fakeLiveEventStore{}
+	worker := NewWorker(
+		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
+		fakeClassifier{results: map[string]StageClassification{
+			"faceit": {Label: "state_updated", Confidence: 0.9, UpdatedStateJSON: `{"mode":"faceit","ct_score":2,"t_score":3}`},
+		}},
+		fakePromptResolver{
+			gameScenario: prompts.GameScenario{
+				ID:            "game-scenario-1",
+				Name:          "faceit-terminal",
+				GameSlug:      "global",
+				InitialNodeID: "initial",
+				Nodes: []prompts.GameScenarioNode{
+					{ID: "initial", ScenarioPackageID: "scenario-root"},
+					{ID: "global", ScenarioPackageID: "scenario-root"},
+				},
+				Transitions: []prompts.GameScenarioTransition{
+					{
+						ID:         "faceit-entry",
+						FromNodeID: "initial",
+						ToNodeID:   "global",
+						Condition:  `mode == "faceit"`,
+						Priority:   1,
+						TerminalConditions: []prompts.GameScenarioTerminalCondition{
+							{
+								ID:              "score-limit",
+								Condition:       `ct_score >= 6 | t_score >= 6`,
+								GameTitle:       map[string]string{"ru": "Победитель карты"},
+								DefaultLanguage: "ru",
+								OutcomesCount:   2,
+								OutcomeTemplates: []prompts.GameScenarioOutcomeTemplate{
+									{ID: "ct", Title: map[string]string{"ru": "CT"}},
+									{ID: "t", Title: map[string]string{"ru": "T"}},
+								},
+								Priority: 1,
+							},
+						},
+					},
+				},
+				IsActive: true,
+			},
+			scenario: prompts.ScenarioPackage{
+				ID:               "scenario-root",
+				GameSlug:         "global",
+				LLMModelConfigID: "cfg-default",
+				Steps: []prompts.ScenarioStep{
+					{ID: "faceit", Name: "Faceit", PromptTemplate: "score", ResponseSchemaJSON: `{}`, Initial: true, Order: 1},
+				},
+			},
+			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
+		},
+		&InMemoryRunStore{},
+		&fakeDecisionStore{},
+		NewInMemoryLocker(),
+		WorkerConfig{MinConfidence: 0.5, LiveEvents: liveEvents},
+	)
+
+	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	state := parseJSONMap(decision.UpdatedStateJSON)
+	meta, _ := state["_scenario"].(map[string]any)
+	transition, _ := meta["transition"].(map[string]any)
+	if transition["reason"] != "game_scenario_transition_matched" {
+		t.Fatalf("expected game-scenario transition trace, got %#v", transition)
+	}
+	if len(liveEvents.reqs) != 1 {
+		t.Fatalf("expected one live-event emit on transition match, got %d", len(liveEvents.reqs))
+	}
+	if liveEvents.reqs[0].TerminalID != "score-limit" {
+		t.Fatalf("expected terminal score-limit, got %#v", liveEvents.reqs[0])
+	}
+	if len(liveEvents.reqs[0].Options) != 2 {
+		t.Fatalf("expected 2 outcome options, got %#v", liveEvents.reqs[0].Options)
+	}
+	if decision.TransitionTerminal {
+		t.Fatalf("expected transitionTerminal=false before terminal condition matches")
+	}
+}
+
+func TestWorkerProcessStreamerMarksTerminalWithoutCreatingLiveEvent(t *testing.T) {
 	liveEvents := &fakeLiveEventStore{}
 	worker := NewWorker(
 		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
@@ -1104,20 +1186,17 @@ func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *te
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if !decision.TransitionTerminal {
+		t.Fatalf("expected transitionTerminal=true when terminal condition matches")
+	}
 	state := parseJSONMap(decision.UpdatedStateJSON)
 	meta, _ := state["_scenario"].(map[string]any)
 	transition, _ := meta["transition"].(map[string]any)
 	if transition["reason"] != "game_scenario_terminal_condition_matched" {
-		t.Fatalf("expected game-scenario terminal trace, got %#v", transition)
+		t.Fatalf("expected terminal trace, got %#v", transition)
 	}
-	if len(liveEvents.reqs) != 1 {
-		t.Fatalf("expected one live-event emit on terminal match, got %d", len(liveEvents.reqs))
-	}
-	if liveEvents.reqs[0].TerminalID != "score-limit" {
-		t.Fatalf("expected terminal score-limit, got %#v", liveEvents.reqs[0])
-	}
-	if len(liveEvents.reqs[0].Options) != 2 {
-		t.Fatalf("expected 2 outcome options, got %#v", liveEvents.reqs[0].Options)
+	if len(liveEvents.reqs) != 0 {
+		t.Fatalf("expected no live-event emit on terminal match, got %d", len(liveEvents.reqs))
 	}
 }
 
