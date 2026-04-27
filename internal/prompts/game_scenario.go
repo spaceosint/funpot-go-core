@@ -99,6 +99,9 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 		return fmt.Errorf("%w: initialNodeId must reference existing node", ErrInvalidGameScenario)
 	}
 	for _, tr := range req.Transitions {
+		if strings.TrimSpace(tr.ID) == "" {
+			return fmt.Errorf("%w: transition id is required", ErrInvalidGameScenario)
+		}
 		if _, ok := nodeIDs[strings.TrimSpace(tr.FromNodeID)]; !ok {
 			return fmt.Errorf("%w: transition fromNodeId %s not found", ErrInvalidGameScenario, tr.FromNodeID)
 		}
@@ -122,6 +125,9 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 	}
 	for _, tr := range req.Transitions {
 		for _, tc := range tr.TerminalConditions {
+			if strings.TrimSpace(tc.ID) == "" {
+				return fmt.Errorf("%w: transition %s terminal id is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			}
 			if strings.TrimSpace(tc.Condition) == "" {
 				return fmt.Errorf("%w: transition %s terminal condition is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
 			}
