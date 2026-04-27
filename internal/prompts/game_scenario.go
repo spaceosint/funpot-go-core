@@ -33,17 +33,17 @@ type GameScenarioTransition struct {
 type GameScenarioTerminalCondition struct {
 	ID               string                        `json:"id"`
 	TransitionID     string                        `json:"transitionId,omitempty"`
-	Condition        string                        `json:"condition"`
 	GameTitle        map[string]string             `json:"gameTitle,omitempty"`
 	DefaultLanguage  string                        `json:"defaultLanguage,omitempty"`
-	OutcomesCount    int                           `json:"outcomesCount"`
 	OutcomeTemplates []GameScenarioOutcomeTemplate `json:"outcomeTemplates,omitempty"`
 	Priority         int                           `json:"priority"`
 }
 
 type GameScenarioOutcomeTemplate struct {
-	ID    string            `json:"id"`
-	Title map[string]string `json:"title,omitempty"`
+	ID        string            `json:"id"`
+	Title     map[string]string `json:"title,omitempty"`
+	Condition string            `json:"condition"`
+	Priority  int               `json:"priority"`
 }
 
 type GameScenario struct {
@@ -128,17 +128,8 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 			if strings.TrimSpace(tc.ID) == "" {
 				return fmt.Errorf("%w: transition %s terminal id is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
 			}
-			if strings.TrimSpace(tc.Condition) == "" {
-				return fmt.Errorf("%w: transition %s terminal condition is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
-			}
-			if err := validateScenarioCondition(tc.Condition); err != nil {
-				return fmt.Errorf("%w: transition %s terminal condition: %v", ErrInvalidGameScenario, strings.TrimSpace(tr.ID), err)
-			}
-			if tc.OutcomesCount <= 0 {
-				return fmt.Errorf("%w: transition %s terminal outcomesCount must be positive", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
-			}
-			if len(tc.OutcomeTemplates) != tc.OutcomesCount {
-				return fmt.Errorf("%w: transition %s terminal outcomesCount must match outcomeTemplates", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+			if len(tc.OutcomeTemplates) == 0 {
+				return fmt.Errorf("%w: transition %s terminal outcomeTemplates are required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
 			}
 			if strings.TrimSpace(tc.DefaultLanguage) == "" {
 				return fmt.Errorf("%w: transition %s terminal defaultLanguage is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
@@ -149,6 +140,12 @@ func (s *Service) validateGameScenarioRequest(ctx context.Context, req GameScena
 			for _, outcome := range tc.OutcomeTemplates {
 				if strings.TrimSpace(outcome.ID) == "" {
 					return fmt.Errorf("%w: transition %s terminal outcome id is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+				}
+				if strings.TrimSpace(outcome.Condition) == "" {
+					return fmt.Errorf("%w: transition %s terminal outcome condition is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
+				}
+				if err := validateScenarioCondition(outcome.Condition); err != nil {
+					return fmt.Errorf("%w: transition %s terminal outcome condition: %v", ErrInvalidGameScenario, strings.TrimSpace(tr.ID), err)
 				}
 				if strings.TrimSpace(outcome.Title[tc.DefaultLanguage]) == "" {
 					return fmt.Errorf("%w: transition %s terminal outcome title for default language is required", ErrInvalidGameScenario, strings.TrimSpace(tr.ID))
@@ -469,7 +466,7 @@ func evaluateOrderedTerminals(items []GameScenarioTerminalCondition, state map[s
 		return items[i].Priority > items[j].Priority
 	})
 	for _, terminal := range items {
-		ok, err := evaluateCondition(terminal.Condition, state)
+		_, ok, err := terminal.ResolveWinningOutcomeWithState(state)
 		if err != nil {
 			return GameScenarioTerminalCondition{}, false, err
 		}
@@ -478,6 +475,30 @@ func evaluateOrderedTerminals(items []GameScenarioTerminalCondition, state map[s
 		}
 	}
 	return GameScenarioTerminalCondition{}, false, nil
+}
+
+func (t GameScenarioTerminalCondition) ResolveWinningOutcome(stateJSON string) (GameScenarioOutcomeTemplate, bool, error) {
+	return t.ResolveWinningOutcomeWithState(parseJSONMap(stateJSON))
+}
+
+func (t GameScenarioTerminalCondition) ResolveWinningOutcomeWithState(state map[string]any) (GameScenarioOutcomeTemplate, bool, error) {
+	options := append([]GameScenarioOutcomeTemplate(nil), t.OutcomeTemplates...)
+	sort.SliceStable(options, func(i, j int) bool {
+		if options[i].Priority == options[j].Priority {
+			return strings.TrimSpace(options[i].ID) < strings.TrimSpace(options[j].ID)
+		}
+		return options[i].Priority > options[j].Priority
+	})
+	for _, option := range options {
+		ok, err := evaluateCondition(option.Condition, state)
+		if err != nil {
+			return GameScenarioOutcomeTemplate{}, false, err
+		}
+		if ok {
+			return option, true, nil
+		}
+	}
+	return GameScenarioOutcomeTemplate{}, false, nil
 }
 
 func (s *Service) hasActiveGameScenarioLocked() bool {

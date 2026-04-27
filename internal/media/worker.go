@@ -1043,6 +1043,14 @@ func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, executi
 	if w.logger != nil {
 		w.logger.Debug("game-scenario terminal condition matched", zap.String("streamerID", decision.StreamerID), zap.String("gameScenarioID", gameScenarioID), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)), zap.String("stage", decision.Stage))
 	}
+	winningOutcome, winningMatched, err := terminal.ResolveWinningOutcome(currentState)
+	if err != nil {
+		return streamers.LLMDecision{}, false, err
+	}
+	winningOutcomeID := ""
+	if winningMatched {
+		winningOutcomeID = strings.TrimSpace(winningOutcome.ID)
+	}
 	decision.TransitionTerminal = true
 	decision.UpdatedStateJSON = enrichScenarioState(currentState, execution.PreviousState, gameScenarioID, scenarioStatePackageID(currentState), decision.Stage, map[string]any{
 		"status":               "terminal_condition_matched",
@@ -1053,6 +1061,7 @@ func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, executi
 		"reason":               "game_scenario_terminal_condition_matched",
 		"terminalId":           strings.TrimSpace(terminal.ID),
 		"terminalTransitionId": strings.TrimSpace(terminal.TransitionID),
+		"winningOutcomeId":     winningOutcomeID,
 	})
 	return decision, false, nil
 }

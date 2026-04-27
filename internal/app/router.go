@@ -134,16 +134,16 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 			outcomeTemplates := make([]prompts.GameScenarioOutcomeTemplate, 0, len(item.OutcomeTemplates))
 			for _, outcome := range item.OutcomeTemplates {
 				outcomeTemplates = append(outcomeTemplates, prompts.GameScenarioOutcomeTemplate{
-					ID:    outcome.ID,
-					Title: outcome.Title,
+					ID:        outcome.ID,
+					Title:     outcome.Title,
+					Condition: outcome.Condition,
+					Priority:  outcome.Priority,
 				})
 			}
 			terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
 				ID:               item.ID,
-				Condition:        item.Condition,
 				GameTitle:        item.GameTitle,
 				DefaultLanguage:  item.DefaultLanguage,
-				OutcomesCount:    item.OutcomesCount,
 				OutcomeTemplates: outcomeTemplates,
 				Priority:         item.Priority,
 			})
@@ -249,17 +249,17 @@ type gameScenarioTransitionRequest struct {
 
 type gameScenarioTerminalConditionRequest struct {
 	ID               string                                     `json:"id"`
-	Condition        string                                     `json:"condition"`
 	GameTitle        map[string]string                          `json:"gameTitle"`
 	DefaultLanguage  string                                     `json:"defaultLanguage"`
-	OutcomesCount    int                                        `json:"outcomesCount"`
 	OutcomeTemplates []gameScenarioTerminalOutcomeTemplateInput `json:"outcomeTemplates"`
 	Priority         int                                        `json:"priority"`
 }
 
 type gameScenarioTerminalOutcomeTemplateInput struct {
-	ID    string            `json:"id"`
-	Title map[string]string `json:"title"`
+	ID        string            `json:"id"`
+	Title     map[string]string `json:"title"`
+	Condition string            `json:"condition"`
+	Priority  int               `json:"priority"`
 }
 
 type gameScenarioCreateRequest struct {

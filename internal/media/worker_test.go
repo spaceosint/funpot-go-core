@@ -1070,13 +1070,11 @@ func TestWorkerProcessStreamerEmitsLiveEventOnGameScenarioTransition(t *testing.
 						TerminalConditions: []prompts.GameScenarioTerminalCondition{
 							{
 								ID:              "score-limit",
-								Condition:       `ct_score >= 6 | t_score >= 6`,
 								GameTitle:       map[string]string{"ru": "Победитель карты"},
 								DefaultLanguage: "ru",
-								OutcomesCount:   2,
 								OutcomeTemplates: []prompts.GameScenarioOutcomeTemplate{
-									{ID: "ct", Title: map[string]string{"ru": "CT"}},
-									{ID: "t", Title: map[string]string{"ru": "T"}},
+									{ID: "ct", Title: map[string]string{"ru": "CT"}, Condition: `ct_score >= 6`, Priority: 100},
+									{ID: "t", Title: map[string]string{"ru": "T"}, Condition: `t_score >= 6`, Priority: 100},
 								},
 								Priority: 1,
 							},
@@ -1151,13 +1149,11 @@ func TestWorkerProcessStreamerMarksTerminalWithoutCreatingLiveEvent(t *testing.T
 						TerminalConditions: []prompts.GameScenarioTerminalCondition{
 							{
 								ID:              "score-limit",
-								Condition:       `ct_score >= 6 | t_score >= 6`,
 								GameTitle:       map[string]string{"ru": "Победитель карты"},
 								DefaultLanguage: "ru",
-								OutcomesCount:   2,
 								OutcomeTemplates: []prompts.GameScenarioOutcomeTemplate{
-									{ID: "ct", Title: map[string]string{"ru": "CT"}},
-									{ID: "t", Title: map[string]string{"ru": "T"}},
+									{ID: "ct", Title: map[string]string{"ru": "CT"}, Condition: `ct_score >= 6`, Priority: 100},
+									{ID: "t", Title: map[string]string{"ru": "T"}, Condition: `t_score >= 6`, Priority: 100},
 								},
 								Priority: 1,
 							},
