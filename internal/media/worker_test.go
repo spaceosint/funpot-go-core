@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/funpot/funpot-go-core/internal/events"
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 )
@@ -212,6 +213,11 @@ type fakeChunkPublisher struct {
 	uploaded UploadedVideo
 }
 
+type fakeLiveEventStore struct {
+	reqs []events.CreateLiveEventRequest
+	err  error
+}
+
 func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (StageClassification, error) {
 	if f.calls == nil {
 		f.calls = map[string]int{}
@@ -229,6 +235,19 @@ func (f *flakyClassifier) Classify(_ context.Context, input StageRequest) (Stage
 func (f *fakeChunkPublisher) Publish(_ context.Context, _ string, _ ChunkRef) (UploadedVideo, error) {
 	f.calls++
 	return f.uploaded, f.err
+}
+
+func (f *fakeLiveEventStore) CreateLiveEvent(_ context.Context, req events.CreateLiveEventRequest) (events.LiveEvent, error) {
+	f.reqs = append(f.reqs, req)
+	if f.err != nil {
+		return events.LiveEvent{}, f.err
+	}
+	return events.LiveEvent{
+		ID:         "event-1",
+		ScenarioID: req.ScenarioID,
+		TerminalID: req.TerminalID,
+		Options:    req.Options,
+	}, nil
 }
 
 func (s *fakeDecisionStore) RecordLLMDecision(_ context.Context, req streamers.RecordDecisionRequest) (streamers.LLMDecision, error) {
@@ -1025,6 +1044,7 @@ func TestWorkerProcessStreamerKeepsCurrentScenarioPackageStepAcrossCycles(t *tes
 }
 
 func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *testing.T) {
+	liveEvents := &fakeLiveEventStore{}
 	worker := NewWorker(
 		&fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}},
 		fakeClassifier{results: map[string]StageClassification{
@@ -1077,7 +1097,7 @@ func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *te
 		&InMemoryRunStore{},
 		&fakeDecisionStore{},
 		NewInMemoryLocker(),
-		WorkerConfig{MinConfidence: 0.5},
+		WorkerConfig{MinConfidence: 0.5, LiveEvents: liveEvents},
 	)
 
 	decision, err := worker.ProcessStreamer(context.Background(), "streamer-1")
@@ -1089,6 +1109,15 @@ func TestWorkerProcessStreamerStopsOnPostStepGameScenarioTerminalCondition(t *te
 	transition, _ := meta["transition"].(map[string]any)
 	if transition["reason"] != "game_scenario_terminal_condition_matched" {
 		t.Fatalf("expected game-scenario terminal trace, got %#v", transition)
+	}
+	if len(liveEvents.reqs) != 1 {
+		t.Fatalf("expected one live-event emit on terminal match, got %d", len(liveEvents.reqs))
+	}
+	if liveEvents.reqs[0].TerminalID != "score-limit" {
+		t.Fatalf("expected terminal score-limit, got %#v", liveEvents.reqs[0])
+	}
+	if len(liveEvents.reqs[0].Options) != 2 {
+		t.Fatalf("expected 2 outcome options, got %#v", liveEvents.reqs[0].Options)
 	}
 }
 

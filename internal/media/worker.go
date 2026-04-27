@@ -904,7 +904,6 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	entering := execution.Entering
 	previousState := execution.PreviousState
 	logger.Info("scenario step selected", zap.String("streamerID", streamerID), zap.String("scenarioPackageID", pkg.ID), zap.String("stepID", step.ID), zap.Int("segmentSeconds", step.SegmentSeconds), zap.Int("maxRequests", step.MaxRequests))
-	w.emitLiveEventFromTerminal(ctx, streamerID, execution)
 	if strings.TrimSpace(pkg.LLMModelConfigID) == "" {
 		return streamers.LLMDecision{}, prompts.ErrInvalidScenarioModelRef
 	}
@@ -964,11 +963,18 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	return decision, nil
 }
 
-func (w *Worker) emitLiveEventFromTerminal(ctx context.Context, streamerID string, execution scenarioExecutionPlan) {
-	if w == nil || w.liveEvents == nil || !execution.HasMatchedTerminal {
-		return
+func (w *Worker) emitLiveEventFromTerminal(ctx context.Context, streamerID, scenarioID, transitionID string, terminal prompts.GameScenarioTerminalCondition) error {
+	if w == nil || w.liveEvents == nil {
+		return nil
 	}
-	terminal := execution.MatchedTerminal
+	logger := w.logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	if strings.TrimSpace(terminal.ID) == "" {
+		logger.Debug("skip live-event emit because terminal condition is empty", zap.String("streamerID", streamerID), zap.String("scenarioID", strings.TrimSpace(scenarioID)))
+		return nil
+	}
 	outcomes := make([]events.Option, 0, len(terminal.OutcomeTemplates))
 	for _, item := range terminal.OutcomeTemplates {
 		outcomes = append(outcomes, events.Option{
@@ -980,16 +986,26 @@ func (w *Worker) emitLiveEventFromTerminal(ctx context.Context, streamerID strin
 	if duration <= 0 {
 		duration = 5 * time.Minute
 	}
-	_, _ = w.liveEvents.CreateLiveEvent(ctx, events.CreateLiveEventRequest{
+	created, err := w.liveEvents.CreateLiveEvent(ctx, events.CreateLiveEventRequest{
 		StreamerID:      streamerID,
-		ScenarioID:      strings.TrimSpace(execution.GameScenarioID),
-		TransitionID:    strings.TrimSpace(execution.TransitionID),
+		ScenarioID:      strings.TrimSpace(scenarioID),
+		TransitionID:    strings.TrimSpace(transitionID),
 		TerminalID:      strings.TrimSpace(terminal.ID),
 		Title:           terminal.GameTitle,
 		DefaultLanguage: strings.TrimSpace(terminal.DefaultLanguage),
 		Options:         outcomes,
 		Duration:        duration,
 	})
+	if err != nil {
+		if errors.Is(err, events.ErrAlreadyActive) {
+			logger.Debug("live-event already active for terminal", zap.String("streamerID", streamerID), zap.String("scenarioID", strings.TrimSpace(scenarioID)), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)))
+			return nil
+		}
+		logger.Error("failed to create live-event from terminal", zap.String("streamerID", streamerID), zap.String("scenarioID", strings.TrimSpace(scenarioID)), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)), zap.Error(err))
+		return err
+	}
+	logger.Debug("live-event created from terminal", zap.String("streamerID", streamerID), zap.String("scenarioID", strings.TrimSpace(scenarioID)), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)), zap.String("eventID", strings.TrimSpace(created.ID)), zap.Int("outcomesCount", len(created.Options)))
+	return nil
 }
 
 func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, execution scenarioExecutionPlan, transitionTrace map[string]any, decision streamers.LLMDecision) (streamers.LLMDecision, bool, error) {
@@ -1015,7 +1031,16 @@ func (w *Worker) applyGameScenarioTerminalCondition(ctx context.Context, executi
 		return streamers.LLMDecision{}, false, err
 	}
 	if !matched {
+		if w.logger != nil {
+			w.logger.Debug("game-scenario terminal condition not matched", zap.String("streamerID", decision.StreamerID), zap.String("gameScenarioID", gameScenarioID), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("stage", decision.Stage))
+		}
 		return decision, false, nil
+	}
+	if w.logger != nil {
+		w.logger.Debug("game-scenario terminal condition matched", zap.String("streamerID", decision.StreamerID), zap.String("gameScenarioID", gameScenarioID), zap.String("transitionID", strings.TrimSpace(transitionID)), zap.String("terminalID", strings.TrimSpace(terminal.ID)), zap.String("stage", decision.Stage))
+	}
+	if err := w.emitLiveEventFromTerminal(ctx, decision.StreamerID, gameScenarioID, strings.TrimSpace(transitionID), terminal); err != nil {
+		return streamers.LLMDecision{}, false, err
 	}
 	decision.UpdatedStateJSON = enrichScenarioState(currentState, execution.PreviousState, gameScenarioID, scenarioStatePackageID(currentState), decision.Stage, map[string]any{
 		"status":               "terminal_condition_matched",
