@@ -93,6 +93,9 @@ func (p *BunnyChunkPublisher) Publish(ctx context.Context, streamerID string, ch
 	if err := p.uploadVideo(ctx, videoID, chunkPath); err != nil {
 		return UploadedVideo{}, err
 	}
+	if err := os.Remove(chunkPath); err != nil && !errorsIsNotExist(err) {
+		return UploadedVideo{}, fmt.Errorf("remove uploaded chunk: %w", err)
+	}
 	uploaded := UploadedVideo{
 		ID:        videoID,
 		Title:     title,

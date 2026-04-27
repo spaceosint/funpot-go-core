@@ -89,6 +89,9 @@ func TestBunnyChunkPublisherUploadsChunkImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish first chunk: %v", err)
 	}
+	if _, statErr := os.Stat(chunkA); !os.IsNotExist(statErr) {
+		t.Fatalf("expected chunkA to be deleted after upload, stat err=%v", statErr)
+	}
 	if uploadCalls != 1 {
 		t.Fatalf("uploadCalls = %d, want 1 after first publish", uploadCalls)
 	}
@@ -102,6 +105,9 @@ func TestBunnyChunkPublisherUploadsChunkImmediately(t *testing.T) {
 	}
 	if _, err := publisher.Publish(context.Background(), "str-1", ChunkRef{Reference: chunkB, CapturedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("publish second chunk: %v", err)
+	}
+	if _, statErr := os.Stat(chunkB); !os.IsNotExist(statErr) {
+		t.Fatalf("expected chunkB to be deleted after upload, stat err=%v", statErr)
 	}
 	if uploadCalls != 2 {
 		t.Fatalf("uploadCalls = %d, want 2 after second publish", uploadCalls)
