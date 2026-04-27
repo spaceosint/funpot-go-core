@@ -1878,14 +1878,12 @@ components:
             $ref: '#/components/schemas/GameScenarioTerminalCondition'
     GameScenarioTerminalCondition:
       type: object
-      required: [id, condition, gameTitle, defaultLanguage, outcomesCount, outcomeTemplates]
+      required: [id, gameTitle, defaultLanguage, outcomeTemplates]
       additionalProperties: false
       properties:
         id:
           type: string
           minLength: 1
-        condition:
-          type: string
         gameTitle:
           type: object
           minProperties: 1
@@ -1894,12 +1892,10 @@ components:
         defaultLanguage:
           type: string
           description: Primary locale key used to validate required localized title fields.
-        outcomesCount:
-          type: integer
-          minimum: 1
         outcomeTemplates:
           type: array
           minItems: 1
+          description: Outcome templates with per-button matching conditions. Terminal is considered matched when at least one outcome condition is true.
           items:
             $ref: '#/components/schemas/GameScenarioOutcomeTemplate'
         priority:
@@ -1907,7 +1903,7 @@ components:
           minimum: 1
     GameScenarioOutcomeTemplate:
       type: object
-      required: [id, title]
+      required: [id, title, condition]
       additionalProperties: false
       properties:
         id:
@@ -1918,6 +1914,13 @@ components:
           minProperties: 1
           additionalProperties:
             type: string
+        condition:
+          type: string
+          description: Data-driven expression evaluated against aggregated state to determine if this option is the winning outcome.
+        priority:
+          type: integer
+          minimum: 0
+          description: Tie-breaker when multiple outcome conditions are true; higher value wins.
     GameScenarioCreateRequest:
       type: object
       required: [name, gameSlug, initialNodeId, nodes]

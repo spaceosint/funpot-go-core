@@ -53,13 +53,11 @@ func TestGameScenarioCRUD(t *testing.T) {
 			TerminalConditions: []GameScenarioTerminalCondition{
 				{
 					ID:              "tm-1",
-					Condition:       `winner == "ct"`,
 					GameTitle:       map[string]string{"ru": "Победа CT", "en": "CT win"},
 					DefaultLanguage: "ru",
-					OutcomesCount:   2,
 					OutcomeTemplates: []GameScenarioOutcomeTemplate{
-						{ID: "ct", Title: map[string]string{"ru": "CT", "en": "CT"}},
-						{ID: "t", Title: map[string]string{"ru": "T", "en": "T"}},
+						{ID: "ct", Title: map[string]string{"ru": "CT", "en": "CT"}, Condition: `winner == "ct"`, Priority: 100},
+						{ID: "t", Title: map[string]string{"ru": "T", "en": "T"}, Condition: `winner == "t"`, Priority: 90},
 					},
 					Priority: 100,
 				},
@@ -182,7 +180,7 @@ func TestGameScenarioCreateRejectsTerminalWithoutOutcomes(t *testing.T) {
 			Condition:  `winner == "ct"`,
 			Priority:   1,
 			TerminalConditions: []GameScenarioTerminalCondition{
-				{Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 0, Priority: 1},
+				{ID: "tm-1", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, Priority: 1},
 			},
 		}},
 		ActorID: "admin-1",
@@ -223,7 +221,7 @@ func TestGameScenarioCreateRejectsTerminalWithoutID(t *testing.T) {
 			Condition:  `winner == "ct"`,
 			Priority:   1,
 			TerminalConditions: []GameScenarioTerminalCondition{
-				{Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt-1", Title: map[string]string{"ru": "Опция"}}}, Priority: 1},
+				{DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt-1", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 1},
 			},
 		}},
 		ActorID: "admin-1",
@@ -305,7 +303,7 @@ func TestGameScenarioResolveTerminalConditionFallsBackToGlobalScope(t *testing.T
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 100},
+					{ID: "edge-win", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 100},
 				},
 			},
 		},
@@ -339,8 +337,8 @@ func TestGameScenarioResolveTerminalConditionPrefersTransitionScope(t *testing.T
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-high", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 200},
-					{ID: "edge-win-low", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 10},
+					{ID: "edge-win-high", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 200},
+					{ID: "edge-win-low", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 10},
 				},
 			},
 		},
@@ -371,7 +369,7 @@ func TestGameScenarioResolveTerminalConditionPrefersMatchedTransitionBeforeGloba
 				Condition:  `winner == "ct"`,
 				Priority:   100,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-local", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 10},
+					{ID: "edge-win-local", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 10},
 				},
 			},
 			{
@@ -381,7 +379,7 @@ func TestGameScenarioResolveTerminalConditionPrefersMatchedTransitionBeforeGloba
 				Condition:  `winner == "ct"`,
 				Priority:   90,
 				TerminalConditions: []GameScenarioTerminalCondition{
-					{ID: "edge-win-global", Condition: `winner == "ct"`, DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomesCount: 1, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}}}, Priority: 999},
+					{ID: "edge-win-global", DefaultLanguage: "ru", GameTitle: map[string]string{"ru": "Игра"}, OutcomeTemplates: []GameScenarioOutcomeTemplate{{ID: "opt", Title: map[string]string{"ru": "Опция"}, Condition: `winner == "ct"`}}, Priority: 999},
 				},
 			},
 		},

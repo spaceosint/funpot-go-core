@@ -272,13 +272,11 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 				"terminalConditions": []map[string]any{
 					{
 						"id":              "tm-1",
-						"condition":       `winner == "ct" && side == "ct"`,
 						"gameTitle":       map[string]string{"ru": "Победа CT", "en": "CT win"},
 						"defaultLanguage": "ru",
-						"outcomesCount":   2,
 						"outcomeTemplates": []map[string]any{
-							{"id": "ct", "title": map[string]string{"ru": "CT", "en": "CT"}},
-							{"id": "t", "title": map[string]string{"ru": "T", "en": "T"}},
+							{"id": "ct", "title": map[string]string{"ru": "CT", "en": "CT"}, "condition": `winner == "ct" && side == "ct"`, "priority": 100},
+							{"id": "t", "title": map[string]string{"ru": "T", "en": "T"}, "condition": `winner == "t" && side == "t"`, "priority": 90},
 						},
 						"priority": 100,
 					},
