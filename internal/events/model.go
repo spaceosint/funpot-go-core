@@ -27,6 +27,9 @@ type LiveEvent struct {
 	CreatedAt       string            `json:"createdAt"`
 	Status          string            `json:"status"`
 	Totals          map[string]int64  `json:"totals"`
+	TotalContributed int64            `json:"totalContributed"`
+	PlatformFeeINT   int64            `json:"platformFeeINT"`
+	DistributableINT int64            `json:"distributableINT"`
 	UserVote        *UserVote         `json:"userVote,omitempty"`
 }
 

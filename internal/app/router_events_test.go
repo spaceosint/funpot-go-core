@@ -109,3 +109,84 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected wallet balance 90 after idempotent vote replay, got %d", walletPayload.Balance)
 	}
 }
+
+func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
+	eventsService := events.NewService([]events.LiveEvent{
+		{
+			ID:              "event-1",
+			TemplateID:      "streamer-1:terminal-1",
+			StreamerID:      "streamer-1",
+			ScenarioID:      "scenario-1",
+			TerminalID:      "terminal-1",
+			Title:           map[string]string{"ru": "Победитель карты"},
+			DefaultLanguage: "ru",
+			Options: []events.Option{
+				{ID: "ct", Title: map[string]string{"ru": "CT"}},
+			},
+			ClosesAt:  time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			Status:    "open",
+			Totals: map[string]int64{
+				"ct": 0,
+			},
+		},
+	})
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		users.NewService(users.NewInMemoryRepository()),
+		nil,
+		nil,
+		nil,
+		nil,
+		eventsService,
+		ClientConfigResponse{},
+	)
+	adminToken := buildToken(t, "admin-1")
+	userToken := buildToken(t, "user-1")
+
+	settingsReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings/general", bytes.NewReader([]byte(`{"votePlatformFeePercent":15}`)))
+	settingsReq.Header.Set("Authorization", "Bearer "+adminToken)
+	settingsRes := httptest.NewRecorder()
+	handler.ServeHTTP(settingsRes, settingsReq)
+	if settingsRes.Code != http.StatusOK {
+		t.Fatalf("settings status=%d body=%s", settingsRes.Code, settingsRes.Body.String())
+	}
+
+	adjustReq := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader([]byte(`{"userId":"user-1","deltaINT":100,"reason":"seed"}`)))
+	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
+	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
+	adjustRes := httptest.NewRecorder()
+	handler.ServeHTTP(adjustRes, adjustReq)
+	if adjustRes.Code != http.StatusOK {
+		t.Fatalf("seed wallet status=%d body=%s", adjustRes.Code, adjustRes.Body.String())
+	}
+
+	voteReq := httptest.NewRequest(http.MethodPost, "/api/events/event-1/vote", bytes.NewReader([]byte(`{"streamerId":"streamer-1","optionId":"ct","amountINT":100}`)))
+	voteReq.Header.Set("Authorization", "Bearer "+userToken)
+	voteReq.Header.Set("Idempotency-Key", "vote-1")
+	voteRes := httptest.NewRecorder()
+	handler.ServeHTTP(voteRes, voteReq)
+	if voteRes.Code != http.StatusOK {
+		t.Fatalf("vote status=%d body=%s", voteRes.Code, voteRes.Body.String())
+	}
+
+	var payload struct {
+		Totals           map[string]int64 `json:"totals"`
+		TotalContributed int64            `json:"totalContributed"`
+		PlatformFeeINT   int64            `json:"platformFeeINT"`
+		DistributableINT int64            `json:"distributableINT"`
+	}
+	if err := json.Unmarshal(voteRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal vote response: %v", err)
+	}
+	if payload.Totals["ct"] != 85 {
+		t.Fatalf("expected net total 85, got %d", payload.Totals["ct"])
+	}
+	if payload.TotalContributed != 100 || payload.PlatformFeeINT != 15 || payload.DistributableINT != 85 {
+		t.Fatalf("unexpected pool values: %+v", payload)
+	}
+}
