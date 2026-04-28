@@ -3,7 +3,6 @@ package media
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,7 +102,7 @@ func TestStreamlinkCaptureAdapterCaptureSuccess(t *testing.T) {
 	if !strings.Contains(joined, "https://twitch.tv/shroud") {
 		t.Fatalf("expected resolved channel in args, got %q", joined)
 	}
-	if !strings.Contains(joined, fmt.Sprintf("--stream-segmented-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
+	if !strings.Contains(joined, "--stream-segmented-duration 2") {
 		t.Fatalf("expected --stream-segmented-duration argument, got %q", joined)
 	}
 
@@ -169,10 +168,10 @@ func TestStreamlinkCaptureAdapterFallsBackToHLSDurationWhenStreamSegmentedUnsupp
 	}
 	first := strings.Join(runner.argsHistory[0], " ")
 	second := strings.Join(runner.argsHistory[1], " ")
-	if !strings.Contains(first, fmt.Sprintf("--stream-segmented-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
+	if !strings.Contains(first, "--stream-segmented-duration 30") {
 		t.Fatalf("first streamlink invocation = %q, want --stream-segmented-duration", first)
 	}
-	if !strings.Contains(second, fmt.Sprintf("--hls-duration %d", int(minimumStreamlinkCaptureTimeout/time.Second))) {
+	if !strings.Contains(second, "--hls-duration 30") {
 		t.Fatalf("second streamlink invocation = %q, want --hls-duration", second)
 	}
 }
@@ -186,23 +185,23 @@ func TestStreamlinkCaptureAdapterAcceptsTimeoutWhenChunkCaptured(t *testing.T) {
 	}
 }
 
-func TestNewStreamlinkCaptureAdapterEnforcesMinimumCaptureTimeout(t *testing.T) {
+func TestNewStreamlinkCaptureAdapterKeepsConfiguredCaptureTimeout(t *testing.T) {
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
 		CaptureTimeout: 5 * time.Second,
 		OutputDir:      t.TempDir(),
 	}, nil, &fakeCommandRunner{})
 
-	if adapter.cfg.CaptureTimeout != minimumStreamlinkCaptureTimeout {
-		t.Fatalf("CaptureTimeout = %s, want %s", adapter.cfg.CaptureTimeout, minimumStreamlinkCaptureTimeout)
+	if adapter.cfg.CaptureTimeout != 5*time.Second {
+		t.Fatalf("CaptureTimeout = %s, want 5s", adapter.cfg.CaptureTimeout)
 	}
 }
 
-func TestNewStreamlinkCaptureAdapterEnablesContinuousModeForDefaultRunner(t *testing.T) {
+func TestNewStreamlinkCaptureAdapterDisablesContinuousModeForDefaultRunner(t *testing.T) {
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
 		OutputDir: t.TempDir(),
 	}, nil, nil)
-	if !adapter.continuous {
-		t.Fatalf("expected continuous mode for default runner")
+	if adapter.continuous {
+		t.Fatalf("expected non-continuous mode for default runner")
 	}
 }
 
