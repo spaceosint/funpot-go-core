@@ -1587,6 +1587,18 @@ func NewHandler(
 				}
 				writeJSON(w, http.StatusOK, eventsService.ListLiveByStreamer(r.Context(), streamerID))
 			})))
+			mux.Handle("/api/events/history", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				writeJSON(w, http.StatusOK, eventsService.ListUserHistory(r.Context(), claims.Subject))
+			})))
 
 			mux.Handle("/api/events/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost {

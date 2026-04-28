@@ -915,6 +915,22 @@ paths:
                 $ref: '#/components/schemas/LiveEvent'
         default:
           $ref: '#/components/responses/Error'
+  /api/events/history:
+    get:
+      summary: Get authenticated user event vote history
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User event history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserEventHistoryItem'
+        default:
+          $ref: '#/components/responses/Error'
   /api/wallet:
     get:
       summary: Get wallet balance and history
@@ -2122,6 +2138,51 @@ components:
         amountINT:
           type: integer
           minimum: 1
+    UserEventHistoryItem:
+      type: object
+      properties:
+        eventId:
+          type: string
+        streamerId:
+          type: string
+        scenarioId:
+          type: string
+        transitionId:
+          type: string
+        terminalId:
+          type: string
+        title:
+          type: object
+          additionalProperties:
+            type: string
+        defaultLanguage:
+          type: string
+        optionId:
+          type: string
+        amountINT:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        totalContributed:
+          type: integer
+        platformFeeINT:
+          type: integer
+        distributableINT:
+          type: integer
+        optionPoolINT:
+          type: integer
+        coefficient:
+          type: number
+          format: double
+        potentialWinINT:
+          type: integer
+        winAmountINT:
+          type: integer
+          nullable: true
+        resultStatus:
+          type: string
+          enum: [pending, won, lost]
     Wallet:
       type: object
       properties:
