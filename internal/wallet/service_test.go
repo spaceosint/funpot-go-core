@@ -46,3 +46,18 @@ func TestServiceAdjustDebitAndCredit(t *testing.T) {
 		t.Fatalf("expected 2 entries, got %d", len(wallet.History))
 	}
 }
+
+func TestServicePostRejectsNonGameCurrency(t *testing.T) {
+	svc := NewService()
+	_, _, err := svc.Post(PostRequest{
+		UserID:         "u1",
+		Type:           EntryTypeCredit,
+		Amount:         100,
+		Currency:       "USD",
+		IdempotencyKey: "k1",
+		Reason:         "init",
+	})
+	if err != ErrInvalidCurrency {
+		t.Fatalf("expected ErrInvalidCurrency, got %v", err)
+	}
+}

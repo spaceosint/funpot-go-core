@@ -4,7 +4,7 @@
 - **users** `(id uuid PK, tg_user_id bigint unique, nickname text, language text, roles text[], created_at timestamptz)`
 - **referrals** `(user_id uuid PK FK users, code text unique, inviter_user_id uuid FK users, percent numeric(5,2), created_at timestamptz)`
 - **wallet_accounts** `(user_id uuid PK FK users, balance_int bigint, updated_at timestamptz)`
-- **wallet_ledger** `(id uuid PK, user_id uuid FK users, type text CHECK (type IN ('credit','debit')), amount_int bigint CHECK (amount_int>0), currency text DEFAULT 'INT', reason text CHECK (reason IN ('stars_topup','vote_cost','reward','withdraw','referral_bonus')), ref_id text, idempotency_key text, created_at timestamptz)` with indexes on `(user_id, created_at)`, `(idempotency_key)`.
+- **wallet_ledger** `(id uuid PK, user_id uuid FK users, type text CHECK (type IN ('credit','debit')), amount_int bigint CHECK (amount_int>0), currency text NOT NULL DEFAULT 'FPC' CHECK (currency = 'FPC'), reason text CHECK (reason IN ('stars_topup','vote_cost','reward','withdraw','referral_bonus')), ref_id text, idempotency_key text, created_at timestamptz)` with indexes on `(user_id, created_at)`, `(idempotency_key)`.
 - **payments** `(id uuid PK, user_id uuid FK users, provider text CHECK (provider='telegram_stars'), invoice_id text unique, amount_int bigint, status text CHECK (status IN ('pending','paid','failed')), payload jsonb, created_at timestamptz, updated_at timestamptz)`
 - **streamers** `(id uuid PK, platform text CHECK (platform='twitch'), username text unique, display_name text, online boolean, viewers int, status text CHECK (status IN ('ok','pending','rejected','banned')), added_by uuid FK users, created_at timestamptz, updated_at timestamptz)`
 - **games** `(id uuid PK, streamer_id uuid FK streamers, title text, rules_json jsonb, status text CHECK (status IN ('draft','active','closed','paused')), start_at timestamptz, end_at timestamptz)`
@@ -28,4 +28,3 @@
 ## Partitioning Strategy (Future)
 - Partition `wallet_ledger` by month once record counts exceed 10M.
 - Partition `votes` by `(streamer_id HASH)` or `(created_at RANGE)` depending on access patterns.
-

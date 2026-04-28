@@ -14,6 +14,7 @@ var (
 	ErrUserIDRequired      = errors.New("user id is required")
 	ErrInvalidAmount       = errors.New("amount must be a positive integer")
 	ErrInvalidDelta        = errors.New("delta must not be zero")
+	ErrInvalidCurrency     = errors.New("currency must be FPC")
 	ErrIdempotencyRequired = errors.New("idempotency key is required")
 	ErrInsufficientFunds   = errors.New("insufficient funds")
 )
@@ -23,6 +24,7 @@ type EntryType string
 const (
 	EntryTypeCredit EntryType = "credit"
 	EntryTypeDebit  EntryType = "debit"
+	GameCurrency    string    = "FPC"
 )
 
 type Entry struct {
@@ -94,6 +96,10 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 	if req.Type != EntryTypeCredit && req.Type != EntryTypeDebit {
 		return Entry{}, 0, errors.New("wallet entry type is invalid")
 	}
+	currency, err := normalizeCurrency(req.Currency)
+	if err != nil {
+		return Entry{}, 0, err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -113,7 +119,7 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 		UserID:         userID,
 		Type:           req.Type,
 		Amount:         req.Amount,
-		Currency:       normalizeCurrency(req.Currency),
+		Currency:       currency,
 		Reason:         strings.TrimSpace(req.Reason),
 		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
 		ActorID:        strings.TrimSpace(req.ActorID),
@@ -179,10 +185,13 @@ func (s *Service) ensureAccountLocked(userID string) *account {
 	return acct
 }
 
-func normalizeCurrency(currency string) string {
+func normalizeCurrency(currency string) (string, error) {
 	trimmed := strings.TrimSpace(currency)
 	if trimmed == "" {
-		return "FPC"
+		return GameCurrency, nil
 	}
-	return strings.ToUpper(trimmed)
+	if strings.ToUpper(trimmed) != GameCurrency {
+		return "", ErrInvalidCurrency
+	}
+	return GameCurrency, nil
 }
