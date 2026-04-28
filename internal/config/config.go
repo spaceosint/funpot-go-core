@@ -176,7 +176,6 @@ type FeatureConfig struct {
 type ClientConfig struct {
 	StarsRate  float64
 	MinViewers int
-	Currencies []string
 	VotePerMin int
 }
 
@@ -351,8 +350,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
-	currencies := getCSVStrings("FUNPOT_CLIENT_CURRENCIES", []string{"INT"})
-
 	maxIdleConns, err := getInt("FUNPOT_DATABASE_MAX_IDLE_CONNS", 5)
 	if err != nil {
 		return Config{}, err
@@ -471,7 +468,6 @@ func Load() (Config, error) {
 		Client: ClientConfig{
 			StarsRate:  starsRate,
 			MinViewers: minViewers,
-			Currencies: currencies,
 			VotePerMin: votePerMin,
 		},
 	}

@@ -20,7 +20,6 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	t.Setenv("FUNPOT_DATABASE_HEALTHCHECK_TIMEOUT", "2s")
 	t.Setenv("FUNPOT_CLIENT_STARS_RATE", "1.5")
 	t.Setenv("FUNPOT_CLIENT_MIN_VIEWERS", "150")
-	t.Setenv("FUNPOT_CLIENT_CURRENCIES", "INT,USD")
 	t.Setenv("FUNPOT_CLIENT_LIMIT_VOTE_PER_MIN", "40")
 	t.Setenv("FUNPOT_AUTH_REFRESH_ENABLED", "true")
 	t.Setenv("FUNPOT_AUTH_REFRESH_TTL", "240h")
@@ -77,9 +76,6 @@ func TestLoadDatabaseConfig(t *testing.T) {
 	}
 	if cfg.Client.MinViewers != 150 {
 		t.Fatalf("expected min viewers 150, got %d", cfg.Client.MinViewers)
-	}
-	if len(cfg.Client.Currencies) != 2 {
-		t.Fatalf("expected 2 currencies, got %d", len(cfg.Client.Currencies))
 	}
 	if cfg.Client.VotePerMin != 40 {
 		t.Fatalf("expected vote per min 40, got %d", cfg.Client.VotePerMin)

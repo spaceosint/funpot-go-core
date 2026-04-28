@@ -14,7 +14,6 @@ var (
 	ErrUserIDRequired      = errors.New("user id is required")
 	ErrInvalidAmount       = errors.New("amount must be a positive integer")
 	ErrInvalidDelta        = errors.New("delta must not be zero")
-	ErrInvalidCurrency     = errors.New("currency must be FPC")
 	ErrIdempotencyRequired = errors.New("idempotency key is required")
 	ErrInsufficientFunds   = errors.New("insufficient funds")
 )
@@ -48,7 +47,6 @@ type PostRequest struct {
 	UserID         string
 	Type           EntryType
 	Amount         int64
-	Currency       string
 	Reason         string
 	IdempotencyKey string
 	ActorID        string
@@ -57,7 +55,6 @@ type PostRequest struct {
 type AdjustRequest struct {
 	UserID         string
 	Delta          int64
-	Currency       string
 	Reason         string
 	IdempotencyKey string
 	ActorID        string
@@ -96,11 +93,6 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 	if req.Type != EntryTypeCredit && req.Type != EntryTypeDebit {
 		return Entry{}, 0, errors.New("wallet entry type is invalid")
 	}
-	currency, err := normalizeCurrency(req.Currency)
-	if err != nil {
-		return Entry{}, 0, err
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -119,7 +111,7 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 		UserID:         userID,
 		Type:           req.Type,
 		Amount:         req.Amount,
-		Currency:       currency,
+		Currency:       GameCurrency,
 		Reason:         strings.TrimSpace(req.Reason),
 		IdempotencyKey: strings.TrimSpace(req.IdempotencyKey),
 		ActorID:        strings.TrimSpace(req.ActorID),
@@ -151,7 +143,6 @@ func (s *Service) Adjust(req AdjustRequest) (Entry, int64, error) {
 		UserID:         req.UserID,
 		Type:           t,
 		Amount:         amount,
-		Currency:       req.Currency,
 		Reason:         req.Reason,
 		IdempotencyKey: req.IdempotencyKey,
 		ActorID:        req.ActorID,
@@ -183,15 +174,4 @@ func (s *Service) ensureAccountLocked(userID string) *account {
 	acct = &account{ProcessedByIdemID: make(map[string]Entry)}
 	s.accounts[userID] = acct
 	return acct
-}
-
-func normalizeCurrency(currency string) (string, error) {
-	trimmed := strings.TrimSpace(currency)
-	if trimmed == "" {
-		return GameCurrency, nil
-	}
-	if strings.ToUpper(trimmed) != GameCurrency {
-		return "", ErrInvalidCurrency
-	}
-	return GameCurrency, nil
 }

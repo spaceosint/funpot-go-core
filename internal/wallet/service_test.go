@@ -47,17 +47,19 @@ func TestServiceAdjustDebitAndCredit(t *testing.T) {
 	}
 }
 
-func TestServicePostRejectsNonGameCurrency(t *testing.T) {
+func TestServicePostAlwaysStoresGameCurrency(t *testing.T) {
 	svc := NewService()
-	_, _, err := svc.Post(PostRequest{
+	entry, _, err := svc.Post(PostRequest{
 		UserID:         "u1",
 		Type:           EntryTypeCredit,
 		Amount:         100,
-		Currency:       "USD",
 		IdempotencyKey: "k1",
 		Reason:         "init",
 	})
-	if err != ErrInvalidCurrency {
-		t.Fatalf("expected ErrInvalidCurrency, got %v", err)
+	if err != nil {
+		t.Fatalf("Post(credit) error = %v", err)
+	}
+	if entry.Currency != GameCurrency {
+		t.Fatalf("expected %s currency, got %s", GameCurrency, entry.Currency)
 	}
 }
