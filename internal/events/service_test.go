@@ -87,3 +87,71 @@ func TestCalculateAccrualINT(t *testing.T) {
 		t.Fatalf("expected accrual 180, got %d", got)
 	}
 }
+
+func TestListUserHistoryReturnsLatestFirstWithoutDuplicatesForIdempotentVotes(t *testing.T) {
+	svc := NewService([]LiveEvent{
+		{
+			ID:         "evt-1",
+			StreamerID: "s-1",
+			ScenarioID: "scenario-1",
+			TerminalID: "terminal-1",
+			Title:      map[string]string{"ru": "Победитель карты"},
+			ClosesAt:   time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+			Totals: map[string]int64{
+				"a": 0,
+				"b": 0,
+			},
+			Options: []Option{
+				{ID: "a", Title: map[string]string{"ru": "A"}},
+				{ID: "b", Title: map[string]string{"ru": "B"}},
+			},
+		},
+	})
+	if _, err := svc.Vote(context.Background(), VoteRequest{
+		EventID:        "evt-1",
+		StreamerID:     "s-1",
+		UserID:         "u-1",
+		OptionID:       "a",
+		Amount:         100,
+		IdempotencyKey: "vote-1",
+	}); err != nil {
+		t.Fatalf("Vote() error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{
+		EventID:        "evt-1",
+		StreamerID:     "s-1",
+		UserID:         "u-1",
+		OptionID:       "a",
+		Amount:         100,
+		IdempotencyKey: "vote-1",
+	}); err != nil {
+		t.Fatalf("Vote() idempotency replay error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{
+		EventID:        "evt-1",
+		StreamerID:     "s-1",
+		UserID:         "u-1",
+		OptionID:       "b",
+		Amount:         50,
+		IdempotencyKey: "vote-2",
+	}); err != nil {
+		t.Fatalf("Vote() second vote error = %v", err)
+	}
+
+	history := svc.ListUserHistory(context.Background(), "u-1")
+	if len(history) != 2 {
+		t.Fatalf("expected history length 2, got %d", len(history))
+	}
+	if history[0].OptionID != "b" || history[0].AmountINT != 50 {
+		t.Fatalf("expected latest history item for option b amount 50, got %+v", history[0])
+	}
+	if history[1].OptionID != "a" || history[1].AmountINT != 100 {
+		t.Fatalf("expected oldest history item for option a amount 100, got %+v", history[1])
+	}
+	if history[0].Coefficient <= 0 || history[1].Coefficient <= 0 {
+		t.Fatalf("expected positive coefficients, got latest=%f oldest=%f", history[0].Coefficient, history[1].Coefficient)
+	}
+	if history[0].PotentialWinINT <= 0 || history[1].PotentialWinINT <= 0 {
+		t.Fatalf("expected positive potential wins, got latest=%d oldest=%d", history[0].PotentialWinINT, history[1].PotentialWinINT)
+	}
+}

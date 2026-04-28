@@ -33,6 +33,7 @@ type liveEventState struct {
 type Service struct {
 	mu                 sync.RWMutex
 	items              map[string]*liveEventState
+	historyByUser      map[string][]UserEventHistoryItem
 	votePlatformFeeBPS int64
 }
 
@@ -53,7 +54,10 @@ func NewService(seed []LiveEvent) *Service {
 			userVotes:      map[string]voteRecord{},
 		}
 	}
-	return &Service{items: items}
+	return &Service{
+		items:         items,
+		historyByUser: map[string][]UserEventHistoryItem{},
+	}
 }
 
 func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest) (LiveEvent, error) {
@@ -190,9 +194,69 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	userVote.Amount += req.Amount
 	item.userVotes[strings.TrimSpace(req.UserID)] = userVote
 	item.processedVotes[strings.TrimSpace(req.IdempotencyKey)] = voteRecord{OptionID: optionID, Amount: req.Amount}
+	optionPool := item.event.Totals[optionID]
+	coefficient := calculateCoefficient(item.event.DistributableINT, optionPool)
+	potentialWin := CalculateAccrualINT(
+		item.event.TotalContributed,
+		item.event.PlatformFeeINT,
+		optionPool,
+		req.Amount,
+	)
+	userID := strings.TrimSpace(req.UserID)
+	historyItem := UserEventHistoryItem{
+		EventID:          item.event.ID,
+		StreamerID:       item.event.StreamerID,
+		ScenarioID:       item.event.ScenarioID,
+		TransitionID:     item.event.TransitionID,
+		TerminalID:       item.event.TerminalID,
+		Title:            cloneStringsMap(item.event.Title),
+		DefaultLanguage:  item.event.DefaultLanguage,
+		OptionID:         optionID,
+		AmountINT:        req.Amount,
+		CreatedAt:        now.Format(time.RFC3339Nano),
+		TotalContributed: item.event.TotalContributed,
+		PlatformFeeINT:   item.event.PlatformFeeINT,
+		DistributableINT: item.event.DistributableINT,
+		OptionPoolINT:    optionPool,
+		Coefficient:      coefficient,
+		PotentialWinINT:  potentialWin,
+		ResultStatus:     "pending",
+	}
+	s.historyByUser[userID] = append(s.historyByUser[userID], historyItem)
 	event := item.event
 	event.UserVote = &UserVote{OptionID: userVote.OptionID, TotalAmount: userVote.Amount}
 	return event, nil
+}
+
+func (s *Service) ListUserHistory(_ context.Context, userID string) []UserEventHistoryItem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := s.historyByUser[strings.TrimSpace(userID)]
+	result := make([]UserEventHistoryItem, 0, len(items))
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		item.Title = cloneStringsMap(item.Title)
+		result = append(result, item)
+	}
+	return result
+}
+
+func calculateCoefficient(distributableINT, optionPoolINT int64) float64 {
+	if distributableINT <= 0 || optionPoolINT <= 0 {
+		return 0
+	}
+	return float64(distributableINT) / float64(optionPoolINT)
+}
+
+func cloneStringsMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 func calculateFee(amount int64, feeBPS int64) int64 {
