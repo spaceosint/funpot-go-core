@@ -41,7 +41,7 @@ var streamlinkEndedMarkers = []string{
 }
 
 const defaultPreferredStreamQuality = "1080p60,1080p,720p60,720p,936p60,936p,648p60,648p,480p,best"
-const minimumStreamlinkCaptureTimeout = 30 * time.Second
+const defaultStreamlinkCaptureTimeout = 30 * time.Second
 const streamlinkCaptureShutdownGracePeriod = 5 * time.Second
 const continuousSegmentStabilityWindow = 1500 * time.Millisecond
 
@@ -104,8 +104,8 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 		cfg.FFmpegBinary = "ffmpeg"
 	}
 	cfg.Quality = normalizeStreamlinkQuality(cfg.Quality)
-	if cfg.CaptureTimeout <= 0 || cfg.CaptureTimeout < minimumStreamlinkCaptureTimeout {
-		cfg.CaptureTimeout = minimumStreamlinkCaptureTimeout
+	if cfg.CaptureTimeout <= 0 {
+		cfg.CaptureTimeout = defaultStreamlinkCaptureTimeout
 	}
 	if strings.TrimSpace(cfg.OutputDir) == "" {
 		cfg.OutputDir = "tmp/stream_chunks"
@@ -113,10 +113,8 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 	if strings.TrimSpace(cfg.URLTemplate) == "" {
 		cfg.URLTemplate = "https://twitch.tv/%s"
 	}
-	continuous := false
 	if runner == nil {
 		runner = execStreamlinkRunner{}
-		continuous = true
 	}
 	return &StreamlinkCaptureAdapter{
 		logger:     zap.NewNop(),
@@ -125,7 +123,7 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 		runner:     runner,
 		normalizer: NewFFmpegChunkNormalizer(cfg.FFmpegBinary, runner),
 		nowFn:      time.Now,
-		continuous: continuous,
+		continuous: false,
 		sessions:   make(map[string]*continuousCaptureSession),
 	}
 }
@@ -148,9 +146,6 @@ func (a *StreamlinkCaptureAdapter) Capture(ctx context.Context, streamerID strin
 func (a *StreamlinkCaptureAdapter) CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
 	if duration <= 0 {
 		duration = a.cfg.CaptureTimeout
-	}
-	if duration < minimumStreamlinkCaptureTimeout {
-		duration = minimumStreamlinkCaptureTimeout
 	}
 	if a.continuous {
 		return a.captureContinuous(ctx, streamerID, duration)
@@ -476,7 +471,7 @@ func (a *StreamlinkCaptureAdapter) setSessionError(streamerID string, err error)
 func formatStreamlinkDurationArg(value time.Duration) string {
 	seconds := int(value.Round(time.Second) / time.Second)
 	if seconds <= 0 {
-		seconds = int(minimumStreamlinkCaptureTimeout / time.Second)
+		seconds = 1
 	}
 	return strconv.Itoa(seconds)
 }
