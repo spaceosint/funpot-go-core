@@ -31,8 +31,8 @@ type liveEventState struct {
 }
 
 type Service struct {
-	mu                  sync.RWMutex
-	items               map[string]*liveEventState
+	mu                 sync.RWMutex
+	items              map[string]*liveEventState
 	votePlatformFeeBPS int64
 }
 
