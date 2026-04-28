@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -38,13 +39,17 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 			},
 		},
 	})
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
 		nil,
 		buildAuthService(t),
 		admin.NewService([]string{"admin-1"}),
-		users.NewService(users.NewInMemoryRepository()),
+		userService,
 		nil,
 		nil,
 		nil,
@@ -53,9 +58,9 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "user-1")
+	userToken := buildToken(t, "tg_1")
 
-	adjustReq := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader([]byte(`{"userId":"user-1","deltaINT":100,"reason":"seed"}`)))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
 	adjustRes := httptest.NewRecorder()
@@ -131,13 +136,17 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 			},
 		},
 	})
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
 		nil,
 		buildAuthService(t),
 		admin.NewService([]string{"admin-1"}),
-		users.NewService(users.NewInMemoryRepository()),
+		userService,
 		nil,
 		nil,
 		nil,
@@ -146,7 +155,7 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "user-1")
+	userToken := buildToken(t, "tg_1")
 
 	settingsReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings/general", bytes.NewReader([]byte(`{"votePlatformFeePercent":15}`)))
 	settingsReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -156,7 +165,7 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 		t.Fatalf("settings status=%d body=%s", settingsRes.Code, settingsRes.Body.String())
 	}
 
-	adjustReq := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader([]byte(`{"userId":"user-1","deltaINT":100,"reason":"seed"}`)))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
 	adjustRes := httptest.NewRecorder()

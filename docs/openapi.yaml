@@ -306,6 +306,12 @@ paths:
           required: true
           schema:
             type: string
+        - in: header
+          name: Idempotency-Key
+          required: false
+          description: Required when `balanceDeltaINT` is provided in request body.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -345,33 +351,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserProfile'
-        default:
-          $ref: '#/components/responses/Error'
-
-  /api/admin/wallet/adjust:
-    post:
-      summary: Adjust user wallet balance (admin)
-      security:
-        - bearerAuth: []
-      parameters:
-        - in: header
-          name: Idempotency-Key
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AdminWalletAdjustRequest'
-      responses:
-        '200':
-          description: Wallet adjustment applied (or idempotent replay)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AdminWalletAdjustResponse'
         default:
           $ref: '#/components/responses/Error'
 
@@ -1330,6 +1309,14 @@ components:
           type: string
         languageCode:
           type: string
+        balanceDeltaINT:
+          type: integer
+          description: Signed amount in internal currency units. Positive = credit, negative = debit.
+        balanceReason:
+          type: string
+          description: Required when `balanceDeltaINT` is provided.
+        currency:
+          type: string
     AdminUsersResponse:
       type: object
       properties:
@@ -2175,27 +2162,6 @@ components:
         status:
           type: string
           enum: [pending, processing, done, rejected]
-        newBalance:
-          type: integer
-    AdminWalletAdjustRequest:
-      type: object
-      required: [userId, deltaINT, reason]
-      properties:
-        userId:
-          type: string
-        deltaINT:
-          type: integer
-          description: Signed amount in internal currency units. Positive = credit, negative = debit.
-        reason:
-          type: string
-        currency:
-          type: string
-    AdminWalletAdjustResponse:
-      type: object
-      required: [entry, newBalance]
-      properties:
-        entry:
-          $ref: '#/components/schemas/WalletEntry'
         newBalance:
           type: integer
     AdminGeneralSettings:
