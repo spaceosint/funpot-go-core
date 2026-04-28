@@ -115,67 +115,6 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestEventsVoteRejectsCurrencyFieldInPayload(t *testing.T) {
-	eventsService := events.NewService([]events.LiveEvent{
-		{
-			ID:              "event-1",
-			TemplateID:      "streamer-1:terminal-1",
-			StreamerID:      "streamer-1",
-			ScenarioID:      "scenario-1",
-			TerminalID:      "terminal-1",
-			Title:           map[string]string{"ru": "Победитель карты"},
-			DefaultLanguage: "ru",
-			Options: []events.Option{
-				{ID: "ct", Title: map[string]string{"ru": "CT"}},
-			},
-			ClosesAt:  time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
-			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-			Status:    "open",
-			Totals: map[string]int64{
-				"ct": 0,
-			},
-		},
-	})
-	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
-		t.Fatalf("SyncTelegramProfile() error = %v", err)
-	}
-	handler := NewHandler(
-		zap.NewNop(),
-		func() bool { return true },
-		nil,
-		buildAuthService(t),
-		admin.NewService([]string{"admin-1"}),
-		userService,
-		nil,
-		nil,
-		nil,
-		nil,
-		eventsService,
-		ClientConfigResponse{},
-	)
-	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "tg_1")
-
-	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
-	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
-	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
-	adjustRes := httptest.NewRecorder()
-	handler.ServeHTTP(adjustRes, adjustReq)
-	if adjustRes.Code != http.StatusOK {
-		t.Fatalf("seed wallet status=%d body=%s", adjustRes.Code, adjustRes.Body.String())
-	}
-
-	voteReq := httptest.NewRequest(http.MethodPost, "/api/events/event-1/vote", bytes.NewReader([]byte(`{"streamerId":"streamer-1","optionId":"ct","amountINT":10,"currency":"USD"}`)))
-	voteReq.Header.Set("Authorization", "Bearer "+userToken)
-	voteReq.Header.Set("Idempotency-Key", "vote-1")
-	voteRes := httptest.NewRecorder()
-	handler.ServeHTTP(voteRes, voteReq)
-	if voteRes.Code != http.StatusBadRequest {
-		t.Fatalf("vote status=%d body=%s", voteRes.Code, voteRes.Body.String())
-	}
-}
-
 func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 	eventsService := events.NewService([]events.LiveEvent{
 		{

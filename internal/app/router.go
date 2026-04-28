@@ -43,7 +43,6 @@ type ClientConfigResponse struct {
 	StarsRate  float64         `json:"starsRate"`
 	MinViewers int             `json:"minViewers"`
 	Features   map[string]bool `json:"features"`
-	Currencies []string        `json:"currencies"`
 	Limits     configLimits    `json:"limits"`
 }
 
@@ -52,7 +51,6 @@ func ConfigResponseFromConfig(cfg config.Config) ClientConfigResponse {
 		StarsRate:  cfg.Client.StarsRate,
 		MinViewers: cfg.Client.MinViewers,
 		Features:   cfg.Features.Flags,
-		Currencies: cfg.Client.Currencies,
 		Limits: configLimits{
 			VotePerMin: cfg.Client.VotePerMin,
 		},
@@ -752,7 +750,6 @@ func NewHandler(
 						UserID:         userID,
 						Delta:          *req.BalanceDelta,
 						Reason:         req.BalanceReason,
-						Currency:       wallet.GameCurrency,
 						IdempotencyKey: idempotencyKey,
 						ActorID:        claims.Subject,
 					}); err != nil {
@@ -828,7 +825,6 @@ func NewHandler(
 				UserID:         claims.Subject,
 				Type:           wallet.EntryTypeDebit,
 				Amount:         req.AmountINT,
-				Currency:       "FPC",
 				Reason:         "withdraw",
 				IdempotencyKey: idempotencyKey,
 				ActorID:        claims.Subject,
@@ -1641,7 +1637,6 @@ func NewHandler(
 					UserID:         claims.Subject,
 					Type:           wallet.EntryTypeDebit,
 					Amount:         req.AmountINT,
-					Currency:       wallet.GameCurrency,
 					Reason:         "event_vote",
 					IdempotencyKey: idempotencyKey,
 					ActorID:        claims.Subject,

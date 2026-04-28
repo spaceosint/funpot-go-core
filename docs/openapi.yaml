@@ -1373,10 +1373,6 @@ components:
               type: boolean
             adminEnabled:
               type: boolean
-        currencies:
-          type: array
-          items:
-            type: string
         limits:
           type: object
           properties:
