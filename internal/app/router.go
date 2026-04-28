@@ -309,7 +309,6 @@ type adminUserUpsertRequest struct {
 	LanguageCode  string `json:"languageCode"`
 	BalanceDelta  *int64 `json:"balanceDeltaINT,omitempty"`
 	BalanceReason string `json:"balanceReason,omitempty"`
-	Currency      string `json:"currency,omitempty"`
 }
 
 type adminUserBanRequest struct {
@@ -753,7 +752,7 @@ func NewHandler(
 						UserID:         userID,
 						Delta:          *req.BalanceDelta,
 						Reason:         req.BalanceReason,
-						Currency:       req.Currency,
+						Currency:       wallet.GameCurrency,
 						IdempotencyKey: idempotencyKey,
 						ActorID:        claims.Subject,
 					}); err != nil {
@@ -1642,7 +1641,7 @@ func NewHandler(
 					UserID:         claims.Subject,
 					Type:           wallet.EntryTypeDebit,
 					Amount:         req.AmountINT,
-					Currency:       "FPC",
+					Currency:       wallet.GameCurrency,
 					Reason:         "event_vote",
 					IdempotencyKey: idempotencyKey,
 					ActorID:        claims.Subject,

@@ -142,3 +142,33 @@ func TestAdminUserBalanceAdjustRequiresAdmin(t *testing.T) {
 		t.Fatalf("expected 403, got %d", res.Code)
 	}
 }
+
+func TestAdminUserBalanceAdjustRejectsCurrencyOverride(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		userService,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		ClientConfigResponse{},
+	)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":10,"balanceReason":"test","currency":"USD"}`)))
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	req.Header.Set("Idempotency-Key", "adj-1")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", res.Code)
+	}
+}
