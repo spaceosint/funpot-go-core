@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,14 +14,18 @@ import (
 	"github.com/funpot/funpot-go-core/internal/users"
 )
 
-func TestWalletAdminAdjustAndWithdrawIdempotency(t *testing.T) {
+func TestWalletAdminUserUpdateBalanceAndWithdrawIdempotency(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
 		nil,
 		buildAuthService(t),
 		admin.NewService([]string{"admin-1"}),
-		users.NewService(users.NewInMemoryRepository()),
+		userService,
 		nil,
 		nil,
 		nil,
@@ -29,10 +34,10 @@ func TestWalletAdminAdjustAndWithdrawIdempotency(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "user-1")
+	userToken := buildToken(t, "tg_1")
 
-	adjustBody := []byte(`{"userId":"user-1","deltaINT":100,"reason":"manual grant"}`)
-	adjustReq := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader(adjustBody))
+	adjustBody := []byte(`{"balanceDeltaINT":100,"balanceReason":"manual grant"}`)
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader(adjustBody))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-1")
 	adjustRes := httptest.NewRecorder()
@@ -41,7 +46,7 @@ func TestWalletAdminAdjustAndWithdrawIdempotency(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", adjustRes.Code, adjustRes.Body.String())
 	}
 
-	replayReq := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader(adjustBody))
+	replayReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader(adjustBody))
 	replayReq.Header.Set("Authorization", "Bearer "+adminToken)
 	replayReq.Header.Set("Idempotency-Key", "adj-1")
 	replayRes := httptest.NewRecorder()
@@ -108,14 +113,18 @@ func TestWalletAdminAdjustAndWithdrawIdempotency(t *testing.T) {
 	}
 }
 
-func TestAdminWalletAdjustRequiresAdmin(t *testing.T) {
+func TestAdminUserBalanceAdjustRequiresAdmin(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
 	handler := NewHandler(
 		zap.NewNop(),
 		func() bool { return true },
 		nil,
 		buildAuthService(t),
 		admin.NewService([]string{"admin-1"}),
-		users.NewService(users.NewInMemoryRepository()),
+		userService,
 		nil,
 		nil,
 		nil,
@@ -124,8 +133,8 @@ func TestAdminWalletAdjustRequiresAdmin(t *testing.T) {
 		ClientConfigResponse{},
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/wallet/adjust", bytes.NewReader([]byte(`{"userId":"user-1","deltaINT":10,"reason":"test"}`)))
-	req.Header.Set("Authorization", "Bearer "+buildToken(t, "user-1"))
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":10,"balanceReason":"test"}`)))
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, "tg_1"))
 	req.Header.Set("Idempotency-Key", "adj-1")
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)

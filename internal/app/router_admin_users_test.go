@@ -59,6 +59,15 @@ func TestAdminUsersCRUD(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", updateRes.Code, updateRes.Body.String())
 	}
 
+	balanceReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, strings.NewReader(`{"balanceDeltaINT":50,"balanceReason":"manual grant"}`))
+	balanceReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	balanceReq.Header.Set("Idempotency-Key", "bal-1")
+	balanceRes := httptest.NewRecorder()
+	handler.ServeHTTP(balanceRes, balanceReq)
+	if balanceRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", balanceRes.Code, balanceRes.Body.String())
+	}
+
 	banReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID+"/ban", strings.NewReader(`{"isBanned":true,"reason":"manual"}`))
 	banReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
 	banRes := httptest.NewRecorder()
