@@ -375,6 +375,40 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/admin/settings/general:
+    get:
+      summary: Get general platform settings (admin)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current general settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      summary: Update general platform settings (admin)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminGeneralSettingsUpdateRequest'
+      responses:
+        '200':
+          description: Updated general settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminGeneralSettings'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/admin/games:
     get:
       summary: List games (admin)
@@ -2066,6 +2100,12 @@ components:
           type: object
           additionalProperties:
             type: integer
+        totalContributed:
+          type: integer
+        platformFeeINT:
+          type: integer
+        distributableINT:
+          type: integer
         userVote:
           $ref: '#/components/schemas/UserVote'
     EventOption:
@@ -2158,6 +2198,19 @@ components:
           $ref: '#/components/schemas/WalletEntry'
         newBalance:
           type: integer
+    AdminGeneralSettings:
+      type: object
+      properties:
+        votePlatformFeePercent:
+          type: number
+    AdminGeneralSettingsUpdateRequest:
+      type: object
+      required: [votePlatformFeePercent]
+      properties:
+        votePlatformFeePercent:
+          type: number
+          minimum: 0
+          maximum: 100
     ReferralSummary:
       type: object
       properties:

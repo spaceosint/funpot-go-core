@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -30,8 +31,13 @@ type liveEventState struct {
 }
 
 type Service struct {
-	mu    sync.RWMutex
-	items map[string]*liveEventState
+	mu                  sync.RWMutex
+	items               map[string]*liveEventState
+	votePlatformFeeBPS int64
+}
+
+type Settings struct {
+	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
 }
 
 func NewService(seed []LiveEvent) *Service {
@@ -102,6 +108,25 @@ func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest)
 	return event, nil
 }
 
+func (s *Service) Settings() Settings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return Settings{
+		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
+	}
+}
+
+func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
+	if settings.VotePlatformFeePercent < 0 || settings.VotePlatformFeePercent > 100 {
+		return Settings{}, ErrInvalidVote
+	}
+	feeBPS := int64(math.Round(settings.VotePlatformFeePercent * 100))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.votePlatformFeeBPS = feeBPS
+	return Settings{VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0}, nil
+}
+
 func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -149,7 +174,12 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	if _, ok := item.event.Totals[optionID]; !ok {
 		return LiveEvent{}, ErrInvalidVote
 	}
-	item.event.Totals[optionID] += req.Amount
+	fee := calculateFee(req.Amount, s.votePlatformFeeBPS)
+	netAmount := req.Amount - fee
+	item.event.Totals[optionID] += netAmount
+	item.event.TotalContributed += req.Amount
+	item.event.PlatformFeeINT += fee
+	item.event.DistributableINT = item.event.TotalContributed - item.event.PlatformFeeINT
 	userVote := item.userVotes[strings.TrimSpace(req.UserID)]
 	if userVote.OptionID == "" {
 		userVote.OptionID = optionID
@@ -163,6 +193,29 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	event := item.event
 	event.UserVote = &UserVote{OptionID: userVote.OptionID, TotalAmount: userVote.Amount}
 	return event, nil
+}
+
+func calculateFee(amount int64, feeBPS int64) int64 {
+	if amount <= 0 || feeBPS <= 0 {
+		return 0
+	}
+	if feeBPS >= 10000 {
+		return amount
+	}
+	return (amount * feeBPS) / 10000
+}
+
+// CalculateAccrualINT calculates user's accrual from the distributable event pool.
+// Formula: (totalContributed - platformFee) * userContribution / totalContributionForWinningOption.
+func CalculateAccrualINT(totalContributed, platformFeeINT, totalContributionForWinningOption, userContribution int64) int64 {
+	if totalContributed <= 0 || userContribution <= 0 || totalContributionForWinningOption <= 0 {
+		return 0
+	}
+	distributable := totalContributed - platformFeeINT
+	if distributable <= 0 {
+		return 0
+	}
+	return (distributable * userContribution) / totalContributionForWinningOption
 }
 
 func isOpen(event LiveEvent, now time.Time) bool {

@@ -326,6 +326,10 @@ type adminWalletAdjustRequest struct {
 	Currency string `json:"currency,omitempty"`
 }
 
+type adminGeneralSettingsRequest struct {
+	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
+}
+
 type adminHistoryEvent struct {
 	EventTime        string  `json:"eventTime"`
 	StepName         string  `json:"stepName"`
@@ -872,6 +876,41 @@ func NewHandler(
 				"newBalance": newBalance,
 			})
 		})))
+
+		if eventsService != nil {
+			mux.Handle("/api/admin/settings/general", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				switch r.Method {
+				case http.MethodGet:
+					writeJSON(w, http.StatusOK, eventsService.Settings())
+				case http.MethodPut:
+					defer r.Body.Close() //nolint:errcheck
+					body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "failed to read request body")
+						return
+					}
+					var req adminGeneralSettingsRequest
+					if err := decodeJSONStrict(body, &req); err != nil {
+						writeError(w, http.StatusBadRequest, "invalid request body")
+						return
+					}
+					updated, err := eventsService.UpdateSettings(events.Settings{
+						VotePlatformFeePercent: req.VotePlatformFeePercent,
+					})
+					if err != nil {
+						writeError(w, http.StatusBadRequest, "votePlatformFeePercent must be in range 0..100")
+						return
+					}
+					writeJSON(w, http.StatusOK, updated)
+				default:
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				}
+			})))
+		}
 
 		if streamersService != nil {
 			mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

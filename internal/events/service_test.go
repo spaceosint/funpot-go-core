@@ -41,3 +41,49 @@ func TestCreateLiveEventAvoidsDuplicateActiveByTemplate(t *testing.T) {
 		t.Fatalf("expected duplicate active event error")
 	}
 }
+
+func TestVoteAppliesPlatformFeeToDistributablePool(t *testing.T) {
+	svc := NewService([]LiveEvent{
+		{
+			ID:         "evt-1",
+			StreamerID: "s-1",
+			ClosesAt:   time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+			Totals:     map[string]int64{"a": 0},
+			Options:    []Option{{ID: "a", Title: map[string]string{"ru": "A"}}},
+		},
+	})
+	if _, err := svc.UpdateSettings(Settings{VotePlatformFeePercent: 10}); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+
+	event, err := svc.Vote(context.Background(), VoteRequest{
+		EventID:        "evt-1",
+		StreamerID:     "s-1",
+		UserID:         "u-1",
+		OptionID:       "a",
+		Amount:         100,
+		IdempotencyKey: "vote-1",
+	})
+	if err != nil {
+		t.Fatalf("Vote() error = %v", err)
+	}
+	if event.Totals["a"] != 90 {
+		t.Fatalf("expected net option total 90, got %d", event.Totals["a"])
+	}
+	if event.TotalContributed != 100 {
+		t.Fatalf("expected total contributed 100, got %d", event.TotalContributed)
+	}
+	if event.PlatformFeeINT != 10 {
+		t.Fatalf("expected platform fee 10, got %d", event.PlatformFeeINT)
+	}
+	if event.DistributableINT != 90 {
+		t.Fatalf("expected distributable 90, got %d", event.DistributableINT)
+	}
+}
+
+func TestCalculateAccrualINT(t *testing.T) {
+	got := CalculateAccrualINT(1000, 100, 450, 90)
+	if got != 180 {
+		t.Fatalf("expected accrual 180, got %d", got)
+	}
+}
