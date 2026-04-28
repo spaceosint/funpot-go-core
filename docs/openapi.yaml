@@ -1249,34 +1249,20 @@ components:
     UserProfile:
       type: object
       properties:
-        userId:
+        id:
           type: string
-          format: uuid
-        tgUserId:
+        telegramId:
           type: integer
-        nickname:
+        username:
           type: string
-        language:
+        firstName:
           type: string
-        roles:
-          type: array
-          items:
-            type: string
-        balances:
-          type: object
-          properties:
-            internal:
-              type: integer
-        referral:
-          type: object
-          properties:
-            code:
-              type: string
-            url:
-              type: string
-        flags:
-          type: object
-          additionalProperties: true
+        lastName:
+          type: string
+        languageCode:
+          type: string
+        referralCode:
+          type: string
         isBanned:
           type: boolean
         banReason:
@@ -1285,6 +1271,12 @@ components:
           type: string
           format: date-time
         bannedUntil:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
         isAdmin:
