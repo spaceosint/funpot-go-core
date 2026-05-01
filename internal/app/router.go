@@ -354,6 +354,15 @@ type adminStreamerVideoManager interface {
 	DeleteStreamerVideos(ctx context.Context, streamerID string) (int, error)
 }
 
+type userEventHistoryStreamerItem struct {
+	DateTime         string                        `json:"dateTime"`
+	StreamerID       string                        `json:"streamerId"`
+	StreamerNickname string                        `json:"streamerNickname"`
+	StreamerIconURL  string                        `json:"streamerIconUrl,omitempty"`
+	NetAmountINT     int64                         `json:"netAmountINT"`
+	Details          []events.UserEventHistoryItem `json:"details"`
+}
+
 // NewHandler wires the base HTTP routes for the service.
 func NewHandler(
 	logger *zap.Logger,
@@ -1655,7 +1664,36 @@ func NewHandler(
 					writeError(w, http.StatusUnauthorized, "missing auth claims")
 					return
 				}
-				writeJSON(w, http.StatusOK, eventsService.ListUserHistory(r.Context(), claims.Subject))
+				items := eventsService.ListUserHistory(r.Context(), claims.Subject)
+				grouped := make([]userEventHistoryStreamerItem, 0, len(items))
+				indexByStreamer := make(map[string]int)
+				for _, item := range items {
+					idx, exists := indexByStreamer[item.StreamerID]
+					if !exists {
+						entry := userEventHistoryStreamerItem{
+							DateTime:   item.CreatedAt,
+							StreamerID: item.StreamerID,
+							StreamerNickname: item.StreamerID,
+							Details:    []events.UserEventHistoryItem{},
+						}
+						if streamersService != nil {
+							if streamer, found := streamersService.GetByID(r.Context(), item.StreamerID); found {
+								entry.StreamerNickname = streamer.TwitchNickname
+								entry.StreamerIconURL = streamer.MiniIconURL
+							}
+						}
+						grouped = append(grouped, entry)
+						idx = len(grouped) - 1
+						indexByStreamer[item.StreamerID] = idx
+					}
+					grouped[idx].Details = append(grouped[idx].Details, item)
+					if item.WinAmountINT != nil {
+						grouped[idx].NetAmountINT += *item.WinAmountINT - item.AmountINT
+					} else {
+						grouped[idx].NetAmountINT -= item.AmountINT
+					}
+				}
+				writeJSON(w, http.StatusOK, grouped)
 			})))
 
 			mux.Handle("/api/events/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

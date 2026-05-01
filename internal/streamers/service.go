@@ -185,6 +185,18 @@ func (s *Service) List(_ context.Context, query, status string, page int) []Stre
 	return result
 }
 
+func (s *Service) GetByID(_ context.Context, id string) (Streamer, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	needle := strings.TrimSpace(id)
+	for _, item := range s.items {
+		if item.ID == needle {
+			return item, true
+		}
+	}
+	return Streamer{}, false
+}
+
 func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string) (string, error) {
 	id := strings.TrimSpace(streamerID)
 	if id == "" {
