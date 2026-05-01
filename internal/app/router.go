@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
 	"github.com/funpot/funpot-go-core/internal/admin"
@@ -21,6 +22,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/games"
 	"github.com/funpot/funpot-go-core/internal/media"
 	"github.com/funpot/funpot-go-core/internal/prompts"
+	"github.com/funpot/funpot-go-core/internal/realtime"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
 	"github.com/funpot/funpot-go-core/internal/wallet"
@@ -370,6 +372,10 @@ func NewHandler(
 	const rateLimitAutoBanDuration = 15 * time.Minute
 
 	mux := http.NewServeMux()
+	rtHub := realtime.NewHub()
+	wsUpgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, readinessState{Status: "ok", Time: time.Now().UTC().Format(time.RFC3339Nano)})
@@ -398,6 +404,63 @@ func NewHandler(
 
 	if authService != nil {
 		walletService := wallet.NewService()
+		mux.HandleFunc("/realtime", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			streamerID := strings.TrimSpace(r.URL.Query().Get("streamerId"))
+			if streamerID == "" {
+				writeError(w, http.StatusBadRequest, "streamerId is required")
+				return
+			}
+			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || strings.TrimSpace(parts[1]) == "" {
+				writeError(w, http.StatusUnauthorized, "missing bearer token")
+				return
+			}
+			if _, err := authService.ParseToken(parts[1]); err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid bearer token")
+				return
+			}
+			conn, err := wsUpgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close() //nolint:errcheck
+			ch, unsubscribe := rtHub.SubscribeStreamer(streamerID, 64)
+			defer unsubscribe()
+			_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+			conn.SetPongHandler(func(string) error {
+				return conn.SetReadDeadline(time.Now().Add(45 * time.Second))
+			})
+			go func() {
+				for {
+					if _, _, err := conn.ReadMessage(); err != nil {
+						_ = conn.Close()
+						return
+					}
+				}
+			}()
+			pingTicker := time.NewTicker(20 * time.Second)
+			defer pingTicker.Stop()
+			for {
+				select {
+				case env, ok := <-ch:
+					if !ok {
+						return
+					}
+					if err := conn.WriteJSON(env); err != nil {
+						return
+					}
+				case <-pingTicker.C:
+					if err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(2*time.Second)); err != nil {
+						return
+					}
+				}
+			}
+		})
 
 		mux.HandleFunc("/api/auth/telegram", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
@@ -1674,6 +1737,34 @@ func NewHandler(
 					}
 					return
 				}
+				nickname := claims.Subject
+				if userService != nil {
+					if profile, err := userService.GetByID(r.Context(), claims.Subject); err == nil && strings.TrimSpace(profile.Nickname) != "" {
+						nickname = profile.Nickname
+					}
+				}
+				rtHub.PublishToStreamer(req.StreamerID, realtime.Envelope{
+					Type: "EVENT_UPDATED",
+					Payload: realtime.EventUpdatedPayload{
+						EventID:  event.ID,
+						Totals:   event.Totals,
+						ClosesAt: event.ClosesAt,
+					},
+				})
+				rtHub.PublishToStreamer(req.StreamerID, realtime.Envelope{
+					Type: "EVENT_VOTE_FEED_UPDATED",
+					Payload: realtime.VoteFeedPayload{
+						EventID: event.ID,
+						Items: []realtime.VoteFeedItem{{
+							UserID:    claims.Subject,
+							Nickname:  nickname,
+							OptionID:  req.OptionID,
+							AmountINT: req.AmountINT,
+							CreatedAt: realtime.NowRFC3339(),
+						}},
+						SnapshotAt: realtime.NowRFC3339(),
+					},
+				})
 				writeJSON(w, http.StatusOK, event)
 			})))
 		}

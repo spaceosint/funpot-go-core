@@ -210,6 +210,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/streamers/{streamerId}/llm-history?page=1&pageSize=20` – admin timeline endpoint with paginated LLM decision history (step name, LLM response, global state delta, event timestamps). Each LLM event now carries its own Bunny video fragment URL in `videoData`, plus the endpoint returns uploaded Bunny video metadata for the streamer.
 - `DELETE /api/admin/streamers/{streamerId}/llm-history` – admin cleanup endpoint that deletes persisted LLM decision history and removes tracked Bunny videos for the streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
+- `GET /realtime?streamerId=<id>` – WebSocket upgrade endpoint (JWT required in `Authorization: Bearer <token>`), streams `EVENT_UPDATED` and `EVENT_VOTE_FEED_UPDATED` for the streamer scope.
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
@@ -218,9 +219,26 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `PUT /api/admin/llm/model-configs/{id}` / `DELETE /api/admin/llm/model-configs/{id}` / `POST /api/admin/llm/model-configs/{id}/activate` – update, remove, and switch active model configuration.
 - `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages with per-game versioning and activation. Admin can provide explicit graph `transitions` (`fromStepId`, `toStepId`, `condition`, `priority`) for branch routing and optional strict-linear `packageTransitions` (single connector: `toPackageId`, `priority`, optional `action=stop_tracking`, optional `finalStateOptionId`) for package-to-package routing (`A -> B -> N`) or terminal stop behavior. Package payload also supports `finalCondition` (logical expression for final mini-game decision), `finalStateOptions` (predefined `{id,name,condition,finalStateJson,finalLabel}` choices), and derived `potentialState` in API responses (all detected state keys/value variants aggregated from step `responseSchemaJson`). If step `transitions` are omitted backend auto-links steps linearly by `order` (`step_i -> step_(i+1)` uses target `entryCondition`); when the initial step has its own `entryCondition` backend also adds fallback transitions from non-initial steps back to initial using that condition.
 - Scenario steps support per-step tuning: `segmentSeconds` (default `15` for `initial=true`, otherwise `30`) and `maxRequests` (default `0` = unlimited). When a non-initial step exceeds `maxRequests`, runtime returns to initial step; when initial exceeds its own limit, streamer tracking stops.
+
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
 - Legacy prompt-version/state-schema/rule-set admin surfaces are removed from runtime; scenario-packages + model-configs are the supported LLM control surfaces.
 - Scenario-packages are persisted in PostgreSQL table `llm_scenario_packages` when DB is configured; when DB config is missing the service falls back to in-memory storage.
+
+## Realtime WebSocket Quick Check
+
+1. Start backend (`go run ./cmd/server`).
+2. Get JWT via `POST /api/auth/telegram`.
+3. Connect to:
+
+```text
+ws://localhost:8080/realtime?streamerId=<streamer_id>
+Authorization: Bearer <jwt>
+```
+
+4. Trigger vote via `POST /api/events/{eventId}/vote` with the same user token.
+5. Verify socket receives:
+   - `EVENT_UPDATED` (totals by option),
+   - `EVENT_VOTE_FEED_UPDATED` (nickname + option + amount).
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

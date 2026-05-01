@@ -6,6 +6,24 @@ info:
 servers:
   - url: https://api.funpot.example
 paths:
+  /realtime:
+    get:
+      summary: WebSocket upgrade endpoint for realtime mini-game updates
+      description: |
+        Upgrades HTTP connection to WebSocket (JWT required) and streams realtime messages.
+        Message contracts are documented in `docs/ws_messages.md`.
+      parameters:
+        - in: query
+          name: streamerId
+          required: true
+          schema:
+            type: string
+          description: Streamer subscription scope for mini-game/event updates.
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade successful)
+        default:
+          $ref: '#/components/responses/Error'
   /api/auth/telegram:
     post:
       summary: Authenticate via Telegram Mini App initData
