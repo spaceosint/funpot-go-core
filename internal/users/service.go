@@ -13,6 +13,7 @@ import (
 
 var ErrAlreadyExists = errors.New("user already exists")
 var ErrBanUntilBeforeNow = errors.New("banUntil must be in the future")
+var ErrInvalidNickname = errors.New("nickname is required")
 
 // Service orchestrates business logic around user profiles.
 type Service struct {
@@ -100,6 +101,24 @@ func (s *Service) UpdateByID(ctx context.Context, id string, profile TelegramPro
 		return Profile{}, err
 	}
 	return updated, nil
+}
+
+// UpdateNicknameByID updates only nickname for a user profile by internal user id.
+func (s *Service) UpdateNicknameByID(ctx context.Context, id, nickname string) (Profile, error) {
+	existing, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return Profile{}, err
+	}
+	trimmed := strings.TrimSpace(nickname)
+	if trimmed == "" {
+		return Profile{}, ErrInvalidNickname
+	}
+	existing.Nickname = trimmed
+	existing.UpdatedAt = s.now().UTC()
+	if err := s.repo.Update(ctx, existing); err != nil {
+		return Profile{}, err
+	}
+	return existing, nil
 }
 
 // BanByID blocks a user either temporarily (banUntil > zero) or permanently (zero).
