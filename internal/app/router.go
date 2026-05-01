@@ -1701,10 +1701,10 @@ func NewHandler(
 					idx, exists := indexByStreamer[item.StreamerID]
 					if !exists {
 						entry := userEventHistoryStreamerItem{
-							DateTime:   item.CreatedAt,
-							StreamerID: item.StreamerID,
+							DateTime:         item.CreatedAt,
+							StreamerID:       item.StreamerID,
 							StreamerNickname: item.StreamerID,
-							Details:    []events.UserEventHistoryItem{},
+							Details:          []events.UserEventHistoryItem{},
 						}
 						if streamersService != nil {
 							if streamer, found := streamersService.GetByID(r.Context(), item.StreamerID); found {
