@@ -88,6 +88,20 @@ func TestCalculateAccrualINT(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingsStoresNicknameChangeCost(t *testing.T) {
+	svc := NewService(nil)
+	updated, err := svc.UpdateSettings(Settings{VotePlatformFeePercent: 5, NicknameChangeCostINT: 42})
+	if err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	if updated.NicknameChangeCostINT != 42 {
+		t.Fatalf("expected nickname cost 42, got %d", updated.NicknameChangeCostINT)
+	}
+	if got := svc.Settings().NicknameChangeCostINT; got != 42 {
+		t.Fatalf("expected stored nickname cost 42, got %d", got)
+	}
+}
+
 func TestListUserHistoryReturnsLatestFirstWithoutDuplicatesForIdempotentVotes(t *testing.T) {
 	svc := NewService([]LiveEvent{
 		{

@@ -35,10 +35,12 @@ type Service struct {
 	items              map[string]*liveEventState
 	historyByUser      map[string][]UserEventHistoryItem
 	votePlatformFeeBPS int64
+	nicknameChangeCost int64
 }
 
 type Settings struct {
 	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
+	NicknameChangeCostINT  int64   `json:"nicknameChangeCostINT"`
 }
 
 func NewService(seed []LiveEvent) *Service {
@@ -117,6 +119,7 @@ func (s *Service) Settings() Settings {
 	defer s.mu.RUnlock()
 	return Settings{
 		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
+		NicknameChangeCostINT:  s.nicknameChangeCost,
 	}
 }
 
@@ -124,11 +127,18 @@ func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
 	if settings.VotePlatformFeePercent < 0 || settings.VotePlatformFeePercent > 100 {
 		return Settings{}, ErrInvalidVote
 	}
+	if settings.NicknameChangeCostINT < 0 {
+		return Settings{}, ErrInvalidVote
+	}
 	feeBPS := int64(math.Round(settings.VotePlatformFeePercent * 100))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.votePlatformFeeBPS = feeBPS
-	return Settings{VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0}, nil
+	s.nicknameChangeCost = settings.NicknameChangeCostINT
+	return Settings{
+		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
+		NicknameChangeCostINT:  s.nicknameChangeCost,
+	}, nil
 }
 
 func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {
