@@ -2292,14 +2292,20 @@ components:
       properties:
         votePlatformFeePercent:
           type: number
+        nicknameChangeCostINT:
+          type: integer
+          minimum: 0
     AdminGeneralSettingsUpdateRequest:
       type: object
-      required: [votePlatformFeePercent]
+      required: [votePlatformFeePercent, nicknameChangeCostINT]
       properties:
         votePlatformFeePercent:
           type: number
           minimum: 0
           maximum: 100
+        nicknameChangeCostINT:
+          type: integer
+          minimum: 0
     ReferralSummary:
       type: object
       properties:

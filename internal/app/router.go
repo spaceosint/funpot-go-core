@@ -327,6 +327,7 @@ type withdrawRequest struct {
 
 type adminGeneralSettingsRequest struct {
 	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
+	NicknameChangeCostINT  int64   `json:"nicknameChangeCostINT"`
 }
 
 type adminHistoryEvent struct {
@@ -665,6 +666,30 @@ func NewHandler(
 					}
 					return
 				}
+				if eventsService != nil && walletService != nil {
+					nicknameCost := eventsService.Settings().NicknameChangeCostINT
+					if nicknameCost > 0 {
+						_, _, debitErr := walletService.Post(wallet.PostRequest{
+							UserID:         claims.Subject,
+							Type:           wallet.EntryTypeDebit,
+							Amount:         nicknameCost,
+							Reason:         "nickname_change",
+							IdempotencyKey: "nickname_change:" + claims.Subject + ":" + profile.UpdatedAt.Format(time.RFC3339Nano),
+							ActorID:        claims.Subject,
+						})
+						if debitErr != nil {
+							switch {
+							case errors.Is(debitErr, wallet.ErrInsufficientFunds):
+								writeError(w, http.StatusConflict, debitErr.Error())
+							case errors.Is(debitErr, wallet.ErrInvalidAmount), errors.Is(debitErr, wallet.ErrIdempotencyRequired):
+								writeError(w, http.StatusBadRequest, debitErr.Error())
+							default:
+								writeError(w, http.StatusInternalServerError, "failed to charge nickname change")
+							}
+							return
+						}
+					}
+				}
 				writeJSON(w, http.StatusOK, profile)
 			default:
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -972,9 +997,10 @@ func NewHandler(
 					}
 					updated, err := eventsService.UpdateSettings(events.Settings{
 						VotePlatformFeePercent: req.VotePlatformFeePercent,
+						NicknameChangeCostINT:  req.NicknameChangeCostINT,
 					})
 					if err != nil {
-						writeError(w, http.StatusBadRequest, "votePlatformFeePercent must be in range 0..100")
+						writeError(w, http.StatusBadRequest, "votePlatformFeePercent must be in range 0..100 and nicknameChangeCostINT must be >= 0")
 						return
 					}
 					writeJSON(w, http.StatusOK, updated)
