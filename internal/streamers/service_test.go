@@ -9,6 +9,7 @@ import (
 
 type validatorStub struct {
 	displayName string
+	miniIconURL string
 	err         error
 }
 
@@ -17,6 +18,13 @@ func (v validatorStub) ValidateUsername(_ context.Context, _ string) (string, er
 		return "", v.err
 	}
 	return v.displayName, nil
+}
+
+func (v validatorStub) GetProfileImageURL(_ context.Context, _ string) (string, error) {
+	if v.err != nil {
+		return "", v.err
+	}
+	return v.miniIconURL, nil
 }
 
 type audienceValidatorStub struct {
@@ -42,7 +50,7 @@ func TestServiceSubmitValidationAndListing(t *testing.T) {
 	}{
 		{name: "empty username", username: "", expectedError: ErrInvalidUsername},
 		{name: "validator failure", username: "bad@user", validator: validatorStub{err: errors.New("not found")}, expectedError: ErrTwitchUnavailable},
-		{name: "success", username: "Best_Streamer", validator: validatorStub{displayName: "Best Streamer"}},
+		{name: "success", username: "Best_Streamer", validator: validatorStub{displayName: "Best Streamer", miniIconURL: "https://cdn.twitch.tv/icon.png"}},
 	}
 
 	for _, tt := range tests {
@@ -68,6 +76,9 @@ func TestServiceSubmitValidationAndListing(t *testing.T) {
 			}
 			if items[0].TwitchNickname != "best_streamer" {
 				t.Fatalf("unexpected twitch nickname: %s", items[0].TwitchNickname)
+			}
+			if items[0].MiniIconURL == "" {
+				t.Fatalf("expected mini icon URL to be stored")
 			}
 		})
 	}
