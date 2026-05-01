@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
