@@ -288,6 +288,10 @@ type meResponse struct {
 	IsAdmin bool `json:"isAdmin"`
 }
 
+type meNicknameUpdateRequest struct {
+	Nickname string `json:"nickname"`
+}
+
 type eventVoteRequest struct {
 	StreamerID string `json:"streamerId"`
 	OptionID   string `json:"optionId"`
@@ -610,26 +614,52 @@ func NewHandler(
 		})))
 
 		mux.Handle("/api/me", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
 			claims, ok := auth.ClaimsFromContext(r.Context())
 			if !ok {
 				writeError(w, http.StatusUnauthorized, "missing auth claims")
 				return
 			}
-			profile, err := userService.GetByTelegramID(r.Context(), claims.TelegramID)
-			if err != nil {
-				if errors.Is(err, users.ErrNotFound) {
-					writeError(w, http.StatusNotFound, "user not found")
+			switch r.Method {
+			case http.MethodGet:
+				profile, err := userService.GetByTelegramID(r.Context(), claims.TelegramID)
+				if err != nil {
+					if errors.Is(err, users.ErrNotFound) {
+						writeError(w, http.StatusNotFound, "user not found")
+						return
+					}
+					writeError(w, http.StatusInternalServerError, "failed to load profile")
 					return
 				}
-				writeError(w, http.StatusInternalServerError, "failed to load profile")
-				return
+				isAdmin := adminService != nil && adminService.IsAdmin(claims.Subject)
+				writeJSON(w, http.StatusOK, meResponse{Profile: profile, IsAdmin: isAdmin})
+			case http.MethodPut:
+				defer r.Body.Close() //nolint:errcheck
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to read request body")
+					return
+				}
+				var req meNicknameUpdateRequest
+				if err := decodeJSONStrict(body, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
+				profile, err := userService.UpdateNicknameByID(r.Context(), claims.Subject, req.Nickname)
+				if err != nil {
+					switch {
+					case errors.Is(err, users.ErrNotFound):
+						writeError(w, http.StatusNotFound, "user not found")
+					case errors.Is(err, users.ErrInvalidNickname):
+						writeError(w, http.StatusBadRequest, err.Error())
+					default:
+						writeError(w, http.StatusInternalServerError, "failed to update nickname")
+					}
+					return
+				}
+				writeJSON(w, http.StatusOK, profile)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
 			}
-			isAdmin := adminService != nil && adminService.IsAdmin(claims.Subject)
-			writeJSON(w, http.StatusOK, meResponse{Profile: profile, IsAdmin: isAdmin})
 		})))
 
 		mux.Handle("/api/admin/users", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

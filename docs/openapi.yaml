@@ -117,6 +117,25 @@ paths:
                 $ref: '#/components/schemas/UserProfile'
         default:
           $ref: '#/components/responses/Error'
+    put:
+      summary: Update current user profile nickname
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MeNicknameUpdateRequest'
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        default:
+          $ref: '#/components/responses/Error'
   /api/config:
     get:
       summary: Get configuration and feature flags
@@ -1302,6 +1321,8 @@ components:
           type: integer
         username:
           type: string
+        nickname:
+          type: string
         firstName:
           type: string
         lastName:
@@ -1329,6 +1350,12 @@ components:
         isAdmin:
           type: boolean
           description: Indicates whether the authenticated user has admin privileges.
+    MeNicknameUpdateRequest:
+      type: object
+      required: [nickname]
+      properties:
+        nickname:
+          type: string
     AdminUserUpsertRequest:
       type: object
       properties:

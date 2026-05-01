@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,5 +84,32 @@ func TestAdminMeEndpointRemovedFallsBackToRoot(t *testing.T) {
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", res.Code)
+	}
+}
+
+func TestMeUpdateNickname(t *testing.T) {
+	userService := users.NewService(users.NewInMemoryRepository())
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "user"})
+	if err != nil {
+		t.Fatalf("userService.SyncTelegramProfile() error = %v", err)
+	}
+
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, nil, ClientConfigResponse{})
+
+	req := httptest.NewRequest(http.MethodPut, "/api/me", strings.NewReader(`{"nickname":"CaptainFox"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, created.ID))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var payload users.Profile
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Nickname != "CaptainFox" {
+		t.Fatalf("expected nickname to be updated, got %q", payload.Nickname)
 	}
 }
