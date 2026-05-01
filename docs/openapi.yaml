@@ -965,7 +965,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/UserEventHistoryItem'
+                  $ref: '#/components/schemas/UserEventHistoryStreamerItem'
         default:
           $ref: '#/components/responses/Error'
   /api/wallet:
@@ -2226,6 +2226,24 @@ components:
         resultStatus:
           type: string
           enum: [pending, won, lost]
+    UserEventHistoryStreamerItem:
+      type: object
+      properties:
+        dateTime:
+          type: string
+          format: date-time
+        streamerId:
+          type: string
+        streamerNickname:
+          type: string
+        streamerIconUrl:
+          type: string
+        netAmountINT:
+          type: integer
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserEventHistoryItem'
     Wallet:
       type: object
       properties:
