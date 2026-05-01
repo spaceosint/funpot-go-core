@@ -21,7 +21,7 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 
 // GetByID returns a profile identified by internal user ID.
 func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, error) {
-	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE id = $1`
+	const query = `SELECT id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE id = $1`
 
 	var profile Profile
 	var bannedAt sql.NullTime
@@ -30,6 +30,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, e
 		&profile.ID,
 		&profile.TelegramID,
 		&profile.Username,
+		&profile.Nickname,
 		&profile.FirstName,
 		&profile.LastName,
 		&profile.LanguageCode,
@@ -53,7 +54,7 @@ func (r *PostgresRepository) GetByID(ctx context.Context, id string) (Profile, e
 
 // GetByTelegramID returns a profile identified by the Telegram ID.
 func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int64) (Profile, error) {
-	const query = `SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE telegram_id = $1`
+	const query = `SELECT id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at FROM users WHERE telegram_id = $1`
 
 	var profile Profile
 	var bannedAt sql.NullTime
@@ -62,6 +63,7 @@ func (r *PostgresRepository) GetByTelegramID(ctx context.Context, telegramID int
 		&profile.ID,
 		&profile.TelegramID,
 		&profile.Username,
+		&profile.Nickname,
 		&profile.FirstName,
 		&profile.LastName,
 		&profile.LanguageCode,
@@ -100,6 +102,7 @@ FROM users
 WHERE $1 = ''
    OR id ILIKE $2
    OR username ILIKE $2
+   OR nickname ILIKE $2
    OR first_name ILIKE $2
    OR last_name ILIKE $2
    OR language_code ILIKE $2
@@ -111,11 +114,12 @@ WHERE $1 = ''
 	}
 
 	const listQuery = `
-SELECT id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at
+SELECT id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at
 FROM users
 WHERE $1 = ''
    OR id ILIKE $2
    OR username ILIKE $2
+   OR nickname ILIKE $2
    OR first_name ILIKE $2
    OR last_name ILIKE $2
    OR language_code ILIKE $2
@@ -139,6 +143,7 @@ LIMIT $3 OFFSET $4`
 			&profile.ID,
 			&profile.TelegramID,
 			&profile.Username,
+			&profile.Nickname,
 			&profile.FirstName,
 			&profile.LastName,
 			&profile.LanguageCode,
@@ -165,14 +170,15 @@ LIMIT $3 OFFSET $4`
 // Create inserts a new profile. Existing records are left untouched.
 func (r *PostgresRepository) Create(ctx context.Context, profile Profile) error {
 	const query = `
-INSERT INTO users (id, telegram_id, username, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+INSERT INTO users (id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 ON CONFLICT (telegram_id) DO NOTHING`
 
 	if _, err := r.db.ExecContext(ctx, query,
 		profile.ID,
 		profile.TelegramID,
 		profile.Username,
+		profile.Nickname,
 		profile.FirstName,
 		profile.LastName,
 		profile.LanguageCode,
@@ -195,21 +201,23 @@ func (r *PostgresRepository) Update(ctx context.Context, profile Profile) error 
 	const query = `
 		UPDATE users
 		SET username = $2,
-		    first_name = $3,
-		    last_name = $4,
-		    language_code = $5,
-		    referral_code = $6,
-		    is_banned = $7,
-		    ban_reason = $8,
-		    banned_at = $9,
-		    banned_until = $10,
-		    updated_at = $11
+		    nickname = $3,
+		    first_name = $4,
+		    last_name = $5,
+		    language_code = $6,
+		    referral_code = $7,
+		    is_banned = $8,
+		    ban_reason = $9,
+		    banned_at = $10,
+		    banned_until = $11,
+		    updated_at = $12
 		WHERE telegram_id = $1
 	`
 
 	result, err := r.db.ExecContext(ctx, query,
 		profile.TelegramID,
 		profile.Username,
+		profile.Nickname,
 		profile.FirstName,
 		profile.LastName,
 		profile.LanguageCode,

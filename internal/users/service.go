@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base32"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,6 +51,9 @@ func (s *Service) SyncTelegramProfile(ctx context.Context, profile TelegramProfi
 
 	updated := existing
 	updated.Username = profile.Username
+	if strings.TrimSpace(updated.Nickname) == "" {
+		updated.Nickname = generateNickname(profile.ID)
+	}
 	updated.FirstName = profile.FirstName
 	updated.LastName = profile.LastName
 	updated.LanguageCode = profile.LanguageCode
@@ -84,6 +88,9 @@ func (s *Service) UpdateByID(ctx context.Context, id string, profile TelegramPro
 	}
 	updated := existing
 	updated.Username = profile.Username
+	if strings.TrimSpace(updated.Nickname) == "" {
+		updated.Nickname = generateNickname(profile.ID)
+	}
 	updated.FirstName = profile.FirstName
 	updated.LastName = profile.LastName
 	updated.LanguageCode = profile.LanguageCode
@@ -141,6 +148,7 @@ func (s *Service) newProfile(profile TelegramProfile) Profile {
 		ID:           fmt.Sprintf("tg_%d", profile.ID),
 		TelegramID:   profile.ID,
 		Username:     profile.Username,
+		Nickname:     generateNickname(profile.ID),
 		FirstName:    profile.FirstName,
 		LastName:     profile.LastName,
 		LanguageCode: profile.LanguageCode,
@@ -148,6 +156,23 @@ func (s *Service) newProfile(profile TelegramProfile) Profile {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+}
+
+func generateNickname(telegramID int64) string {
+	adjectives := []string{"Brave", "Lucky", "Mighty", "Cozy", "Swift", "Sunny", "Epic", "Neon", "Chill", "Nimble"}
+	nouns := []string{"Fox", "Panda", "Otter", "Tiger", "Koala", "Falcon", "Penguin", "Bunny", "Raccoon", "Dolphin"}
+
+	hasher := sha256.New()
+	hasher.Write([]byte("funpot-nickname"))
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(telegramID))
+	hasher.Write(b)
+	sum := hasher.Sum(nil)
+
+	adj := adjectives[int(sum[0])%len(adjectives)]
+	noun := nouns[int(sum[1])%len(nouns)]
+	num := int(binary.BigEndian.Uint16(sum[2:4]))%900 + 100
+	return fmt.Sprintf("%s%s%d", adj, noun, num)
 }
 
 func generateReferralCode(telegramID int64) string {

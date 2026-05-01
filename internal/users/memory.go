@@ -92,6 +92,7 @@ func profileMatches(profile Profile, query string) bool {
 	values := []string{
 		profile.ID,
 		profile.Username,
+		profile.Nickname,
 		profile.FirstName,
 		profile.LastName,
 		profile.LanguageCode,

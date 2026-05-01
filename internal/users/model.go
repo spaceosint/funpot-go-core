@@ -7,6 +7,7 @@ type Profile struct {
 	ID           string    `json:"id"`
 	TelegramID   int64     `json:"telegramId"`
 	Username     string    `json:"username"`
+	Nickname     string    `json:"nickname"`
 	FirstName    string    `json:"firstName"`
 	LastName     string    `json:"lastName"`
 	LanguageCode string    `json:"languageCode"`
