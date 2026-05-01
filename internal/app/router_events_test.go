@@ -271,12 +271,17 @@ func TestEventsHistoryReturnsUserEventVotes(t *testing.T) {
 	}
 
 	var history []struct {
-		EventID      string  `json:"eventId"`
-		OptionID     string  `json:"optionId"`
-		AmountINT    int64   `json:"amountINT"`
-		Coefficient  float64 `json:"coefficient"`
-		ResultStatus string  `json:"resultStatus"`
-		PotentialWin int64   `json:"potentialWinINT"`
+		StreamerID       string `json:"streamerId"`
+		StreamerNickname string `json:"streamerNickname"`
+		NetAmountINT     int64  `json:"netAmountINT"`
+		Details          []struct {
+			EventID      string  `json:"eventId"`
+			OptionID     string  `json:"optionId"`
+			AmountINT    int64   `json:"amountINT"`
+			Coefficient  float64 `json:"coefficient"`
+			ResultStatus string  `json:"resultStatus"`
+			PotentialWin int64   `json:"potentialWinINT"`
+		} `json:"details"`
 	}
 	if err := json.Unmarshal(historyRes.Body.Bytes(), &history); err != nil {
 		t.Fatalf("unmarshal history response: %v", err)
@@ -284,13 +289,19 @@ func TestEventsHistoryReturnsUserEventVotes(t *testing.T) {
 	if len(history) != 1 {
 		t.Fatalf("expected history length 1, got %d", len(history))
 	}
-	if history[0].EventID != "event-1" || history[0].OptionID != "ct" || history[0].AmountINT != 10 {
+	if len(history[0].Details) != 1 {
+		t.Fatalf("expected one detail item, got %d", len(history[0].Details))
+	}
+	if history[0].StreamerID != "streamer-1" || history[0].StreamerNickname == "" || history[0].NetAmountINT != -10 {
+		t.Fatalf("unexpected grouped history item: %+v", history[0])
+	}
+	if history[0].Details[0].EventID != "event-1" || history[0].Details[0].OptionID != "ct" || history[0].Details[0].AmountINT != 10 {
 		t.Fatalf("unexpected history item: %+v", history[0])
 	}
-	if history[0].Coefficient <= 0 || history[0].PotentialWin <= 0 {
+	if history[0].Details[0].Coefficient <= 0 || history[0].Details[0].PotentialWin <= 0 {
 		t.Fatalf("expected positive coefficient and potential win, got %+v", history[0])
 	}
-	if history[0].ResultStatus != "pending" {
-		t.Fatalf("expected pending result status, got %s", history[0].ResultStatus)
+	if history[0].Details[0].ResultStatus != "pending" {
+		t.Fatalf("expected pending result status, got %s", history[0].Details[0].ResultStatus)
 	}
 }
