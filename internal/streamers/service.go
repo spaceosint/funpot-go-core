@@ -33,6 +33,10 @@ type TwitchAudienceValidator interface {
 	GetLiveAudience(ctx context.Context, username string) (online bool, viewers int, err error)
 }
 
+type TwitchProfileValidator interface {
+	GetProfileImageURL(ctx context.Context, username string) (string, error)
+}
+
 type noopTwitchValidator struct{}
 
 func (v noopTwitchValidator) ValidateUsername(_ context.Context, username string) (string, error) {
@@ -234,6 +238,7 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 
 	online := false
 	viewers := 0
+	miniIconURL := ""
 	if audienceValidator, ok := s.validator.(TwitchAudienceValidator); ok {
 		online, viewers, err = audienceValidator.GetLiveAudience(ctx, nickname)
 		if err != nil {
@@ -253,6 +258,14 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 			return Submission{}, fmt.Errorf("%w: got=%d required=%d", ErrInsufficientLive, viewers, s.minLiveViewers)
 		}
 	}
+	if profileValidator, ok := s.validator.(TwitchProfileValidator); ok {
+		profileImageURL, profileErr := profileValidator.GetProfileImageURL(ctx, nickname)
+		if profileErr != nil {
+			logger.Warn("streamer profile image fetch failed", zap.String("twitchNickname", nickname), zap.Error(profileErr))
+		} else {
+			miniIconURL = strings.TrimSpace(profileImageURL)
+		}
+	}
 
 	now := s.nowFn().UnixNano()
 	id := fmt.Sprintf("str_%d", now)
@@ -261,6 +274,7 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 		Platform:       "twitch",
 		TwitchNickname: strings.ToLower(nickname),
 		DisplayName:    displayName,
+		MiniIconURL:    miniIconURL,
 		Online:         online,
 		Viewers:        viewers,
 		AddedBy:        addedBy,

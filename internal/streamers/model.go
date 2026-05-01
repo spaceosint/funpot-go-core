@@ -7,6 +7,7 @@ type Streamer struct {
 	Platform       string `json:"platform"`
 	TwitchNickname string `json:"twitchNickname"`
 	DisplayName    string `json:"displayName"`
+	MiniIconURL    string `json:"miniIconUrl,omitempty"`
 	Online         bool   `json:"online"`
 	Viewers        int    `json:"viewers"`
 	AddedBy        string `json:"addedBy"`

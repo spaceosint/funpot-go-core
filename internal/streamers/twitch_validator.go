@@ -70,9 +70,18 @@ func (v *TwitchAPIValidator) GetLiveAudience(ctx context.Context, username strin
 	return true, stream.ViewerCount, nil
 }
 
+func (v *TwitchAPIValidator) GetProfileImageURL(ctx context.Context, username string) (string, error) {
+	user, err := v.fetchUser(ctx, username)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.ProfileImageURL), nil
+}
+
 type twitchUser struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID              string `json:"id"`
+	DisplayName     string `json:"display_name"`
+	ProfileImageURL string `json:"profile_image_url"`
 }
 
 type twitchStream struct {
