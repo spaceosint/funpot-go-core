@@ -1,5 +1,7 @@
 # WebSocket Message Contracts
 
+> Status: this document defines **message contracts only**. Runtime WebSocket delivery in backend code must be implemented separately.
+
 Clients connect to `wss://<host>/realtime?streamerId=...` (optionally multiple subscriptions negotiated in payload) using the JWT issued by `/api/auth`. Messages are JSON objects with the following shape:
 
 ```json
@@ -40,6 +42,25 @@ Payload schema:
 ```
 Broadcast every 250–500 ms at most, optionally batching multiple events per frame.
 
+### EVENT_VOTE_FEED_UPDATED
+Payload schema:
+```json
+{
+  "eventId": "uuid",
+  "items": [
+    {
+      "userId": "uuid",
+      "nickname": "BraveFox123",
+      "optionId": "ct",
+      "amountINT": 150,
+      "createdAt": "ISO-8601"
+    }
+  ],
+  "snapshotAt": "ISO-8601"
+}
+```
+Real-time feed of participant votes for the mini-game. Frontend should append `items` to the vote tape and reconcile by `eventId + userId + createdAt`.
+
 ### EVENT_CLOSED
 Payload schema:
 ```json
@@ -53,6 +74,18 @@ Payload schema:
 ```
 Sent when the event timer expires or the event is manually closed.
 
+### SCENARIO_STEP_UPDATED
+Payload schema:
+```json
+{
+  "streamerId": "uuid",
+  "scenarioId": "uuid",
+  "stepId": "string",
+  "stepName": "Fight for Mid",
+  "updatedAt": "ISO-8601"
+}
+```
+Broadcast whenever orchestration moves to the next scenario step. For end users only the step name must be rendered.
 
 ### LLM_MATCH_STATE_UPDATED
 Payload schema:
@@ -107,7 +140,7 @@ Payload schema:
 Used for rate-limit warnings, maintenance messages, or feature flag updates.
 
 ## Subscriptions
-- `streamer:{streamerId}` — receives EVENT_* updates plus LLM match-state updates.
+- `streamer:{streamerId}` — receives EVENT_* updates plus scenario-step and LLM match-state updates.
 - `game:{gameId}` — narrower scope for specific games.
 - `user:{userId}` — balance updates and personal notices.
 
@@ -119,6 +152,6 @@ Unsubscribe works similarly with `"action":"unsubscribe"`.
 
 ## Backpressure Strategy
 - Server enforces max 2–4 EVENT_UPDATED per second per channel by aggregating totals.
+- `EVENT_VOTE_FEED_UPDATED` is sampled to max 5–10 frames per second with batch size control; slow subscribers receive only newest batches.
 - If downstream is slow, server drops intermediate EVENT_UPDATED but always sends latest snapshot and EVENT_CLOSED.
 - Heartbeat/ping every 20 seconds; clients must respond with `pong`.
-
