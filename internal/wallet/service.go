@@ -158,7 +158,13 @@ func (s *Service) Get(userID string) Wallet {
 		return Wallet{Balance: 0, History: []Entry{}}
 	}
 
-	history := append([]Entry(nil), acct.Entries...)
+	history := make([]Entry, 0, len(acct.Entries))
+	for _, entry := range acct.Entries {
+		if isGameRelatedReason(entry.Reason) {
+			continue
+		}
+		history = append(history, entry)
+	}
 	sort.Slice(history, func(i, j int) bool {
 		return history[i].CreatedAt.After(history[j].CreatedAt)
 	})
@@ -174,4 +180,9 @@ func (s *Service) ensureAccountLocked(userID string) *account {
 	acct = &account{ProcessedByIdemID: make(map[string]Entry)}
 	s.accounts[userID] = acct
 	return acct
+}
+
+func isGameRelatedReason(reason string) bool {
+	reason = strings.TrimSpace(reason)
+	return reason == "event_vote"
 }
