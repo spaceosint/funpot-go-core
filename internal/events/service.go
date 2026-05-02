@@ -157,6 +157,42 @@ func (s *Service) Settings() Settings {
 	}
 }
 
+func (s *Service) ConfigureSettingsPersistence(ctx context.Context, store SettingsStore) error {
+	s.mu.Lock()
+	s.settingsStore = store
+	s.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+
+	loaded, ok, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if loaded.VotePlatformFeePercent < 0 || loaded.VotePlatformFeePercent > 100 {
+		return ErrInvalidVote
+	}
+	if loaded.NicknameChangeCostINT < 0 {
+		return ErrInvalidVote
+	}
+	for _, amount := range loaded.WeeklyRewardByDayINT {
+		if amount < 0 {
+			return ErrInvalidVote
+		}
+	}
+
+	feeBPS := int64(math.Round(loaded.VotePlatformFeePercent * 100))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.votePlatformFeeBPS = feeBPS
+	s.nicknameChangeCost = loaded.NicknameChangeCostINT
+	s.weeklyRewardByDay = loaded.WeeklyRewardByDayINT
+	return nil
+}
+
 func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
 	if settings.VotePlatformFeePercent < 0 || settings.VotePlatformFeePercent > 100 {
 		return Settings{}, ErrInvalidVote
