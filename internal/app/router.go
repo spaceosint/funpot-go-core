@@ -1892,12 +1892,12 @@ func NewHandler(
 				rtHub.PublishToUser(claims.Subject, realtime.Envelope{
 					Type: "USER_BET_UPDATED",
 					Payload: map[string]any{
-						"eventId":            event.ID,
-						"myBetTotalINT":      event.UserVote.TotalAmount,
-						"myOptionId":         event.UserVote.OptionID,
-						"myCoefficient":      myCoefficient,
-						"myPotentialWinINT":  myPotentialWinINT,
-						"updatedAt":          realtime.NowRFC3339(),
+						"eventId":           event.ID,
+						"myBetTotalINT":     event.UserVote.TotalAmount,
+						"myOptionId":        event.UserVote.OptionID,
+						"myCoefficient":     myCoefficient,
+						"myPotentialWinINT": myPotentialWinINT,
+						"updatedAt":         realtime.NowRFC3339(),
 					},
 				})
 				writeJSON(w, http.StatusOK, event)
