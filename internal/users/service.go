@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
+	"github.com/google/uuid"
 	"strings"
 	"time"
 )
@@ -164,7 +166,7 @@ func (s *Service) newProfile(profile TelegramProfile) Profile {
 	now := s.now().UTC()
 	referralCode := generateReferralCode(profile.ID)
 	return Profile{
-		ID:           fmt.Sprintf("tg_%d", profile.ID),
+		ID:           uuid.NewString(),
 		TelegramID:   profile.ID,
 		Username:     profile.Username,
 		Nickname:     generateNickname(profile.ID),

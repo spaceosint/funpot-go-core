@@ -167,14 +167,20 @@ LIMIT $3 OFFSET $4`
 	return items, total, nil
 }
 
-// Create inserts a new profile. Existing records are left untouched.
+// Create inserts a new profile and initializes durable wallet/reward state.
 func (r *PostgresRepository) Create(ctx context.Context, profile Profile) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	const query = `
 INSERT INTO users (id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 ON CONFLICT (telegram_id) DO NOTHING`
 
-	if _, err := r.db.ExecContext(ctx, query,
+	res, err := tx.ExecContext(ctx, query,
 		profile.ID,
 		profile.TelegramID,
 		profile.Username,
@@ -189,11 +195,25 @@ ON CONFLICT (telegram_id) DO NOTHING`
 		nullableTime(profile.BannedUntil),
 		profile.CreatedAt,
 		profile.UpdatedAt,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return nil
+	}
 
-	return nil
+	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_accounts (user_id, balance_int) VALUES ($1, 0) ON CONFLICT (user_id) DO NOTHING`, profile.ID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO weekly_reward_claims (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, profile.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Update persists an existing profile.
