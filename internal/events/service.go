@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"strconv"
@@ -33,6 +34,7 @@ type liveEventState struct {
 
 type Service struct {
 	mu                 sync.RWMutex
+	db                 *sql.DB
 	items              map[string]*liveEventState
 	historyByUser      map[string][]UserEventHistoryItem
 	votePlatformFeeBPS int64
@@ -79,6 +81,12 @@ func NewService(seed []LiveEvent) *Service {
 		historyByUser:      map[string][]UserEventHistoryItem{},
 		weeklyClaimsByUser: map[string]weeklyClaimState{},
 	}
+}
+
+func NewPostgresService(db *sql.DB, seed []LiveEvent) *Service {
+	svc := NewService(seed)
+	svc.db = db
+	return svc
 }
 
 func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest) (LiveEvent, error) {
@@ -169,6 +177,10 @@ func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
 }
 
 func (s *Service) ClaimWeeklyReward(userID string, now time.Time) (WeeklyRewardClaim, error) {
+	if s.db != nil {
+		return s.claimWeeklyRewardDB(userID, now)
+	}
+
 	uid := strings.TrimSpace(userID)
 	if uid == "" {
 		return WeeklyRewardClaim{}, ErrInvalidVote
@@ -196,7 +208,60 @@ func (s *Service) ClaimWeeklyReward(userID string, now time.Time) (WeeklyRewardC
 	return WeeklyRewardClaim{ClaimedDay: claimedDay, RewardAmountINT: amount, ClaimedAt: claimedAt, NextClaimAt: now.Add(24 * time.Hour).Format(time.RFC3339Nano), StreakDay: claimedDay, IdempotencyKey: key}, nil
 }
 
+func (s *Service) claimWeeklyRewardDB(userID string, now time.Time) (WeeklyRewardClaim, error) {
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return WeeklyRewardClaim{}, ErrInvalidVote
+	}
+	now = now.UTC()
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return WeeklyRewardClaim{}, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err = tx.Exec(`INSERT INTO weekly_reward_claims (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, uid); err != nil {
+		return WeeklyRewardClaim{}, err
+	}
+
+	var lastClaimAt sql.NullTime
+	var streakDay int
+	if err = tx.QueryRow(`SELECT last_claim_at, streak_day FROM weekly_reward_claims WHERE user_id = $1 FOR UPDATE`, uid).Scan(&lastClaimAt, &streakDay); err != nil {
+		return WeeklyRewardClaim{}, err
+	}
+
+	if lastClaimAt.Valid && now.Before(lastClaimAt.Time.Add(24*time.Hour)) {
+		return WeeklyRewardClaim{}, ErrInvalidVote
+	}
+	if !lastClaimAt.Valid || now.After(lastClaimAt.Time.Add(48*time.Hour)) {
+		streakDay = 0
+	}
+	claimedDay := streakDay + 1
+	if claimedDay > 7 {
+		claimedDay = 1
+	}
+	amount := s.weeklyRewardByDay[claimedDay-1]
+	claimedAt := now.Format(time.RFC3339Nano)
+
+	if _, err = tx.Exec(`UPDATE weekly_reward_claims SET last_claim_at = $2, streak_day = $3, updated_at = NOW() WHERE user_id = $1`, uid, now, claimedDay); err != nil {
+		return WeeklyRewardClaim{}, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return WeeklyRewardClaim{}, err
+	}
+
+	key := "weekly_reward:" + uid + ":" + strconv.Itoa(claimedDay) + ":" + claimedAt
+	return WeeklyRewardClaim{ClaimedDay: claimedDay, RewardAmountINT: amount, ClaimedAt: claimedAt, NextClaimAt: now.Add(24 * time.Hour).Format(time.RFC3339Nano), StreakDay: claimedDay, IdempotencyKey: key}, nil
+}
+
 func (s *Service) RollbackWeeklyRewardClaim(userID string, claimedAt string) {
+	if s.db != nil {
+		s.rollbackWeeklyRewardClaimDB(userID, claimedAt)
+		return
+	}
+
 	uid := strings.TrimSpace(userID)
 	if uid == "" || strings.TrimSpace(claimedAt) == "" {
 		return
@@ -219,6 +284,38 @@ func (s *Service) RollbackWeeklyRewardClaim(userID string, claimedAt string) {
 		state.StreakDay--
 	}
 	s.weeklyClaimsByUser[uid] = state
+}
+
+func (s *Service) rollbackWeeklyRewardClaimDB(userID string, claimedAt string) {
+	uid := strings.TrimSpace(userID)
+	if uid == "" || strings.TrimSpace(claimedAt) == "" {
+		return
+	}
+	claimedTime, err := time.Parse(time.RFC3339Nano, claimedAt)
+	if err != nil {
+		return
+	}
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var lastClaimAt sql.NullTime
+	var streakDay int
+	if err = tx.QueryRow(`SELECT last_claim_at, streak_day FROM weekly_reward_claims WHERE user_id = $1 FOR UPDATE`, uid).Scan(&lastClaimAt, &streakDay); err != nil {
+		return
+	}
+	if !lastClaimAt.Valid || !lastClaimAt.Time.Equal(claimedTime) {
+		return
+	}
+	if streakDay > 0 {
+		streakDay--
+	}
+	if _, err = tx.Exec(`UPDATE weekly_reward_claims SET last_claim_at = NULL, streak_day = $2, updated_at = NOW() WHERE user_id = $1`, uid, streakDay); err != nil {
+		return
+	}
+	_ = tx.Commit()
 }
 
 func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {

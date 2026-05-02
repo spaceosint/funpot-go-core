@@ -129,6 +129,9 @@ func main() {
 		promptsService = prompts.NewPostgresService(db)
 	}
 	eventsService := events.NewService(nil)
+	if db != nil {
+		eventsService = events.NewPostgresService(db, nil)
+	}
 
 	streamCapture := buildStreamCapture(cfg, streamersService)
 	if configurableCapture, ok := streamCapture.(interface{ SetLogger(*zap.Logger) }); ok {
