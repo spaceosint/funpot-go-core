@@ -129,6 +129,20 @@ Payload schema:
 ```
 Delivered to user-specific subscriptions when ledger operations change balance.
 
+### USER_BET_UPDATED
+Payload schema:
+```json
+{
+  "eventId": "uuid",
+  "myBetTotalINT": 150,
+  "myOptionId": "ct",
+  "myCoefficient": 1.42,
+  "myPotentialWinINT": 213,
+  "updatedAt": "ISO-8601"
+}
+```
+Delivered to user-specific subscriptions right after successful vote processing.
+
 ### SYSTEM_NOTICE
 Payload schema:
 ```json

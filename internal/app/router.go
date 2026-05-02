@@ -447,8 +447,11 @@ func NewHandler(
 				return
 			}
 			defer conn.Close() //nolint:errcheck
-			ch, unsubscribe := rtHub.SubscribeStreamer(streamerID, 64)
-			defer unsubscribe()
+			claims, _ := authService.ParseToken(parts[1])
+			streamerCh, unsubscribeStreamer := rtHub.SubscribeStreamer(streamerID, 64)
+			defer unsubscribeStreamer()
+			userCh, unsubscribeUser := rtHub.SubscribeUser(claims.Subject, 64)
+			defer unsubscribeUser()
 			_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 			conn.SetPongHandler(func(string) error {
 				return conn.SetReadDeadline(time.Now().Add(45 * time.Second))
@@ -465,7 +468,14 @@ func NewHandler(
 			defer pingTicker.Stop()
 			for {
 				select {
-				case env, ok := <-ch:
+				case env, ok := <-streamerCh:
+					if !ok {
+						return
+					}
+					if err := conn.WriteJSON(env); err != nil {
+						return
+					}
+				case env, ok := <-userCh:
 					if !ok {
 						return
 					}
@@ -1794,14 +1804,15 @@ func NewHandler(
 					writeError(w, http.StatusBadRequest, "invalid request body")
 					return
 				}
-				if _, _, err := walletService.Post(wallet.PostRequest{
+				_, balanceAfterVote, err := walletService.Post(wallet.PostRequest{
 					UserID:         claims.Subject,
 					Type:           wallet.EntryTypeDebit,
 					Amount:         req.AmountINT,
 					Reason:         "event_vote",
 					IdempotencyKey: idempotencyKey,
 					ActorID:        claims.Subject,
-				}); err != nil {
+				})
+				if err != nil {
 					switch {
 					case errors.Is(err, wallet.ErrInvalidAmount), errors.Is(err, wallet.ErrIdempotencyRequired):
 						writeError(w, http.StatusBadRequest, err.Error())
@@ -1861,6 +1872,32 @@ func NewHandler(
 							CreatedAt: realtime.NowRFC3339(),
 						}},
 						SnapshotAt: realtime.NowRFC3339(),
+					},
+				})
+				var myCoefficient float64
+				var myPotentialWinINT int64
+				for _, item := range eventsService.ListUserHistory(r.Context(), claims.Subject) {
+					if item.EventID == event.ID {
+						myCoefficient = item.Coefficient
+						myPotentialWinINT = item.PotentialWinINT
+						break
+					}
+				}
+				rtHub.PublishToUser(claims.Subject, realtime.Envelope{
+					Type: "BALANCE_UPDATED",
+					Payload: map[string]int64{
+						"balance": balanceAfterVote,
+					},
+				})
+				rtHub.PublishToUser(claims.Subject, realtime.Envelope{
+					Type: "USER_BET_UPDATED",
+					Payload: map[string]any{
+						"eventId":            event.ID,
+						"myBetTotalINT":      event.UserVote.TotalAmount,
+						"myOptionId":         event.UserVote.OptionID,
+						"myCoefficient":      myCoefficient,
+						"myPotentialWinINT":  myPotentialWinINT,
+						"updatedAt":          realtime.NowRFC3339(),
 					},
 				})
 				writeJSON(w, http.StatusOK, event)
