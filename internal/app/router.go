@@ -382,6 +382,7 @@ func NewHandler(
 	streamerVideoManager any,
 	eventsService *events.Service,
 	clientConfig ClientConfigResponse,
+	walletServices ...*wallet.Service,
 ) http.Handler {
 	const rateLimitAutoBanDuration = 15 * time.Minute
 
@@ -418,6 +419,9 @@ func NewHandler(
 
 	if authService != nil {
 		walletService := wallet.NewService()
+		if len(walletServices) > 0 && walletServices[0] != nil {
+			walletService = walletServices[0]
+		}
 		mux.HandleFunc("/realtime", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)

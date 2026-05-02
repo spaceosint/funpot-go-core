@@ -1,6 +1,8 @@
 package wallet
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"sort"
 	"strings"
@@ -70,6 +72,7 @@ type Service struct {
 	mu       sync.RWMutex
 	now      func() time.Time
 	accounts map[string]*account
+	db       *sql.DB
 }
 
 func NewService() *Service {
@@ -77,6 +80,12 @@ func NewService() *Service {
 		now:      time.Now,
 		accounts: make(map[string]*account),
 	}
+}
+
+func NewPostgresService(db *sql.DB) *Service {
+	svc := NewService()
+	svc.db = db
+	return svc
 }
 
 func (s *Service) Post(req PostRequest) (Entry, int64, error) {
@@ -93,6 +102,10 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 	if req.Type != EntryTypeCredit && req.Type != EntryTypeDebit {
 		return Entry{}, 0, errors.New("wallet entry type is invalid")
 	}
+	if s.db != nil {
+		return s.postToDB(req, userID)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -129,6 +142,62 @@ func (s *Service) Post(req PostRequest) (Entry, int64, error) {
 	return entry, acct.Balance, nil
 }
 
+func (s *Service) postToDB(req PostRequest, userID string) (Entry, int64, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Entry{}, 0, err
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	var existing Entry
+	var existingBalance int64
+	row := tx.QueryRowContext(ctx, `
+SELECT id, user_id, type, amount_int, currency, reason, idempotency_key, created_at
+FROM wallet_ledger WHERE idempotency_key = $1
+`, strings.TrimSpace(req.IdempotencyKey))
+	if scanErr := row.Scan(&existing.ID, &existing.UserID, &existing.Type, &existing.Amount, &existing.Currency, &existing.Reason, &existing.IdempotencyKey, &existing.CreatedAt); scanErr == nil {
+		if err = tx.QueryRowContext(ctx, `SELECT balance_int FROM wallet_accounts WHERE user_id = $1`, userID).Scan(&existingBalance); err != nil {
+			return Entry{}, 0, err
+		}
+		if err = tx.Commit(); err != nil {
+			return Entry{}, 0, err
+		}
+		return existing, existingBalance, nil
+	} else if !errors.Is(scanErr, sql.ErrNoRows) {
+		return Entry{}, 0, scanErr
+	}
+
+	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_accounts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`, userID); err != nil {
+		return Entry{}, 0, err
+	}
+
+	var balance int64
+	if err = tx.QueryRowContext(ctx, `SELECT balance_int FROM wallet_accounts WHERE user_id = $1 FOR UPDATE`, userID).Scan(&balance); err != nil {
+		return Entry{}, 0, err
+	}
+	if req.Type == EntryTypeDebit && balance < req.Amount {
+		return Entry{}, balance, ErrInsufficientFunds
+	}
+
+	entry := Entry{ID: uuid.NewString(), UserID: userID, Type: req.Type, Amount: req.Amount, Currency: GameCurrency, Reason: strings.TrimSpace(req.Reason), IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), ActorID: strings.TrimSpace(req.ActorID), CreatedAt: s.now().UTC()}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_ledger (id, user_id, type, amount_int, currency, reason, idempotency_key, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, entry.ID, entry.UserID, entry.Type, entry.Amount, entry.Currency, entry.Reason, entry.IdempotencyKey, entry.CreatedAt); err != nil {
+		return Entry{}, 0, err
+	}
+	if entry.Type == EntryTypeCredit {
+		balance += entry.Amount
+	} else {
+		balance -= entry.Amount
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE wallet_accounts SET balance_int=$2, updated_at=NOW(), version=version+1 WHERE user_id=$1`, userID, balance); err != nil {
+		return Entry{}, 0, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Entry{}, 0, err
+	}
+	return entry, balance, nil
+}
+
 func (s *Service) Adjust(req AdjustRequest) (Entry, int64, error) {
 	if req.Delta == 0 {
 		return Entry{}, 0, ErrInvalidDelta
@@ -150,6 +219,9 @@ func (s *Service) Adjust(req AdjustRequest) (Entry, int64, error) {
 }
 
 func (s *Service) Get(userID string) Wallet {
+	if s.db != nil {
+		return s.getFromDB(userID)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -170,6 +242,29 @@ func (s *Service) Get(userID string) Wallet {
 	})
 
 	return Wallet{Balance: acct.Balance, History: history}
+}
+
+func (s *Service) getFromDB(userID string) Wallet {
+	lookup := strings.TrimSpace(userID)
+	if lookup == "" {
+		return Wallet{Balance: 0, History: []Entry{}}
+	}
+	ctx := context.Background()
+	balance := int64(0)
+	_ = s.db.QueryRowContext(ctx, `SELECT balance_int FROM wallet_accounts WHERE user_id = $1`, lookup).Scan(&balance)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, type, amount_int, currency, reason, idempotency_key, created_at FROM wallet_ledger WHERE user_id = $1 ORDER BY created_at DESC`, lookup)
+	if err != nil {
+		return Wallet{Balance: balance, History: []Entry{}}
+	}
+	defer rows.Close() //nolint:errcheck
+	history := make([]Entry, 0)
+	for rows.Next() {
+		var e Entry
+		if scanErr := rows.Scan(&e.ID, &e.UserID, &e.Type, &e.Amount, &e.Currency, &e.Reason, &e.IdempotencyKey, &e.CreatedAt); scanErr == nil {
+			history = append(history, e)
+		}
+	}
+	return Wallet{Balance: balance, History: history}
 }
 
 func (s *Service) ensureAccountLocked(userID string) *account {

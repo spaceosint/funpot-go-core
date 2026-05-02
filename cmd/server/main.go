@@ -21,6 +21,7 @@ import (
 	"github.com/funpot/funpot-go-core/internal/prompts"
 	"github.com/funpot/funpot-go-core/internal/streamers"
 	"github.com/funpot/funpot-go-core/internal/users"
+	"github.com/funpot/funpot-go-core/internal/wallet"
 	"github.com/funpot/funpot-go-core/pkg/cache"
 	dbpkg "github.com/funpot/funpot-go-core/pkg/database"
 	"github.com/funpot/funpot-go-core/pkg/telemetry"
@@ -103,6 +104,10 @@ func main() {
 	}
 
 	userService := users.NewService(userRepo)
+	walletService := wallet.NewService()
+	if db != nil {
+		walletService = wallet.NewPostgresService(db)
+	}
 	adminService := admin.NewService(cfg.Admin.UserIDs)
 	streamerValidator := streamers.TwitchValidator(streamers.NewTwitchAPIValidator(
 		cfg.Twitch.ClientID,
@@ -219,6 +224,7 @@ func main() {
 		chunkPublisher,
 		eventsService,
 		app.ConfigResponseFromConfig(cfg),
+		walletService,
 	)
 
 	application, err := app.New(cfg, logger, handler)
