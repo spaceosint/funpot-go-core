@@ -41,9 +41,15 @@ type ScenarioStepPayload struct {
 type Hub struct {
 	mu        sync.RWMutex
 	streamers map[string]map[chan Envelope]struct{}
+	users     map[string]map[chan Envelope]struct{}
 }
 
-func NewHub() *Hub { return &Hub{streamers: map[string]map[chan Envelope]struct{}{}} }
+func NewHub() *Hub {
+	return &Hub{
+		streamers: map[string]map[chan Envelope]struct{}{},
+		users:     map[string]map[chan Envelope]struct{}{},
+	}
+}
 
 func (h *Hub) SubscribeStreamer(streamerID string, buffer int) (<-chan Envelope, func()) {
 	if buffer <= 0 {
@@ -75,6 +81,45 @@ func (h *Hub) SubscribeStreamer(streamerID string, buffer int) (<-chan Envelope,
 func (h *Hub) PublishToStreamer(streamerID string, env Envelope) {
 	h.mu.RLock()
 	set := h.streamers[streamerID]
+	h.mu.RUnlock()
+	for ch := range set {
+		select {
+		case ch <- env:
+		default:
+		}
+	}
+}
+
+func (h *Hub) SubscribeUser(userID string, buffer int) (<-chan Envelope, func()) {
+	if buffer <= 0 {
+		buffer = 32
+	}
+	ch := make(chan Envelope, buffer)
+	h.mu.Lock()
+	if _, ok := h.users[userID]; !ok {
+		h.users[userID] = map[chan Envelope]struct{}{}
+	}
+	h.users[userID][ch] = struct{}{}
+	h.mu.Unlock()
+	unsub := func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if set, ok := h.users[userID]; ok {
+			if _, ok := set[ch]; ok {
+				delete(set, ch)
+				close(ch)
+			}
+			if len(set) == 0 {
+				delete(h.users, userID)
+			}
+		}
+	}
+	return ch, unsub
+}
+
+func (h *Hub) PublishToUser(userID string, env Envelope) {
+	h.mu.RLock()
+	set := h.users[userID]
 	h.mu.RUnlock()
 	for ch := range set {
 		select {

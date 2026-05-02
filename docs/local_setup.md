@@ -210,7 +210,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/streamers/{streamerId}/llm-history?page=1&pageSize=20` – admin timeline endpoint with paginated LLM decision history (step name, LLM response, global state delta, event timestamps). Each LLM event now carries its own Bunny video fragment URL in `videoData`, plus the endpoint returns uploaded Bunny video metadata for the streamer.
 - `DELETE /api/admin/streamers/{streamerId}/llm-history` – admin cleanup endpoint that deletes persisted LLM decision history and removes tracked Bunny videos for the streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
-- `GET /realtime?streamerId=<id>` – WebSocket upgrade endpoint (JWT required in `Authorization: Bearer <token>`), streams `EVENT_UPDATED` and `EVENT_VOTE_FEED_UPDATED` for the streamer scope.
+- `GET /realtime?streamerId=<id>` – WebSocket upgrade endpoint (JWT required in `Authorization: Bearer <token>`), streams streamer updates (`EVENT_UPDATED`, `EVENT_VOTE_FEED_UPDATED`) and user-scoped updates (`BALANCE_UPDATED`, `USER_BET_UPDATED`).
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
@@ -238,7 +238,9 @@ Authorization: Bearer <jwt>
 4. Trigger vote via `POST /api/events/{eventId}/vote` with the same user token.
 5. Verify socket receives:
    - `EVENT_UPDATED` (totals by option),
-   - `EVENT_VOTE_FEED_UPDATED` (nickname + option + amount).
+   - `EVENT_VOTE_FEED_UPDATED` (nickname + option + amount),
+   - `BALANCE_UPDATED` (your new balance),
+   - `USER_BET_UPDATED` (your cumulative stake, coefficient, potential payout).
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses
