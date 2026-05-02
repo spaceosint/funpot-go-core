@@ -67,6 +67,13 @@ func TestAdminUsersCRUD(t *testing.T) {
 	if balanceRes.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", balanceRes.Code, balanceRes.Body.String())
 	}
+	var balanceProfile users.Profile
+	if err := json.Unmarshal(balanceRes.Body.Bytes(), &balanceProfile); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if balanceProfile.Username != "alice_2" || balanceProfile.LastName != "Updated" || balanceProfile.LanguageCode != "ru" {
+		t.Fatalf("expected profile fields unchanged after balance update, got %+v", balanceProfile)
+	}
 
 	banReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID+"/ban", strings.NewReader(`{"isBanned":true,"reason":"manual"}`))
 	banReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))

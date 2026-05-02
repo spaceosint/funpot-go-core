@@ -857,21 +857,33 @@ func NewHandler(
 					writeError(w, http.StatusBadRequest, "invalid request body")
 					return
 				}
-				profile, err := userService.UpdateByID(r.Context(), userID, users.TelegramProfile{
-					ID:           req.TelegramID,
-					Username:     req.Username,
-					FirstName:    req.FirstName,
-					LastName:     req.LastName,
-					LanguageCode: req.LanguageCode,
-				})
+				profile, err := userService.GetByID(r.Context(), userID)
 				if err != nil {
 					if errors.Is(err, users.ErrNotFound) {
 						writeError(w, http.StatusNotFound, err.Error())
 						return
 					}
-					logger.Error("failed to update user", zap.String("userID", userID), zap.Error(err))
-					writeError(w, http.StatusInternalServerError, "failed to update user")
+					logger.Error("failed to fetch user", zap.String("userID", userID), zap.Error(err))
+					writeError(w, http.StatusInternalServerError, "failed to fetch user")
 					return
+				}
+				if req.TelegramID != 0 || strings.TrimSpace(req.Username) != "" || strings.TrimSpace(req.FirstName) != "" || strings.TrimSpace(req.LastName) != "" || strings.TrimSpace(req.LanguageCode) != "" {
+					profile, err = userService.UpdateByID(r.Context(), userID, users.TelegramProfile{
+						ID:           req.TelegramID,
+						Username:     req.Username,
+						FirstName:    req.FirstName,
+						LastName:     req.LastName,
+						LanguageCode: req.LanguageCode,
+					})
+					if err != nil {
+						if errors.Is(err, users.ErrNotFound) {
+							writeError(w, http.StatusNotFound, err.Error())
+							return
+						}
+						logger.Error("failed to update user", zap.String("userID", userID), zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to update user")
+						return
+					}
 				}
 				if req.BalanceDelta != nil {
 					idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
