@@ -75,6 +75,14 @@ func TestAdminUsersCRUD(t *testing.T) {
 		t.Fatalf("expected profile fields unchanged after balance update, got %+v", balanceProfile)
 	}
 
+	balanceNoKeyReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, strings.NewReader(`{"balanceDeltaINT":5,"balanceReason":"manual correction"}`))
+	balanceNoKeyReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
+	balanceNoKeyRes := httptest.NewRecorder()
+	handler.ServeHTTP(balanceNoKeyRes, balanceNoKeyReq)
+	if balanceNoKeyRes.Code != http.StatusOK {
+		t.Fatalf("expected 200 without Idempotency-Key, got %d: %s", balanceNoKeyRes.Code, balanceNoKeyRes.Body.String())
+	}
+
 	banReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID+"/ban", strings.NewReader(`{"isBanned":true,"reason":"manual"}`))
 	banReq.Header.Set("Authorization", "Bearer "+buildToken(t, "admin-1"))
 	banRes := httptest.NewRecorder()

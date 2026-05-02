@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
@@ -888,8 +889,7 @@ func NewHandler(
 				if req.BalanceDelta != nil {
 					idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 					if idempotencyKey == "" {
-						writeError(w, http.StatusBadRequest, wallet.ErrIdempotencyRequired.Error())
-						return
+						idempotencyKey = "admin-adjust-" + uuid.NewString()
 					}
 					if strings.TrimSpace(req.BalanceReason) == "" {
 						writeError(w, http.StatusBadRequest, "balanceReason is required when balanceDeltaINT is provided")
