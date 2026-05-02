@@ -41,6 +41,12 @@ type Service struct {
 	nicknameChangeCost int64
 	weeklyRewardByDay  [7]int64
 	weeklyClaimsByUser map[string]weeklyClaimState
+	settingsStore      SettingsStore
+}
+
+type SettingsStore interface {
+	Load(ctx context.Context) (Settings, bool, error)
+	Save(ctx context.Context, settings Settings) error
 }
 
 type weeklyClaimState struct {
@@ -169,11 +175,18 @@ func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
 	s.votePlatformFeeBPS = feeBPS
 	s.nicknameChangeCost = settings.NicknameChangeCostINT
 	s.weeklyRewardByDay = settings.WeeklyRewardByDayINT
-	return Settings{
+	store := s.settingsStore
+	current := Settings{
 		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
 		NicknameChangeCostINT:  s.nicknameChangeCost,
 		WeeklyRewardByDayINT:   s.weeklyRewardByDay,
-	}, nil
+	}
+	if store != nil {
+		if err := store.Save(context.Background(), current); err != nil {
+			return Settings{}, err
+		}
+	}
+	return current, nil
 }
 
 func (s *Service) ClaimWeeklyReward(userID string, now time.Time) (WeeklyRewardClaim, error) {
