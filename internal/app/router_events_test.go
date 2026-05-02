@@ -305,3 +305,50 @@ func TestEventsHistoryReturnsUserEventVotes(t *testing.T) {
 		t.Fatalf("expected pending result status, got %s", history[0].Details[0].ResultStatus)
 	}
 }
+
+func TestWeeklyRewardClaimCreditsWalletAndRespects24h(t *testing.T) {
+	eventsService := events.NewService(nil)
+	_, err := eventsService.UpdateSettings(events.Settings{WeeklyRewardByDayINT: [7]int64{10, 20, 30, 40, 50, 60, 70}})
+	if err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	userService := users.NewService(users.NewInMemoryRepository())
+	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, eventsService, ClientConfigResponse{})
+	userToken := buildToken(t, "tg_1")
+
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/rewards/weekly/claim", nil)
+	claimReq.Header.Set("Authorization", "Bearer "+userToken)
+	claimRes := httptest.NewRecorder()
+	handler.ServeHTTP(claimRes, claimReq)
+	if claimRes.Code != http.StatusOK {
+		t.Fatalf("claim status=%d body=%s", claimRes.Code, claimRes.Body.String())
+	}
+
+	replayReq := httptest.NewRequest(http.MethodPost, "/api/rewards/weekly/claim", nil)
+	replayReq.Header.Set("Authorization", "Bearer "+userToken)
+	replayRes := httptest.NewRecorder()
+	handler.ServeHTTP(replayRes, replayReq)
+	if replayRes.Code != http.StatusConflict {
+		t.Fatalf("replay claim status=%d body=%s", replayRes.Code, replayRes.Body.String())
+	}
+
+	walletReq := httptest.NewRequest(http.MethodGet, "/api/wallet", nil)
+	walletReq.Header.Set("Authorization", "Bearer "+userToken)
+	walletRes := httptest.NewRecorder()
+	handler.ServeHTTP(walletRes, walletReq)
+	if walletRes.Code != http.StatusOK {
+		t.Fatalf("wallet status=%d body=%s", walletRes.Code, walletRes.Body.String())
+	}
+	var walletPayload struct {
+		Balance int64 `json:"balance"`
+	}
+	if err := json.Unmarshal(walletRes.Body.Bytes(), &walletPayload); err != nil {
+		t.Fatalf("unmarshal wallet response: %v", err)
+	}
+	if walletPayload.Balance != 10 {
+		t.Fatalf("expected wallet balance 10, got %d", walletPayload.Balance)
+	}
+}

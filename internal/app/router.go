@@ -326,8 +326,9 @@ type withdrawRequest struct {
 }
 
 type adminGeneralSettingsRequest struct {
-	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
-	NicknameChangeCostINT  int64   `json:"nicknameChangeCostINT"`
+	VotePlatformFeePercent float64  `json:"votePlatformFeePercent"`
+	NicknameChangeCostINT  int64    `json:"nicknameChangeCostINT"`
+	WeeklyRewardByDayINT   [7]int64 `json:"weeklyRewardByDayINT"`
 }
 
 type adminHistoryEvent struct {
@@ -987,6 +988,44 @@ func NewHandler(
 				"newBalance": newBalance,
 			})
 		})))
+		mux.Handle("/api/rewards/weekly/claim", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			claims, ok := auth.ClaimsFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "missing auth claims")
+				return
+			}
+			if eventsService == nil {
+				writeError(w, http.StatusNotFound, "rewards are not configured")
+				return
+			}
+			claim, err := eventsService.ClaimWeeklyReward(claims.Subject, time.Now().UTC())
+			if err != nil {
+				writeError(w, http.StatusConflict, "weekly reward is available once per 24 hours")
+				return
+			}
+			newBalance := walletService.Get(claims.Subject).Balance
+			if claim.RewardAmountINT > 0 {
+				_, newBalanceAfterReward, err := walletService.Post(wallet.PostRequest{
+					UserID:         claims.Subject,
+					Type:           wallet.EntryTypeCredit,
+					Amount:         claim.RewardAmountINT,
+					Reason:         "weekly_reward",
+					IdempotencyKey: claim.IdempotencyKey,
+					ActorID:        claims.Subject,
+				})
+				if err != nil {
+					eventsService.RollbackWeeklyRewardClaim(claims.Subject, claim.ClaimedAt)
+					writeError(w, http.StatusInternalServerError, "failed to credit weekly reward")
+					return
+				}
+				newBalance = newBalanceAfterReward
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"claim": claim, "newBalance": newBalance})
+		})))
 
 		if eventsService != nil {
 			mux.Handle("/api/admin/settings/general", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1012,6 +1051,7 @@ func NewHandler(
 					updated, err := eventsService.UpdateSettings(events.Settings{
 						VotePlatformFeePercent: req.VotePlatformFeePercent,
 						NicknameChangeCostINT:  req.NicknameChangeCostINT,
+						WeeklyRewardByDayINT:   req.WeeklyRewardByDayINT,
 					})
 					if err != nil {
 						writeError(w, http.StatusBadRequest, "votePlatformFeePercent must be in range 0..100 and nicknameChangeCostINT must be >= 0")
