@@ -19,6 +19,16 @@ CREATE TABLE IF NOT EXISTS wallet_ledger (
     CONSTRAINT fk_wallet_ledger_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+ALTER TABLE IF EXISTS wallet_ledger
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+
+UPDATE wallet_ledger
+SET idempotency_key = id::text
+WHERE idempotency_key IS NULL;
+
+ALTER TABLE wallet_ledger
+    ALTER COLUMN idempotency_key SET NOT NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_ledger_idempotency_key
     ON wallet_ledger (idempotency_key);
 
