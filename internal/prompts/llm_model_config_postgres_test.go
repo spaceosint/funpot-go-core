@@ -7,7 +7,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestPostgresModelConfigStoreListEnsuresMetadataColumn(t *testing.T) {
+func TestPostgresModelConfigStoreList(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
@@ -16,15 +16,12 @@ func TestPostgresModelConfigStoreListEnsuresMetadataColumn(t *testing.T) {
 
 	store := NewPostgresModelConfigStore(db)
 
-	mock.ExpectExec("ALTER TABLE llm_model_configs").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
 	rows := sqlmock.NewRows([]string{
-		"id", "name", "model", "metadata_json", "temperature", "max_tokens", "timeout_ms",
+		"id", "name", "model", "metadata", "temperature", "max_tokens", "timeout_ms",
 		"retry_count", "backoff_ms", "cooldown_ms", "min_confidence", "is_active",
 		"created_by", "activated_by", "created_at", "activated_at",
 	})
-	mock.ExpectQuery("SELECT id, name, model, COALESCE\\(metadata_json, ''\\)").
+	mock.ExpectQuery("SELECT id, name, model, COALESCE\\(metadata::text, '\\{\\}'\\)").
 		WillReturnRows(rows)
 
 	items, err := store.List(context.Background())
@@ -39,7 +36,7 @@ func TestPostgresModelConfigStoreListEnsuresMetadataColumn(t *testing.T) {
 	}
 }
 
-func TestPostgresModelConfigStoreEnsureSchemaRunsOnce(t *testing.T) {
+func TestPostgresModelConfigStoreListTwice(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
@@ -48,12 +45,9 @@ func TestPostgresModelConfigStoreEnsureSchemaRunsOnce(t *testing.T) {
 
 	store := NewPostgresModelConfigStore(db)
 
-	mock.ExpectExec("ALTER TABLE llm_model_configs").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-
-	query := "SELECT id, name, model, COALESCE\\(metadata_json, ''\\)"
+	query := "SELECT id, name, model, COALESCE\\(metadata::text, '\\{\\}'\\)"
 	rows := sqlmock.NewRows([]string{
-		"id", "name", "model", "metadata_json", "temperature", "max_tokens", "timeout_ms",
+		"id", "name", "model", "metadata", "temperature", "max_tokens", "timeout_ms",
 		"retry_count", "backoff_ms", "cooldown_ms", "min_confidence", "is_active",
 		"created_by", "activated_by", "created_at", "activated_at",
 	})
