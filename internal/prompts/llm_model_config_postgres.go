@@ -4,16 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type PostgresModelConfigStore struct {
-	db         *sql.DB
-	schemaOnce sync.Once
-	schemaErr  error
+	db *sql.DB
 }
 
 func NewPostgresModelConfigStore(db *sql.DB) *PostgresModelConfigStore {
@@ -21,11 +19,8 @@ func NewPostgresModelConfigStore(db *sql.DB) *PostgresModelConfigStore {
 }
 
 func (s *PostgresModelConfigStore) List(ctx context.Context) ([]LLMModelConfig, error) {
-	if err := s.ensureSchema(ctx); err != nil {
-		return nil, err
-	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, model, COALESCE(metadata_json, ''), temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at
+SELECT id, name, model, COALESCE(metadata::text, '{}'), temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at
 FROM llm_model_configs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -48,11 +43,8 @@ ORDER BY created_at DESC, id DESC`)
 }
 
 func (s *PostgresModelConfigStore) Create(ctx context.Context, item LLMModelConfig) (LLMModelConfig, error) {
-	if err := s.ensureSchema(ctx); err != nil {
-		return LLMModelConfig{}, err
-	}
 	if item.ID == "" {
-		item.ID = "llm-model-cfg-" + uuid.NewString()
+		item.ID = uuid.NewString()
 	}
 	var hasAny bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM llm_model_configs)`).Scan(&hasAny); err != nil {
@@ -65,11 +57,11 @@ func (s *PostgresModelConfigStore) Create(ctx context.Context, item LLMModelConf
 	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO llm_model_configs (
-	id, name, model, metadata_json, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms,
+	id, name, provider, model, metadata, temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms,
 	min_confidence, is_active, created_by, activated_by, created_at, activated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-		item.ID, item.Name, item.Model, item.MetadataJSON, item.Temperature, item.MaxTokens, item.TimeoutMS, item.RetryCount,
+VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		item.ID, item.Name, "gemini", item.Model, normalizeJSON(item.MetadataJSON), item.Temperature, item.MaxTokens, item.TimeoutMS, item.RetryCount,
 		item.BackoffMS, item.CooldownMS, item.MinConfidence, item.IsActive, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
 	)
 	if err != nil {
@@ -79,15 +71,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 }
 
 func (s *PostgresModelConfigStore) Update(ctx context.Context, item LLMModelConfig) (LLMModelConfig, error) {
-	if err := s.ensureSchema(ctx); err != nil {
-		return LLMModelConfig{}, err
-	}
 	res, err := s.db.ExecContext(ctx, `
-UPDATE llm_model_configs
-SET name = $2, model = $3, metadata_json = $4, temperature = $5, max_tokens = $6, timeout_ms = $7,
-	retry_count = $8, backoff_ms = $9, cooldown_ms = $10, min_confidence = $11
-WHERE id = $1`,
-		item.ID, item.Name, item.Model, item.MetadataJSON, item.Temperature, item.MaxTokens, item.TimeoutMS,
+	UPDATE llm_model_configs
+	SET name = $2, model = $3, metadata = $4::jsonb, temperature = $5, max_tokens = $6, timeout_ms = $7,
+		retry_count = $8, backoff_ms = $9, cooldown_ms = $10, min_confidence = $11
+	WHERE id = $1`,
+		item.ID, item.Name, item.Model, normalizeJSON(item.MetadataJSON), item.Temperature, item.MaxTokens, item.TimeoutMS,
 		item.RetryCount, item.BackoffMS, item.CooldownMS, item.MinConfidence,
 	)
 	if err != nil {
@@ -100,9 +89,6 @@ WHERE id = $1`,
 }
 
 func (s *PostgresModelConfigStore) Delete(ctx context.Context, id string) error {
-	if err := s.ensureSchema(ctx); err != nil {
-		return err
-	}
 	res, err := s.db.ExecContext(ctx, `DELETE FROM llm_model_configs WHERE id = $1`, id)
 	if err != nil {
 		return err
@@ -114,9 +100,6 @@ func (s *PostgresModelConfigStore) Delete(ctx context.Context, id string) error 
 }
 
 func (s *PostgresModelConfigStore) SetActive(ctx context.Context, id string, actorID string, now time.Time) (LLMModelConfig, error) {
-	if err := s.ensureSchema(ctx); err != nil {
-		return LLMModelConfig{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return LLMModelConfig{}, err
@@ -142,11 +125,8 @@ func (s *PostgresModelConfigStore) SetActive(ctx context.Context, id string, act
 }
 
 func (s *PostgresModelConfigStore) GetByID(ctx context.Context, id string) (LLMModelConfig, error) {
-	if err := s.ensureSchema(ctx); err != nil {
-		return LLMModelConfig{}, err
-	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, name, model, COALESCE(metadata_json, ''), temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at
+SELECT id, name, model, COALESCE(metadata::text, '{}'), temperature, max_tokens, timeout_ms, retry_count, backoff_ms, cooldown_ms, min_confidence, is_active, created_by, activated_by, created_at, activated_at
 FROM llm_model_configs
 WHERE id = $1`, id)
 	item, err := scanLLMModelConfig(row)
@@ -183,11 +163,9 @@ func nullableTime(value time.Time) any {
 	return value
 }
 
-func (s *PostgresModelConfigStore) ensureSchema(ctx context.Context) error {
-	s.schemaOnce.Do(func() {
-		_, s.schemaErr = s.db.ExecContext(ctx, `
-ALTER TABLE llm_model_configs
-	ADD COLUMN IF NOT EXISTS metadata_json TEXT NOT NULL DEFAULT ''`)
-	})
-	return s.schemaErr
+func normalizeJSON(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "{}"
+	}
+	return value
 }
