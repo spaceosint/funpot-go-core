@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,11 +37,28 @@ type Service struct {
 	historyByUser      map[string][]UserEventHistoryItem
 	votePlatformFeeBPS int64
 	nicknameChangeCost int64
+	weeklyRewardByDay  [7]int64
+	weeklyClaimsByUser map[string]weeklyClaimState
+}
+
+type weeklyClaimState struct {
+	LastClaimAt time.Time
+	StreakDay   int
 }
 
 type Settings struct {
-	VotePlatformFeePercent float64 `json:"votePlatformFeePercent"`
-	NicknameChangeCostINT  int64   `json:"nicknameChangeCostINT"`
+	VotePlatformFeePercent float64  `json:"votePlatformFeePercent"`
+	NicknameChangeCostINT  int64    `json:"nicknameChangeCostINT"`
+	WeeklyRewardByDayINT   [7]int64 `json:"weeklyRewardByDayINT"`
+}
+
+type WeeklyRewardClaim struct {
+	ClaimedDay      int    `json:"claimedDay"`
+	RewardAmountINT int64  `json:"rewardAmountINT"`
+	ClaimedAt       string `json:"claimedAt"`
+	NextClaimAt     string `json:"nextClaimAt"`
+	StreakDay       int    `json:"streakDay"`
+	IdempotencyKey  string `json:"idempotencyKey"`
 }
 
 func NewService(seed []LiveEvent) *Service {
@@ -57,8 +75,9 @@ func NewService(seed []LiveEvent) *Service {
 		}
 	}
 	return &Service{
-		items:         items,
-		historyByUser: map[string][]UserEventHistoryItem{},
+		items:              items,
+		historyByUser:      map[string][]UserEventHistoryItem{},
+		weeklyClaimsByUser: map[string]weeklyClaimState{},
 	}
 }
 
@@ -120,6 +139,7 @@ func (s *Service) Settings() Settings {
 	return Settings{
 		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
 		NicknameChangeCostINT:  s.nicknameChangeCost,
+		WeeklyRewardByDayINT:   s.weeklyRewardByDay,
 	}
 }
 
@@ -130,15 +150,75 @@ func (s *Service) UpdateSettings(settings Settings) (Settings, error) {
 	if settings.NicknameChangeCostINT < 0 {
 		return Settings{}, ErrInvalidVote
 	}
+	for _, amount := range settings.WeeklyRewardByDayINT {
+		if amount < 0 {
+			return Settings{}, ErrInvalidVote
+		}
+	}
 	feeBPS := int64(math.Round(settings.VotePlatformFeePercent * 100))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.votePlatformFeeBPS = feeBPS
 	s.nicknameChangeCost = settings.NicknameChangeCostINT
+	s.weeklyRewardByDay = settings.WeeklyRewardByDayINT
 	return Settings{
 		VotePlatformFeePercent: float64(s.votePlatformFeeBPS) / 100.0,
 		NicknameChangeCostINT:  s.nicknameChangeCost,
+		WeeklyRewardByDayINT:   s.weeklyRewardByDay,
 	}, nil
+}
+
+func (s *Service) ClaimWeeklyReward(userID string, now time.Time) (WeeklyRewardClaim, error) {
+	uid := strings.TrimSpace(userID)
+	if uid == "" {
+		return WeeklyRewardClaim{}, ErrInvalidVote
+	}
+	now = now.UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := s.weeklyClaimsByUser[uid]
+	if !state.LastClaimAt.IsZero() && now.Before(state.LastClaimAt.Add(24*time.Hour)) {
+		return WeeklyRewardClaim{}, ErrInvalidVote
+	}
+	if state.LastClaimAt.IsZero() || now.After(state.LastClaimAt.Add(48*time.Hour)) {
+		state.StreakDay = 0
+	}
+	claimedDay := state.StreakDay + 1
+	if claimedDay > 7 {
+		claimedDay = 1
+	}
+	amount := s.weeklyRewardByDay[claimedDay-1]
+	claimedAt := now.Format(time.RFC3339Nano)
+	state.LastClaimAt = now
+	state.StreakDay = claimedDay
+	s.weeklyClaimsByUser[uid] = state
+	key := "weekly_reward:" + uid + ":" + strconv.Itoa(claimedDay) + ":" + claimedAt
+	return WeeklyRewardClaim{ClaimedDay: claimedDay, RewardAmountINT: amount, ClaimedAt: claimedAt, NextClaimAt: now.Add(24 * time.Hour).Format(time.RFC3339Nano), StreakDay: claimedDay, IdempotencyKey: key}, nil
+}
+
+func (s *Service) RollbackWeeklyRewardClaim(userID string, claimedAt string) {
+	uid := strings.TrimSpace(userID)
+	if uid == "" || strings.TrimSpace(claimedAt) == "" {
+		return
+	}
+	claimedTime, err := time.Parse(time.RFC3339Nano, claimedAt)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.weeklyClaimsByUser[uid]
+	if !ok {
+		return
+	}
+	if !state.LastClaimAt.Equal(claimedTime) {
+		return
+	}
+	state.LastClaimAt = time.Time{}
+	if state.StreakDay > 0 {
+		state.StreakDay--
+	}
+	s.weeklyClaimsByUser[uid] = state
 }
 
 func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {

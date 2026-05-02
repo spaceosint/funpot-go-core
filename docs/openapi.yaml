@@ -425,6 +425,22 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+
+  /api/rewards/weekly/claim:
+    post:
+      summary: Claim weekly reward
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Weekly reward claimed and wallet credited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeeklyRewardClaimResponse'
+        default:
+          $ref: '#/components/responses/Error'
+
   /api/admin/games:
     get:
       summary: List games (admin)
@@ -2295,9 +2311,16 @@ components:
         nicknameChangeCostINT:
           type: integer
           minimum: 0
+        weeklyRewardByDayINT:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            type: integer
+            minimum: 0
     AdminGeneralSettingsUpdateRequest:
       type: object
-      required: [votePlatformFeePercent, nicknameChangeCostINT]
+      required: [votePlatformFeePercent, nicknameChangeCostINT, weeklyRewardByDayINT]
       properties:
         votePlatformFeePercent:
           type: number
@@ -2306,6 +2329,13 @@ components:
         nicknameChangeCostINT:
           type: integer
           minimum: 0
+        weeklyRewardByDayINT:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            type: integer
+            minimum: 0
     ReferralSummary:
       type: object
       properties:
@@ -2469,3 +2499,32 @@ components:
         checkedAt:
           type: string
           format: date-time
+
+    WeeklyRewardClaim:
+      type: object
+      properties:
+        claimedDay:
+          type: integer
+          minimum: 1
+          maximum: 7
+        rewardAmountINT:
+          type: integer
+          minimum: 0
+        claimedAt:
+          type: string
+          format: date-time
+        nextClaimAt:
+          type: string
+          format: date-time
+        streakDay:
+          type: integer
+          minimum: 1
+          maximum: 7
+
+    WeeklyRewardClaimResponse:
+      type: object
+      properties:
+        claim:
+          $ref: '#/components/schemas/WeeklyRewardClaim'
+        newBalance:
+          type: integer
