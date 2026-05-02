@@ -16,7 +16,8 @@ import (
 
 func TestWalletAdminUserUpdateBalanceAndWithdrawIdempotency(t *testing.T) {
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(
@@ -34,10 +35,10 @@ func TestWalletAdminUserUpdateBalanceAndWithdrawIdempotency(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "tg_1")
+	userToken := buildToken(t, created.ID)
 
 	adjustBody := []byte(`{"balanceDeltaINT":100,"balanceReason":"manual grant"}`)
-	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader(adjustBody))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader(adjustBody))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-1")
 	adjustRes := httptest.NewRecorder()
@@ -46,7 +47,7 @@ func TestWalletAdminUserUpdateBalanceAndWithdrawIdempotency(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", adjustRes.Code, adjustRes.Body.String())
 	}
 
-	replayReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader(adjustBody))
+	replayReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader(adjustBody))
 	replayReq.Header.Set("Authorization", "Bearer "+adminToken)
 	replayReq.Header.Set("Idempotency-Key", "adj-1")
 	replayRes := httptest.NewRecorder()
@@ -115,7 +116,8 @@ func TestWalletAdminUserUpdateBalanceAndWithdrawIdempotency(t *testing.T) {
 
 func TestAdminUserBalanceAdjustRequiresAdmin(t *testing.T) {
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(
@@ -133,8 +135,8 @@ func TestAdminUserBalanceAdjustRequiresAdmin(t *testing.T) {
 		ClientConfigResponse{},
 	)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":10,"balanceReason":"test"}`)))
-	req.Header.Set("Authorization", "Bearer "+buildToken(t, "tg_1"))
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader([]byte(`{"balanceDeltaINT":10,"balanceReason":"test"}`)))
+	req.Header.Set("Authorization", "Bearer "+buildToken(t, created.ID))
 	req.Header.Set("Idempotency-Key", "adj-1")
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)

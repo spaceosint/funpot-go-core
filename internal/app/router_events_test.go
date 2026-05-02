@@ -40,7 +40,8 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 		},
 	})
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(
@@ -58,9 +59,9 @@ func TestEventsVoteDebitsWalletAndIsIdempotent(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "tg_1")
+	userToken := buildToken(t, created.ID)
 
-	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
 	adjustRes := httptest.NewRecorder()
@@ -137,7 +138,8 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 		},
 	})
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(
@@ -155,7 +157,7 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "tg_1")
+	userToken := buildToken(t, created.ID)
 
 	settingsReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings/general", bytes.NewReader([]byte(`{"votePlatformFeePercent":15}`)))
 	settingsReq.Header.Set("Authorization", "Bearer "+adminToken)
@@ -165,7 +167,7 @@ func TestAdminGeneralSettingsAffectVotePlatformFee(t *testing.T) {
 		t.Fatalf("settings status=%d body=%s", settingsRes.Code, settingsRes.Body.String())
 	}
 
-	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
 	adjustRes := httptest.NewRecorder()
@@ -224,7 +226,8 @@ func TestEventsHistoryReturnsUserEventVotes(t *testing.T) {
 		},
 	})
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(
@@ -242,9 +245,9 @@ func TestEventsHistoryReturnsUserEventVotes(t *testing.T) {
 		ClientConfigResponse{},
 	)
 	adminToken := buildToken(t, "admin-1")
-	userToken := buildToken(t, "tg_1")
+	userToken := buildToken(t, created.ID)
 
-	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/tg_1", bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
 	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
 	adjustReq.Header.Set("Idempotency-Key", "adj-seed")
 	adjustRes := httptest.NewRecorder()
@@ -313,11 +316,12 @@ func TestWeeklyRewardClaimCreditsWalletAndRespects24h(t *testing.T) {
 		t.Fatalf("UpdateSettings() error = %v", err)
 	}
 	userService := users.NewService(users.NewInMemoryRepository())
-	if _, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"}); err != nil {
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
 		t.Fatalf("SyncTelegramProfile() error = %v", err)
 	}
 	handler := NewHandler(zap.NewNop(), func() bool { return true }, nil, buildAuthService(t), admin.NewService([]string{"admin-1"}), userService, nil, nil, nil, nil, eventsService, ClientConfigResponse{})
-	userToken := buildToken(t, "tg_1")
+	userToken := buildToken(t, created.ID)
 
 	claimReq := httptest.NewRequest(http.MethodPost, "/api/rewards/weekly/claim", nil)
 	claimReq.Header.Set("Authorization", "Bearer "+userToken)
