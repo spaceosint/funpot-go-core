@@ -129,6 +129,11 @@ func main() {
 		promptsService = prompts.NewPostgresService(db)
 	}
 	eventsService := events.NewService(nil)
+	if db != nil {
+		if err := eventsService.ConfigureSettingsPersistence(ctx, events.NewPostgresSettingsStore(db)); err != nil {
+			logger.Fatal("failed to configure admin general settings persistence", zap.Error(err))
+		}
+	}
 
 	streamCapture := buildStreamCapture(cfg, streamersService)
 	if configurableCapture, ok := streamCapture.(interface{ SetLogger(*zap.Logger) }); ok {
