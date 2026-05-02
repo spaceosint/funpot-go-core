@@ -63,3 +63,30 @@ func TestServicePostAlwaysStoresGameCurrency(t *testing.T) {
 		t.Fatalf("expected %s currency, got %s", GameCurrency, entry.Currency)
 	}
 }
+
+func TestServiceGetSkipsGameRelatedEntriesInHistory(t *testing.T) {
+	svc := NewService()
+
+	if _, _, err := svc.Post(PostRequest{UserID: "u1", Type: EntryTypeCredit, Amount: 100, IdempotencyKey: "k1", Reason: "init"}); err != nil {
+		t.Fatalf("Post(init) error = %v", err)
+	}
+	if _, _, err := svc.Post(PostRequest{UserID: "u1", Type: EntryTypeDebit, Amount: 20, IdempotencyKey: "k2", Reason: "event_vote"}); err != nil {
+		t.Fatalf("Post(event vote) error = %v", err)
+	}
+	if _, _, err := svc.Post(PostRequest{UserID: "u1", Type: EntryTypeDebit, Amount: 10, IdempotencyKey: "k3", Reason: "withdraw"}); err != nil {
+		t.Fatalf("Post(withdraw) error = %v", err)
+	}
+
+	wallet := svc.Get("u1")
+	if wallet.Balance != 70 {
+		t.Fatalf("expected balance 70, got %d", wallet.Balance)
+	}
+	if len(wallet.History) != 2 {
+		t.Fatalf("expected 2 visible history entries, got %d", len(wallet.History))
+	}
+	for _, entry := range wallet.History {
+		if entry.Reason == "event_vote" {
+			t.Fatalf("event_vote entry must be hidden from history")
+		}
+	}
+}
