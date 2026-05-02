@@ -169,3 +169,47 @@ func TestListUserHistoryReturnsLatestFirstWithoutDuplicatesForIdempotentVotes(t 
 		t.Fatalf("expected positive potential wins, got latest=%d oldest=%d", history[0].PotentialWinINT, history[1].PotentialWinINT)
 	}
 }
+
+type stubSettingsStore struct {
+	loaded Settings
+	ok     bool
+	saved  Settings
+}
+
+func (s *stubSettingsStore) Load(_ context.Context) (Settings, bool, error) {
+	return s.loaded, s.ok, nil
+}
+func (s *stubSettingsStore) Save(_ context.Context, settings Settings) error {
+	s.saved = settings
+	return nil
+}
+
+func TestConfigureSettingsPersistenceLoadsExistingSettings(t *testing.T) {
+	svc := NewService(nil)
+	store := &stubSettingsStore{ok: true, loaded: Settings{VotePlatformFeePercent: 12.5, NicknameChangeCostINT: 15, WeeklyRewardByDayINT: [7]int64{1, 2, 3, 4, 5, 6, 7}}}
+	if err := svc.ConfigureSettingsPersistence(context.Background(), store); err != nil {
+		t.Fatalf("ConfigureSettingsPersistence() error = %v", err)
+	}
+	got := svc.Settings()
+	if got.VotePlatformFeePercent != 12.5 || got.NicknameChangeCostINT != 15 || got.WeeklyRewardByDayINT[6] != 7 {
+		t.Fatalf("unexpected loaded settings: %+v", got)
+	}
+}
+
+func TestUpdateSettingsPersistsToStore(t *testing.T) {
+	svc := NewService(nil)
+	store := &stubSettingsStore{}
+	if err := svc.ConfigureSettingsPersistence(context.Background(), store); err != nil {
+		t.Fatalf("ConfigureSettingsPersistence() error = %v", err)
+	}
+	updated, err := svc.UpdateSettings(Settings{VotePlatformFeePercent: 17, NicknameChangeCostINT: 40})
+	if err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	if store.saved.VotePlatformFeePercent != 17 || store.saved.NicknameChangeCostINT != 40 {
+		t.Fatalf("expected persisted settings, got %+v", store.saved)
+	}
+	if updated.VotePlatformFeePercent != 17 {
+		t.Fatalf("unexpected updated settings: %+v", updated)
+	}
+}
