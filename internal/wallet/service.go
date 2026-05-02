@@ -153,7 +153,7 @@ func (s *Service) postToDB(req PostRequest, userID string) (Entry, int64, error)
 	var existing Entry
 	var existingBalance int64
 	row := tx.QueryRowContext(ctx, `
-SELECT id, user_id, type, amount_int, currency, reason, idempotency_key, created_at
+SELECT id, user_id, tx_type, amount_int, currency, reason, idempotency_key, created_at
 FROM wallet_ledger WHERE idempotency_key = $1
 `, strings.TrimSpace(req.IdempotencyKey))
 	if scanErr := row.Scan(&existing.ID, &existing.UserID, &existing.Type, &existing.Amount, &existing.Currency, &existing.Reason, &existing.IdempotencyKey, &existing.CreatedAt); scanErr == nil {
@@ -181,7 +181,7 @@ FROM wallet_ledger WHERE idempotency_key = $1
 	}
 
 	entry := Entry{ID: uuid.NewString(), UserID: userID, Type: req.Type, Amount: req.Amount, Currency: GameCurrency, Reason: strings.TrimSpace(req.Reason), IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), ActorID: strings.TrimSpace(req.ActorID), CreatedAt: s.now().UTC()}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_ledger (id, user_id, type, amount_int, currency, reason, idempotency_key, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, entry.ID, entry.UserID, entry.Type, entry.Amount, entry.Currency, entry.Reason, entry.IdempotencyKey, entry.CreatedAt); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_ledger (id, user_id, tx_type, amount_int, currency, reason, idempotency_key, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, entry.ID, entry.UserID, entry.Type, entry.Amount, balance, entry.Currency, entry.Reason, entry.IdempotencyKey, entry.CreatedAt); err != nil {
 		return Entry{}, 0, err
 	}
 	if entry.Type == EntryTypeCredit {
@@ -252,7 +252,7 @@ func (s *Service) getFromDB(userID string) Wallet {
 	ctx := context.Background()
 	balance := int64(0)
 	_ = s.db.QueryRowContext(ctx, `SELECT balance_int FROM wallet_accounts WHERE user_id = $1`, lookup).Scan(&balance)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, type, amount_int, currency, reason, idempotency_key, created_at FROM wallet_ledger WHERE user_id = $1 ORDER BY created_at DESC`, lookup)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, tx_type, amount_int, currency, reason, idempotency_key, created_at FROM wallet_ledger WHERE user_id = $1 ORDER BY created_at DESC`, lookup)
 	if err != nil {
 		return Wallet{Balance: balance, History: []Entry{}}
 	}

@@ -3,7 +3,9 @@ package events
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -35,6 +38,8 @@ type liveEventState struct {
 type Service struct {
 	mu                 sync.RWMutex
 	db                 *sql.DB
+	redis              redis.Cmdable
+	liveTTL            time.Duration
 	items              map[string]*liveEventState
 	historyByUser      map[string][]UserEventHistoryItem
 	votePlatformFeeBPS int64
@@ -95,6 +100,14 @@ func NewPostgresService(db *sql.DB, seed []LiveEvent) *Service {
 	return svc
 }
 
+func (s *Service) WithRedisLiveState(client redis.Cmdable, ttl time.Duration) {
+	s.redis = client
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	s.liveTTL = ttl
+}
+
 func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest) (LiveEvent, error) {
 	if strings.TrimSpace(req.StreamerID) == "" || strings.TrimSpace(req.ScenarioID) == "" || strings.TrimSpace(req.TerminalID) == "" {
 		return LiveEvent{}, ErrInvalidEvent
@@ -144,6 +157,9 @@ func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest)
 		userVotes:      map[string]voteRecord{},
 	}
 	s.items[event.ID] = state
+	if s.redis != nil {
+		_ = s.persistLiveState(context.Background(), event)
+	}
 	return event, nil
 }
 
@@ -368,6 +384,14 @@ func (s *Service) rollbackWeeklyRewardClaimDB(userID string, claimedAt string) {
 }
 
 func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {
+	if s.redis != nil {
+		if event, ok := s.readActiveEventFromRedis(context.Background(), streamerID); ok {
+			now := time.Now().UTC()
+			if isOpen(event, now) {
+				return []LiveEvent{event}
+			}
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now().UTC()
@@ -430,6 +454,9 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	userVote.Amount += req.Amount
 	item.userVotes[strings.TrimSpace(req.UserID)] = userVote
 	item.processedVotes[strings.TrimSpace(req.IdempotencyKey)] = voteRecord{OptionID: optionID, Amount: req.Amount}
+	if s.redis != nil {
+		_ = s.persistLiveState(context.Background(), item.event)
+	}
 	optionPool := item.event.Totals[optionID]
 	coefficient := calculateCoefficient(item.event.DistributableINT, optionPool)
 	potentialWin := CalculateAccrualINT(
@@ -462,6 +489,44 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	event := item.event
 	event.UserVote = &UserVote{OptionID: userVote.OptionID, TotalAmount: userVote.Amount}
 	return event, nil
+}
+
+func (s *Service) persistLiveState(ctx context.Context, event LiveEvent) error {
+	if s.redis == nil {
+		return nil
+	}
+	ttl := s.liveTTL
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	stateKey := fmt.Sprintf("live_event:%s:state", event.ID)
+	activeKey := fmt.Sprintf("streamer:%s:active_event", event.StreamerID)
+	b, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if err = s.redis.Set(ctx, stateKey, b, ttl).Err(); err != nil {
+		return err
+	}
+	return s.redis.Set(ctx, activeKey, event.ID, ttl).Err()
+}
+
+func (s *Service) readActiveEventFromRedis(ctx context.Context, streamerID string) (LiveEvent, bool) {
+	activeKey := fmt.Sprintf("streamer:%s:active_event", streamerID)
+	eventID, err := s.redis.Get(ctx, activeKey).Result()
+	if err != nil || strings.TrimSpace(eventID) == "" {
+		return LiveEvent{}, false
+	}
+	stateKey := fmt.Sprintf("live_event:%s:state", strings.TrimSpace(eventID))
+	raw, err := s.redis.Get(ctx, stateKey).Bytes()
+	if err != nil {
+		return LiveEvent{}, false
+	}
+	var event LiveEvent
+	if err = json.Unmarshal(raw, &event); err != nil {
+		return LiveEvent{}, false
+	}
+	return event, true
 }
 
 func (s *Service) ListUserHistory(_ context.Context, userID string) []UserEventHistoryItem {
