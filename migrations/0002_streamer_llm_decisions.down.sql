@@ -1,4 +1,0 @@
-DROP INDEX IF EXISTS idx_streamer_llm_decisions_streamer_stage_created_at;
-DROP INDEX IF EXISTS idx_streamer_llm_decisions_run_id;
-DROP INDEX IF EXISTS idx_streamer_llm_decisions_streamer_created_at;
-DROP TABLE IF EXISTS streamer_llm_decisions;
