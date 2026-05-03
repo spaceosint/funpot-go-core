@@ -100,7 +100,7 @@ func (r *PostgresRepository) List(ctx context.Context, query string, page, pageS
 SELECT COUNT(*)
 FROM users
 WHERE $1 = ''
-   OR id ILIKE $2
+   OR id::text ILIKE $2
    OR username ILIKE $2
    OR nickname ILIKE $2
    OR first_name ILIKE $2
@@ -117,7 +117,7 @@ WHERE $1 = ''
 SELECT id, telegram_id, username, nickname, first_name, last_name, language_code, referral_code, is_banned, ban_reason, banned_at, banned_until, created_at, updated_at
 FROM users
 WHERE $1 = ''
-   OR id ILIKE $2
+   OR id::text ILIKE $2
    OR username ILIKE $2
    OR nickname ILIKE $2
    OR first_name ILIKE $2
