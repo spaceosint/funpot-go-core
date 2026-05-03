@@ -181,14 +181,16 @@ FROM wallet_ledger WHERE idempotency_key = $1
 	}
 
 	entry := Entry{ID: uuid.NewString(), UserID: userID, Type: req.Type, Amount: req.Amount, Currency: GameCurrency, Reason: strings.TrimSpace(req.Reason), IdempotencyKey: strings.TrimSpace(req.IdempotencyKey), ActorID: strings.TrimSpace(req.ActorID), CreatedAt: s.now().UTC()}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_ledger (id, user_id, tx_type, amount_int, currency, reason, idempotency_key, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, entry.ID, entry.UserID, entry.Type, entry.Amount, balance, entry.Currency, entry.Reason, entry.IdempotencyKey, entry.CreatedAt); err != nil {
+	balanceAfter := balance
+	if entry.Type == EntryTypeCredit {
+		balanceAfter += entry.Amount
+	} else {
+		balanceAfter -= entry.Amount
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO wallet_ledger (id, user_id, tx_type, amount_int, balance_after_int, currency, reason, idempotency_key, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, entry.ID, entry.UserID, entry.Type, entry.Amount, balanceAfter, entry.Currency, entry.Reason, entry.IdempotencyKey, entry.CreatedAt); err != nil {
 		return Entry{}, 0, err
 	}
-	if entry.Type == EntryTypeCredit {
-		balance += entry.Amount
-	} else {
-		balance -= entry.Amount
-	}
+	balance = balanceAfter
 	if _, err = tx.ExecContext(ctx, `UPDATE wallet_accounts SET balance_int=$2, updated_at=NOW(), version=version+1 WHERE user_id=$1`, userID, balance); err != nil {
 		return Entry{}, 0, err
 	}
