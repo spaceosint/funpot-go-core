@@ -57,7 +57,7 @@ ORDER BY game_slug ASC, version DESC, created_at DESC`)
 
 func (s *PostgresScenarioPackageStore) Create(ctx context.Context, item ScenarioPackage) (ScenarioPackage, error) {
 	if item.ID == "" {
-		item.ID = "scenario-pkg-" + uuid.NewString()
+		item.ID = uuid.NewString()
 	}
 	if strings.TrimSpace(item.GameSlug) == "" {
 		item.GameSlug = "global"

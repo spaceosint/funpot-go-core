@@ -57,7 +57,7 @@ ORDER BY game_slug ASC, version DESC, created_at DESC`)
 
 func (s *PostgresGameScenarioStore) Create(ctx context.Context, item GameScenario) (GameScenario, error) {
 	if item.ID == "" {
-		item.ID = "game-scenario-" + uuid.NewString()
+		item.ID = uuid.NewString()
 	}
 	if item.CreatedAt.IsZero() {
 		item.CreatedAt = time.Now().UTC()
