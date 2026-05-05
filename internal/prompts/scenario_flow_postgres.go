@@ -32,7 +32,7 @@ func NewPostgresScenarioPackageStore(db *sql.DB) *PostgresScenarioPackageStore {
 
 func (s *PostgresScenarioPackageStore) List(ctx context.Context) ([]ScenarioPackage, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, name, version, game_slug, llm_model_config_id, is_active,
+SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
 ORDER BY game_slug ASC, version DESC, created_at DESC`)
