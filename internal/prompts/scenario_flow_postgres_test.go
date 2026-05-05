@@ -112,3 +112,40 @@ LIMIT 1`)).
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+func TestPostgresScenarioPackageStoreList(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	store := NewPostgresScenarioPackageStore(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	steps := `[{"id":"s1","name":"step-1","order":1}]`
+	transitions := `[]`
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+SELECT id, name, version, game_slug, model_config_id, is_active,
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+ORDER BY game_slug ASC, version DESC, created_at DESC`)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "version", "game_slug", "model_config_id", "is_active",
+			"nodes_json", "transitions_json", "metadata", "created_by", "activated_by", "created_at", "activated_at",
+		}).AddRow("scenario-pkg-1", "pkg", 2, "global", "", true, []byte(steps), []byte(transitions), []byte(`{}`), "admin", "admin", now, now))
+
+	items, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("store.List: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %d", len(items))
+	}
+	if items[0].ID != "scenario-pkg-1" {
+		t.Fatalf("unexpected id: %s", items[0].ID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
