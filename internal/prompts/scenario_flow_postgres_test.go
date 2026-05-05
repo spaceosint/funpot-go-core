@@ -19,25 +19,27 @@ func TestPostgresScenarioPackageStoreCreate(t *testing.T) {
 	store := NewPostgresScenarioPackageStore(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenario_packages WHERE game_slug = $1`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE game_slug = $1`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (SELECT 1 FROM llm_scenario_packages WHERE game_slug = $1)`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE game_slug = $1)`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(regexp.QuoteMeta(`
-INSERT INTO llm_scenario_packages (
-	id, game_slug, name, version, llm_model_config_id,
-	steps_json, transitions_json, is_active,
+INSERT INTO llm_scenarios (
+	id, game_slug, name, version, model_config_id, initial_node_id,
+	nodes_json, transitions_json, metadata, is_active,
 	created_by, activated_by, created_at, activated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12)`)).
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14)`)).
 		WithArgs(
 			sqlmock.AnyArg(),
 			"global",
 			"pkg",
 			1,
 			"",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			true,
@@ -85,16 +87,16 @@ func TestPostgresScenarioPackageStoreGetActiveByGameSlug(t *testing.T) {
 	transitions := `[]`
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-SELECT id, name, version, game_slug, llm_model_config_id, is_active,
-       steps_json, transitions_json, created_by, activated_by, created_at, activated_at
-FROM llm_scenario_packages
+SELECT id, name, version, game_slug, model_config_id, is_active,
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
 WHERE game_slug = $1 AND is_active = TRUE
 LIMIT 1`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "name", "version", "game_slug", "llm_model_config_id", "is_active",
-			"steps_json", "transitions_json", "created_by", "activated_by", "created_at", "activated_at",
-		}).AddRow("scenario-pkg-1", "pkg", 2, "global", "", true, []byte(steps), []byte(transitions), "admin", "admin", now, now))
+			"id", "name", "version", "game_slug", "model_config_id", "is_active",
+			"steps_json", "transitions_json", "metadata", "created_by", "activated_by", "created_at", "activated_at",
+		}).AddRow("scenario-pkg-1", "pkg", 2, "global", "", true, []byte(steps), []byte(transitions), []byte(`{}`), "admin", "admin", now, now))
 
 	item, err := store.GetActiveByGameSlug(context.Background(), "global")
 	if err != nil {
