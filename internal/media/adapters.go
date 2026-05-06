@@ -44,6 +44,7 @@ const defaultPreferredStreamQuality = "1080p60,1080p,720p60,720p,936p60,936p,648
 const defaultStreamlinkCaptureTimeout = 30 * time.Second
 const streamlinkCaptureShutdownGracePeriod = 5 * time.Second
 const continuousSegmentStabilityWindow = 1500 * time.Millisecond
+const continuousCaptureSegmentUnit = time.Second
 
 type StreamlinkChannelResolver interface {
 	ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error)
@@ -97,6 +98,7 @@ type continuousCaptureSession struct {
 }
 
 func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver StreamlinkChannelResolver, runner StreamlinkCommandRunner) *StreamlinkCaptureAdapter {
+	usesDefaultRunner := runner == nil
 	if strings.TrimSpace(cfg.BinaryPath) == "" {
 		cfg.BinaryPath = "streamlink"
 	}
@@ -123,7 +125,7 @@ func NewStreamlinkCaptureAdapter(cfg StreamlinkCaptureConfig, resolver Streamlin
 		runner:     runner,
 		normalizer: NewFFmpegChunkNormalizer(cfg.FFmpegBinary, runner),
 		nowFn:      time.Now,
-		continuous: false,
+		continuous: usesDefaultRunner,
 		sessions:   make(map[string]*continuousCaptureSession),
 	}
 }
@@ -318,8 +320,10 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		return ChunkRef{}, session.lastErr
 	}
 
+	segmentCount := continuousSegmentCount(captureTimeout)
 	targetIndex := session.nextIndex
-	deadline := time.Now().Add(captureTimeout + streamlinkCaptureShutdownGracePeriod)
+	lastIndex := targetIndex + segmentCount - 1
+	deadline := time.Now().Add(captureTimeout + continuousCaptureSegmentUnit + streamlinkCaptureShutdownGracePeriod)
 	lastObservedSize := int64(-1)
 	var lastSizeChangedAt time.Time
 	for {
@@ -328,45 +332,43 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 			return ChunkRef{}, ctx.Err()
 		default:
 		}
-		segmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex))
-		info, statErr := os.Stat(segmentPath)
-		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", targetIndex+1))
+
+		segmentPaths, segmentsReady := continuousSegmentPaths(session.segmentsDir, targetIndex, segmentCount)
+		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", lastIndex+1))
 		nextInfo, nextErr := os.Stat(nextSegmentPath)
 		segmentFinalized := nextErr == nil && nextInfo.Size() > 0
 		finalizedByStability := false
-		if statErr == nil && info.Size() > 0 {
-			if info.Size() != lastObservedSize {
-				lastObservedSize = info.Size()
-				lastSizeChangedAt = time.Now()
-			}
-			stableByObservedSize := !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow
-			stableByModTime := time.Since(info.ModTime()) >= continuousSegmentStabilityWindow
-			nearDeadline := time.Until(deadline) <= continuousSegmentStabilityWindow
-			if !segmentFinalized && stableByObservedSize && stableByModTime && nearDeadline {
-				segmentFinalized = true
-				finalizedByStability = true
+		if !segmentFinalized && segmentCount == 1 && segmentsReady {
+			info, statErr := os.Stat(segmentPaths[0])
+			if statErr == nil && info.Size() > 0 {
+				if info.Size() != lastObservedSize {
+					lastObservedSize = info.Size()
+					lastSizeChangedAt = time.Now()
+				}
+				stableByObservedSize := !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow
+				stableByModTime := time.Since(info.ModTime()) >= continuousSegmentStabilityWindow
+				nearDeadline := time.Until(deadline) <= continuousSegmentStabilityWindow
+				if stableByObservedSize && stableByModTime && nearDeadline {
+					segmentFinalized = true
+					finalizedByStability = true
+				}
 			}
 		}
-		if statErr == nil && info.Size() > 0 && segmentFinalized {
-			chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), fmt.Sprintf("%s.mp4", sanitizeToken(fmt.Sprintf("%09d", targetIndex))))
-			if finalizedByStability {
-				if err := copyFile(segmentPath, chunkPath); err != nil {
-					return ChunkRef{}, err
-				}
-			} else {
-				if err := os.Rename(segmentPath, chunkPath); err != nil {
-					return ChunkRef{}, err
-				}
+		if segmentsReady && segmentFinalized {
+			chunkPath, err := a.assembleContinuousChunk(ctx, session, targetIndex, segmentPaths, finalizedByStability)
+			if err != nil {
+				return ChunkRef{}, err
 			}
-			session.nextIndex++
+			session.nextIndex += segmentCount
+			logger.Info("continuous stream chunk assembled", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int("firstSegmentIndex", targetIndex), zap.Int("lastSegmentIndex", lastIndex), zap.Int("segmentSeconds", segmentCount))
 			return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
 		}
-		if statErr != nil {
+		if !segmentsReady {
 			lastObservedSize = -1
 			lastSizeChangedAt = time.Time{}
 		}
 		if time.Now().After(deadline) {
-			return ChunkRef{}, fmt.Errorf("%w: no continuous segment available before deadline", ErrStreamlinkNoData)
+			return ChunkRef{}, fmt.Errorf("%w: no continuous segment range %09d-%09d available before deadline", ErrStreamlinkNoData, targetIndex, lastIndex)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -395,12 +397,7 @@ func (a *StreamlinkCaptureAdapter) ensureContinuousSession(streamerID, channel s
 	if err := os.MkdirAll(session.segmentsDir, 0o755); err != nil {
 		return nil, err
 	}
-	for _, entry := range []string{"*.ts", "*.mp4"} {
-		matches, _ := filepath.Glob(filepath.Join(session.segmentsDir, entry))
-		for _, m := range matches {
-			_ = os.Remove(m)
-		}
-	}
+	cleanupContinuousSessionFiles(filepath.Dir(session.segmentsDir), session.segmentsDir)
 	session.started = true
 	session.lastErr = nil
 	go a.runContinuousSession(session)
@@ -418,7 +415,7 @@ func (a *StreamlinkCaptureAdapter) runContinuousSession(session *continuousCaptu
 		"-c", "copy",
 		"-f", "segment",
 		"-segment_format", "mp4",
-		"-segment_time", formatStreamlinkDurationArg(a.cfg.CaptureTimeout),
+		"-segment_time", formatStreamlinkDurationArg(continuousCaptureSegmentUnit),
 		"-segment_start_number", "1",
 		"-reset_timestamps", "1",
 		"-movflags", "+faststart",
@@ -466,6 +463,99 @@ func (a *StreamlinkCaptureAdapter) setSessionError(streamerID string, err error)
 	}
 	session.lastErr = err
 	session.started = false
+}
+
+func continuousSegmentCount(duration time.Duration) int {
+	if duration <= 0 {
+		duration = defaultStreamlinkCaptureTimeout
+	}
+	count := int(duration.Round(time.Second) / continuousCaptureSegmentUnit)
+	if count <= 0 {
+		count = 1
+	}
+	return count
+}
+
+func continuousSegmentPaths(segmentsDir string, startIndex, count int) ([]string, bool) {
+	if count <= 0 {
+		count = 1
+	}
+	paths := make([]string, 0, count)
+	for idx := startIndex; idx < startIndex+count; idx++ {
+		path := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", idx))
+		info, err := os.Stat(path)
+		if err != nil || info.Size() <= 0 {
+			return paths, false
+		}
+		paths = append(paths, path)
+	}
+	return paths, true
+}
+
+func (a *StreamlinkCaptureAdapter) assembleContinuousChunk(ctx context.Context, session *continuousCaptureSession, startIndex int, segmentPaths []string, copyOnly bool) (string, error) {
+	if len(segmentPaths) == 0 {
+		return "", ErrStreamlinkNoData
+	}
+	endIndex := startIndex + len(segmentPaths) - 1
+	chunkName := fmt.Sprintf("%09d.mp4", startIndex)
+	if len(segmentPaths) > 1 {
+		chunkName = fmt.Sprintf("%09d-%09d.mp4", startIndex, endIndex)
+	}
+	chunkPath := filepath.Join(filepath.Dir(session.segmentsDir), chunkName)
+	if len(segmentPaths) == 1 {
+		if copyOnly {
+			if err := copyFile(segmentPaths[0], chunkPath); err != nil {
+				return "", err
+			}
+			cleanupContinuousSegments(segmentPaths)
+		} else if err := os.Rename(segmentPaths[0], chunkPath); err != nil {
+			return "", err
+		}
+		return chunkPath, nil
+	}
+
+	listPath := filepath.Join(session.segmentsDir, fmt.Sprintf("concat_%09d_%09d.txt", startIndex, endIndex))
+	var list strings.Builder
+	for _, segmentPath := range segmentPaths {
+		list.WriteString("file '")
+		list.WriteString(strings.ReplaceAll(segmentPath, "'", "'\\''"))
+		list.WriteString("'\n")
+	}
+	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
+		return "", err
+	}
+	defer os.Remove(listPath) //nolint:errcheck
+
+	var stderr strings.Builder
+	args := []string{"-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", chunkPath}
+	if err := a.runner.Run(ctx, io.Discard, &stderr, a.cfg.FFmpegBinary, args...); err != nil {
+		_ = os.Remove(chunkPath)
+		return "", fmt.Errorf("ffmpeg concat continuous segments failed: %w (stderr=%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	cleanupContinuousSegments(segmentPaths)
+	return chunkPath, nil
+}
+
+func cleanupContinuousSegments(segmentPaths []string) {
+	for _, segmentPath := range segmentPaths {
+		_ = os.Remove(segmentPath)
+	}
+}
+
+func cleanupContinuousSessionFiles(streamerDir, segmentsDir string) {
+	for _, pattern := range []string{
+		filepath.Join(segmentsDir, "*.ts"),
+		filepath.Join(segmentsDir, "*.mp4"),
+		filepath.Join(segmentsDir, "concat_*.txt"),
+		filepath.Join(streamerDir, "*.ts"),
+		filepath.Join(streamerDir, "*.mp4"),
+		filepath.Join(streamerDir, "concat_*.txt"),
+	} {
+		matches, _ := filepath.Glob(pattern)
+		for _, match := range matches {
+			_ = os.Remove(match)
+		}
+	}
 }
 
 func formatStreamlinkDurationArg(value time.Duration) string {

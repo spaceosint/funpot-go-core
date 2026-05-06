@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -196,12 +197,12 @@ func TestNewStreamlinkCaptureAdapterKeepsConfiguredCaptureTimeout(t *testing.T) 
 	}
 }
 
-func TestNewStreamlinkCaptureAdapterDisablesContinuousModeForDefaultRunner(t *testing.T) {
+func TestNewStreamlinkCaptureAdapterEnablesContinuousModeForDefaultRunner(t *testing.T) {
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
 		OutputDir: t.TempDir(),
 	}, nil, nil)
-	if adapter.continuous {
-		t.Fatalf("expected non-continuous mode for default runner")
+	if !adapter.continuous {
+		t.Fatalf("expected continuous mode for default runner")
 	}
 }
 
@@ -317,6 +318,42 @@ func TestFFmpegChunkNormalizerRemuxesTSChunksToMP4(t *testing.T) {
 	}
 }
 
+func TestCleanupContinuousSessionFilesRemovesStaleLocalArtifacts(t *testing.T) {
+	streamerDir := t.TempDir()
+	segmentsDir := filepath.Join(streamerDir, "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	staleFiles := []string{
+		filepath.Join(streamerDir, "000000001-000000003.mp4"),
+		filepath.Join(streamerDir, "old.ts"),
+		filepath.Join(streamerDir, "concat_old.txt"),
+		filepath.Join(segmentsDir, "000000001.mp4"),
+		filepath.Join(segmentsDir, "old.ts"),
+		filepath.Join(segmentsDir, "concat_old.txt"),
+	}
+	for _, path := range staleFiles {
+		if err := os.WriteFile(path, []byte("stale"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", path, err)
+		}
+	}
+	keepPath := filepath.Join(streamerDir, "keep.json")
+	if err := os.WriteFile(keepPath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("WriteFile(keep) error = %v", err)
+	}
+
+	cleanupContinuousSessionFiles(streamerDir, segmentsDir)
+
+	for _, path := range staleFiles {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected stale artifact %s to be removed, err=%v", path, err)
+		}
+	}
+	if _, err := os.Stat(keepPath); err != nil {
+		t.Fatalf("expected unrelated file to remain, err=%v", err)
+	}
+}
+
 func TestNormalizeStreamlinkQualityPrefers1080p(t *testing.T) {
 	for _, input := range []string{"", "best", " BEST "} {
 		if got := normalizeStreamlinkQuality(input); got != defaultPreferredStreamQuality {
@@ -356,7 +393,7 @@ func TestStreamlinkCaptureAdapterContinuousAcceptsStableSegmentWithoutNextChunk(
 		started:     true,
 	}
 
-	chunk, err := adapter.captureContinuous(context.Background(), "str_live", 30*time.Second)
+	chunk, err := adapter.captureContinuous(context.Background(), "str_live", time.Second)
 	if err != nil {
 		t.Fatalf("captureContinuous() error = %v", err)
 	}
@@ -366,8 +403,78 @@ func TestStreamlinkCaptureAdapterContinuousAcceptsStableSegmentWithoutNextChunk(
 	if filepath.Base(chunk.Reference) != "000000001.mp4" {
 		t.Fatalf("chunk path = %q, want renamed stable segment", chunk.Reference)
 	}
-	if _, err := os.Stat(segmentPath); err != nil {
-		t.Fatalf("expected source segment to remain for in-progress writer, err=%v", err)
+	if _, err := os.Stat(segmentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected consumed source segment to be removed, err=%v", err)
+	}
+}
+
+func TestStreamlinkCaptureAdapterContinuousUsesRequestedDurationWithoutSkippingSegments(t *testing.T) {
+	outDir := t.TempDir()
+	runner := &fakeCommandRunner{}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir:    outDir,
+		FFmpegBinary: "ffmpeg-bin",
+	}, nil, runner)
+
+	segmentsDir := filepath.Join(outDir, "str_live", "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	for i := 1; i <= 6; i++ {
+		segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", i))
+		if err := os.WriteFile(segmentPath, []byte(fmt.Sprintf("segment-%d", i)), 0o644); err != nil {
+			t.Fatalf("WriteFile(%d) error = %v", i, err)
+		}
+	}
+
+	adapter.sessions["str_live"] = &continuousCaptureSession{
+		streamerID:  "str_live",
+		channel:     "live_channel",
+		segmentsDir: segmentsDir,
+		nextIndex:   1,
+		started:     true,
+	}
+
+	first, err := adapter.captureContinuous(context.Background(), "str_live", 3*time.Second)
+	if err != nil {
+		t.Fatalf("first captureContinuous() error = %v", err)
+	}
+	if filepath.Base(first.Reference) != "000000001-000000003.mp4" {
+		t.Fatalf("first chunk path = %q", first.Reference)
+	}
+	if adapter.sessions["str_live"].nextIndex != 4 {
+		t.Fatalf("nextIndex after first capture = %d, want 4", adapter.sessions["str_live"].nextIndex)
+	}
+
+	second, err := adapter.captureContinuous(context.Background(), "str_live", 2*time.Second)
+	if err != nil {
+		t.Fatalf("second captureContinuous() error = %v", err)
+	}
+	if filepath.Base(second.Reference) != "000000004-000000005.mp4" {
+		t.Fatalf("second chunk path = %q", second.Reference)
+	}
+	if adapter.sessions["str_live"].nextIndex != 6 {
+		t.Fatalf("nextIndex after second capture = %d, want 6", adapter.sessions["str_live"].nextIndex)
+	}
+
+	for i := 1; i <= 5; i++ {
+		segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", i))
+		if _, err := os.Stat(segmentPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected consumed segment %d to be removed, err=%v", i, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(segmentsDir, "000000006.mp4")); err != nil {
+		t.Fatalf("expected unused segment 6 to remain, err=%v", err)
+	}
+
+	if len(runner.argsHistory) != 2 {
+		t.Fatalf("ffmpeg concat invocations = %d, want 2", len(runner.argsHistory))
+	}
+	for _, args := range runner.argsHistory {
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-f concat") || !strings.Contains(joined, "-c copy") {
+			t.Fatalf("expected concat demuxer with stream copy, got %q", joined)
+		}
 	}
 }
 
