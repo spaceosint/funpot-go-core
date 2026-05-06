@@ -1856,7 +1856,7 @@ func NewHandler(
 					writeError(w, http.StatusBadRequest, "invalid request body")
 					return
 				}
-				_, balanceAfterVote, err := walletService.Post(wallet.PostRequest{
+				walletEntry, balanceAfterVote, err := walletService.Post(wallet.PostRequest{
 					UserID:         claims.Subject,
 					Type:           wallet.EntryTypeDebit,
 					Amount:         req.AmountINT,
@@ -1883,6 +1883,7 @@ func NewHandler(
 					OptionID:       req.OptionID,
 					Amount:         req.AmountINT,
 					IdempotencyKey: idempotencyKey,
+					WalletLedgerID: strings.TrimSpace(walletEntry.ID),
 				})
 				if err != nil {
 					switch {
