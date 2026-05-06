@@ -517,8 +517,12 @@ func (a *StreamlinkCaptureAdapter) assembleContinuousChunk(ctx context.Context, 
 	listPath := filepath.Join(session.segmentsDir, fmt.Sprintf("concat_%09d_%09d.txt", startIndex, endIndex))
 	var list strings.Builder
 	for _, segmentPath := range segmentPaths {
+		concatSegmentPath, err := filepath.Abs(segmentPath)
+		if err != nil {
+			return "", err
+		}
 		list.WriteString("file '")
-		list.WriteString(strings.ReplaceAll(segmentPath, "'", "'\\''"))
+		list.WriteString(strings.ReplaceAll(concatSegmentPath, "'", "'\\''"))
 		list.WriteString("'\n")
 	}
 	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
