@@ -334,26 +334,7 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		}
 
 		segmentPaths, segmentsReady := continuousSegmentPaths(session.segmentsDir, targetIndex, segmentCount)
-		nextSegmentPath := filepath.Join(session.segmentsDir, fmt.Sprintf("%09d.mp4", lastIndex+1))
-		nextInfo, nextErr := os.Stat(nextSegmentPath)
-		segmentFinalized := nextErr == nil && nextInfo.Size() > 0
-		finalizedByStability := false
-		if !segmentFinalized && segmentCount == 1 && segmentsReady {
-			info, statErr := os.Stat(segmentPaths[0])
-			if statErr == nil && info.Size() > 0 {
-				if info.Size() != lastObservedSize {
-					lastObservedSize = info.Size()
-					lastSizeChangedAt = time.Now()
-				}
-				stableByObservedSize := !lastSizeChangedAt.IsZero() && time.Since(lastSizeChangedAt) >= continuousSegmentStabilityWindow
-				stableByModTime := time.Since(info.ModTime()) >= continuousSegmentStabilityWindow
-				nearDeadline := time.Until(deadline) <= continuousSegmentStabilityWindow
-				if stableByObservedSize && stableByModTime && nearDeadline {
-					segmentFinalized = true
-					finalizedByStability = true
-				}
-			}
-		}
+		segmentFinalized, finalizedByStability := a.continuousSegmentRangeFinalized(session.segmentsDir, segmentPaths, lastIndex, segmentsReady, &lastObservedSize, &lastSizeChangedAt)
 		if segmentsReady && segmentFinalized {
 			chunkPath, err := a.assembleContinuousChunk(ctx, session, targetIndex, segmentPaths, finalizedByStability)
 			if err != nil {
@@ -372,6 +353,34 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func (a *StreamlinkCaptureAdapter) continuousSegmentRangeFinalized(segmentsDir string, segmentPaths []string, lastIndex int, segmentsReady bool, lastObservedSize *int64, lastSizeChangedAt *time.Time) (bool, bool) {
+	nextSegmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", lastIndex+1))
+	nextInfo, nextErr := os.Stat(nextSegmentPath)
+	if nextErr == nil && nextInfo.Size() > 0 {
+		return true, false
+	}
+	if !segmentsReady || len(segmentPaths) == 0 {
+		return false, false
+	}
+
+	lastSegmentPath := segmentPaths[len(segmentPaths)-1]
+	info, statErr := os.Stat(lastSegmentPath)
+	if statErr != nil || info.Size() <= 0 {
+		return false, false
+	}
+	previousObservedSize := *lastObservedSize
+	if info.Size() != *lastObservedSize {
+		*lastObservedSize = info.Size()
+		*lastSizeChangedAt = time.Now()
+	}
+	stableByObservedSize := !lastSizeChangedAt.IsZero() && time.Since(*lastSizeChangedAt) >= continuousSegmentStabilityWindow
+	stableByModTime := time.Since(info.ModTime()) >= continuousSegmentStabilityWindow
+	if stableByModTime && (stableByObservedSize || previousObservedSize < 0) {
+		return true, true
+	}
+	return false, false
 }
 
 func (a *StreamlinkCaptureAdapter) ensureContinuousSession(streamerID, channel string) (*continuousCaptureSession, error) {

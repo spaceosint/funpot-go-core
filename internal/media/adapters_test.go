@@ -502,6 +502,49 @@ func TestStreamlinkCaptureAdapterContinuousUsesRequestedDurationWithoutSkippingS
 	}
 }
 
+func TestStreamlinkCaptureAdapterContinuousAssemblesStableRangeWithoutNextSegment(t *testing.T) {
+	outDir := t.TempDir()
+	runner := &fakeCommandRunner{}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir:    outDir,
+		FFmpegBinary: "ffmpeg-bin",
+	}, nil, runner)
+
+	segmentsDir := filepath.Join(outDir, "str_live", "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	past := time.Now().Add(-2 * continuousSegmentStabilityWindow)
+	for i := 1; i <= 3; i++ {
+		segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", i))
+		if err := os.WriteFile(segmentPath, []byte(fmt.Sprintf("segment-%d", i)), 0o644); err != nil {
+			t.Fatalf("WriteFile(%d) error = %v", i, err)
+		}
+		if err := os.Chtimes(segmentPath, past, past); err != nil {
+			t.Fatalf("Chtimes(%d) error = %v", i, err)
+		}
+	}
+
+	adapter.sessions["str_live"] = &continuousCaptureSession{
+		streamerID:  "str_live",
+		channel:     "live_channel",
+		segmentsDir: segmentsDir,
+		nextIndex:   1,
+		started:     true,
+	}
+
+	chunk, err := adapter.captureContinuous(context.Background(), "str_live", 3*time.Second)
+	if err != nil {
+		t.Fatalf("captureContinuous() error = %v", err)
+	}
+	if filepath.Base(chunk.Reference) != "000000001-000000003.mp4" {
+		t.Fatalf("chunk path = %q", chunk.Reference)
+	}
+	if adapter.sessions["str_live"].nextIndex != 4 {
+		t.Fatalf("nextIndex after capture = %d, want 4", adapter.sessions["str_live"].nextIndex)
+	}
+}
+
 func TestStreamlinkCaptureAdapterContinuousConcatListUsesAbsoluteSegmentPaths(t *testing.T) {
 	chdirForTest(t, t.TempDir())
 	outDir := filepath.Join("tmp", "stream_chunks")
