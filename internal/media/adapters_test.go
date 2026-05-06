@@ -32,6 +32,7 @@ type fakeCommandRunner struct {
 	lastArgs     []string
 	names        []string
 	argsHistory  [][]string
+	concatInputs []string
 	runFn        func(name string, args ...string) error
 	runWithIOFn  func(stdout io.Writer, stderr io.Writer, name string, args ...string) error
 }
@@ -54,7 +55,11 @@ func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.W
 	if strings.Contains(name, "ffmpeg") && len(args) > 0 {
 		outputPath := args[len(args)-1]
 		inputPath := ""
+		isConcat := false
 		for i := 0; i < len(args)-1; i++ {
+			if args[i] == "-f" && i+1 < len(args) && args[i+1] == "concat" {
+				isConcat = true
+			}
 			if args[i] == "-i" && i+1 < len(args) {
 				inputPath = args[i+1]
 				break
@@ -63,6 +68,9 @@ func (f *fakeCommandRunner) Run(_ context.Context, stdout io.Writer, stderr io.W
 		data, err := os.ReadFile(inputPath)
 		if err != nil {
 			return err
+		}
+		if isConcat {
+			f.concatInputs = append(f.concatInputs, string(data))
 		}
 		return os.WriteFile(outputPath, data, 0o644)
 	}
@@ -474,6 +482,51 @@ func TestStreamlinkCaptureAdapterContinuousUsesRequestedDurationWithoutSkippingS
 		joined := strings.Join(args, " ")
 		if !strings.Contains(joined, "-f concat") || !strings.Contains(joined, "-c copy") {
 			t.Fatalf("expected concat demuxer with stream copy, got %q", joined)
+		}
+	}
+}
+
+func TestStreamlinkCaptureAdapterContinuousConcatListUsesAbsoluteSegmentPaths(t *testing.T) {
+	t.Chdir(t.TempDir())
+	outDir := filepath.Join("tmp", "stream_chunks")
+	runner := &fakeCommandRunner{}
+	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
+		OutputDir:    outDir,
+		FFmpegBinary: "ffmpeg-bin",
+	}, nil, runner)
+
+	segmentsDir := filepath.Join(outDir, "str_live", "live_segments")
+	if err := os.MkdirAll(segmentsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	for i := 1; i <= 3; i++ {
+		segmentPath := filepath.Join(segmentsDir, fmt.Sprintf("%09d.mp4", i))
+		if err := os.WriteFile(segmentPath, []byte(fmt.Sprintf("segment-%d", i)), 0o644); err != nil {
+			t.Fatalf("WriteFile(%d) error = %v", i, err)
+		}
+	}
+
+	adapter.sessions["str_live"] = &continuousCaptureSession{
+		streamerID:  "str_live",
+		channel:     "live_channel",
+		segmentsDir: segmentsDir,
+		nextIndex:   1,
+		started:     true,
+	}
+
+	if _, err := adapter.captureContinuous(context.Background(), "str_live", 2*time.Second); err != nil {
+		t.Fatalf("captureContinuous() error = %v", err)
+	}
+	if len(runner.concatInputs) != 1 {
+		t.Fatalf("concat inputs = %d, want 1", len(runner.concatInputs))
+	}
+	for _, line := range strings.Split(strings.TrimSpace(runner.concatInputs[0]), "\n") {
+		path := strings.TrimSuffix(strings.TrimPrefix(line, "file '"), "'")
+		if !filepath.IsAbs(path) {
+			t.Fatalf("concat segment path = %q, want absolute path", path)
+		}
+		if strings.Contains(path, filepath.Join("live_segments", outDir)) {
+			t.Fatalf("concat segment path repeats the relative output directory: %q", path)
 		}
 	}
 }
