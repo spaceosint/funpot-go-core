@@ -560,6 +560,22 @@ func TestWorkerProcessStreamerSkipsAdBreakWithoutFailingCycle(t *testing.T) {
 	}
 }
 
+func TestWorkerProcessStreamerSkipsNoDataWithoutFailingCycle(t *testing.T) {
+	runStore := &countingRunStore{}
+	worker := NewWorker(&fakeCapture{err: ErrStreamlinkNoData}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})
+
+	got, err := worker.ProcessStreamer(context.Background(), "str-nodata")
+	if err != nil {
+		t.Fatalf("ProcessStreamer() error = %v", err)
+	}
+	if got != (streamers.LLMDecision{}) {
+		t.Fatalf("expected zero decision when no stream data is ready, got %#v", got)
+	}
+	if runStore.count != 0 {
+		t.Fatalf("expected no-data capture to skip run creation, got %d runs", runStore.count)
+	}
+}
+
 func TestWorkerProcessStreamerSkipsEndedStreamWithoutFailingCycle(t *testing.T) {
 	runStore := &countingRunStore{}
 	worker := NewWorker(&fakeCapture{err: ErrStreamlinkStreamEnded}, fakeClassifier{}, fakePromptResolver{prompts: []prompts.PromptVersion{{Stage: "custom", Position: 1, IsActive: true, Template: "x", Model: "gemini", MaxTokens: 1, TimeoutMS: 1}}}, runStore, &fakeDecisionStore{}, NewInMemoryLocker(), WorkerConfig{MinConfidence: 0.5})

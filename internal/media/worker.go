@@ -277,6 +277,11 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 			w.metrics.recordCycle(ctx, id, "ad_break")
 			return streamers.LLMDecision{}, nil
 		}
+		if errors.Is(err, ErrStreamlinkNoData) {
+			logger.Warn("stream chunk capture skipped because no continuous stream data is ready", zap.String("streamerID", id), zap.Error(err))
+			w.metrics.recordCycle(ctx, id, "no_data")
+			return streamers.LLMDecision{}, nil
+		}
 		if errors.Is(err, ErrStreamlinkStreamEnded) {
 			if finalizer, ok := w.chunkPublisher.(ChunkFinalizer); ok {
 				if finalizeErr := finalizer.Finalize(ctx, id, time.Now().UTC()); finalizeErr != nil {
