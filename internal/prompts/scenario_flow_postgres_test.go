@@ -19,10 +19,10 @@ func TestPostgresScenarioPackageStoreCreate(t *testing.T) {
 	store := NewPostgresScenarioPackageStore(db)
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE game_slug = $1`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE game_slug = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(1))
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE game_slug = $1)`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE game_slug = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package'))`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(regexp.QuoteMeta(`
@@ -90,7 +90,7 @@ func TestPostgresScenarioPackageStoreGetActiveByGameSlug(t *testing.T) {
 SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
-WHERE game_slug = $1 AND is_active = TRUE
+WHERE game_slug = $1 AND is_active = TRUE AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')
 LIMIT 1`)).
 		WithArgs("global").
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -129,6 +129,7 @@ func TestPostgresScenarioPackageStoreList(t *testing.T) {
 SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
+WHERE (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')
 ORDER BY game_slug ASC, version DESC, created_at DESC`)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "name", "version", "game_slug", "model_config_id", "is_active",

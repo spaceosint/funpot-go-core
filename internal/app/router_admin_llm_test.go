@@ -300,6 +300,21 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 		t.Fatalf("expected created id, got %#v", created)
 	}
 
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/game-scenarios", nil)
+	listReq.Header.Set("Authorization", "Bearer "+adminToken)
+	listRes := httptest.NewRecorder()
+	handler.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("game scenario list status=%d body=%s", listRes.Code, listRes.Body.String())
+	}
+	var listed []map[string]any
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode game scenario list: %v", err)
+	}
+	if len(listed) != 1 || listed[0]["id"] != id || listed[0]["gameSlug"] != "cs2" {
+		t.Fatalf("expected created game scenario in list, got %#v", listed)
+	}
+
 	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/llm/game-scenarios/"+id, nil)
 	getReq.Header.Set("Authorization", "Bearer "+adminToken)
 	getRes := httptest.NewRecorder()
