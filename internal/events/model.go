@@ -72,4 +72,5 @@ type VoteRequest struct {
 	OptionID       string
 	Amount         int64
 	IdempotencyKey string
+	WalletLedgerID string
 }

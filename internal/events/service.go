@@ -108,7 +108,7 @@ func (s *Service) WithRedisLiveState(client redis.Cmdable, ttl time.Duration) {
 	s.liveTTL = ttl
 }
 
-func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest) (LiveEvent, error) {
+func (s *Service) CreateLiveEvent(ctx context.Context, req CreateLiveEventRequest) (LiveEvent, error) {
 	if strings.TrimSpace(req.StreamerID) == "" || strings.TrimSpace(req.ScenarioID) == "" || strings.TrimSpace(req.TerminalID) == "" {
 		return LiveEvent{}, ErrInvalidEvent
 	}
@@ -123,6 +123,13 @@ func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest)
 		req.Duration = 5 * time.Minute
 	}
 	templateID := strings.TrimSpace(req.StreamerID) + ":" + strings.TrimSpace(req.TerminalID)
+	if s.db != nil {
+		if existing, ok, err := s.findActiveEventByTemplateDB(ctx, strings.TrimSpace(req.StreamerID), templateID, now); err != nil {
+			return LiveEvent{}, err
+		} else if ok {
+			return existing, ErrAlreadyActive
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, item := range s.items {
@@ -157,8 +164,14 @@ func (s *Service) CreateLiveEvent(_ context.Context, req CreateLiveEventRequest)
 		userVotes:      map[string]voteRecord{},
 	}
 	s.items[event.ID] = state
+	if s.db != nil {
+		if err := s.insertLiveEventDB(ctx, event, now); err != nil {
+			delete(s.items, event.ID)
+			return LiveEvent{}, err
+		}
+	}
 	if s.redis != nil {
-		_ = s.persistLiveState(context.Background(), event)
+		_ = s.persistLiveState(ctx, event)
 	}
 	return event, nil
 }
@@ -383,13 +396,19 @@ func (s *Service) rollbackWeeklyRewardClaimDB(userID string, claimedAt string) {
 	_ = tx.Commit()
 }
 
-func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []LiveEvent {
+func (s *Service) ListLiveByStreamer(ctx context.Context, streamerID string) []LiveEvent {
 	if s.redis != nil {
-		if event, ok := s.readActiveEventFromRedis(context.Background(), streamerID); ok {
+		if event, ok := s.readActiveEventFromRedis(ctx, streamerID); ok {
 			now := time.Now().UTC()
 			if isOpen(event, now) {
 				return []LiveEvent{event}
 			}
+		}
+	}
+	if s.db != nil {
+		if items, err := s.listOpenEventsByStreamerDB(ctx, strings.TrimSpace(streamerID), time.Now().UTC()); err == nil && len(items) > 0 {
+			s.cacheLoadedEvents(items)
+			return items
 		}
 	}
 	s.mu.RLock()
@@ -411,9 +430,30 @@ func (s *Service) ListLiveByStreamer(_ context.Context, streamerID string) []Liv
 	return result
 }
 
-func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
+func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) {
 	if strings.TrimSpace(req.EventID) == "" || strings.TrimSpace(req.StreamerID) == "" || strings.TrimSpace(req.UserID) == "" || strings.TrimSpace(req.OptionID) == "" || req.Amount <= 0 || strings.TrimSpace(req.IdempotencyKey) == "" {
 		return LiveEvent{}, ErrInvalidVote
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s.db != nil {
+		if strings.TrimSpace(req.WalletLedgerID) == "" {
+			return LiveEvent{}, ErrInvalidVote
+		}
+		if existing, ok, err := s.findVoteByIdempotencyDB(ctx, strings.TrimSpace(req.IdempotencyKey)); err != nil {
+			return LiveEvent{}, err
+		} else if ok {
+			if event, ok, err := s.loadLiveEventDB(ctx, strings.TrimSpace(existing.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+				return LiveEvent{}, err
+			} else if ok {
+				event.UserVote = &UserVote{OptionID: existing.OptionID, TotalAmount: existing.Amount}
+				return event, nil
+			}
+		}
+		if err := s.ensureLiveEventLoaded(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+			return LiveEvent{}, err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -454,8 +494,13 @@ func (s *Service) Vote(_ context.Context, req VoteRequest) (LiveEvent, error) {
 	userVote.Amount += req.Amount
 	item.userVotes[strings.TrimSpace(req.UserID)] = userVote
 	item.processedVotes[strings.TrimSpace(req.IdempotencyKey)] = voteRecord{OptionID: optionID, Amount: req.Amount}
+	if s.db != nil {
+		if err := s.persistVoteDB(ctx, item.event, req, optionID); err != nil {
+			return LiveEvent{}, err
+		}
+	}
 	if s.redis != nil {
-		_ = s.persistLiveState(context.Background(), item.event)
+		_ = s.persistLiveState(ctx, item.event)
 	}
 	optionPool := item.event.Totals[optionID]
 	coefficient := calculateCoefficient(item.event.DistributableINT, optionPool)
@@ -527,6 +572,256 @@ func (s *Service) readActiveEventFromRedis(ctx context.Context, streamerID strin
 		return LiveEvent{}, false
 	}
 	return event, true
+}
+
+type dbVoteRecord struct {
+	EventID  string
+	OptionID string
+	Amount   int64
+}
+
+func (s *Service) findActiveEventByTemplateDB(ctx context.Context, streamerID, templateID string, now time.Time) (LiveEvent, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+	SELECT id, streamer_id, scenario_id, template_id, transition_id, terminal_id,
+	       title_json, options_json, final_totals_json, status, opened_at, closes_at, metadata
+	FROM live_event_history
+	WHERE streamer_id = $1 AND template_id = $2 AND status = 'open' AND (closes_at IS NULL OR closes_at > $3)
+	ORDER BY opened_at DESC
+	LIMIT 1`, streamerID, templateID, now)
+	if err != nil {
+		return LiveEvent{}, false, err
+	}
+	defer rows.Close() //nolint:errcheck
+	items, err := scanLiveEventRows(rows)
+	if err != nil {
+		return LiveEvent{}, false, err
+	}
+	if len(items) == 0 {
+		return LiveEvent{}, false, nil
+	}
+	return items[0], true, nil
+}
+
+func (s *Service) insertLiveEventDB(ctx context.Context, event LiveEvent, openedAt time.Time) error {
+	titleJSON, err := json.Marshal(event.Title)
+	if err != nil {
+		return err
+	}
+	optionsJSON, err := json.Marshal(event.Options)
+	if err != nil {
+		return err
+	}
+	totalsJSON, err := json.Marshal(event.Totals)
+	if err != nil {
+		return err
+	}
+	metadataJSON, err := json.Marshal(map[string]any{"defaultLanguage": event.DefaultLanguage})
+	if err != nil {
+		return err
+	}
+	closesAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(event.ClosesAt))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+	INSERT INTO live_event_history (
+		id, streamer_id, scenario_id, source, template_id, transition_id, terminal_id,
+		title_json, options_json, final_totals_json, status, opened_at, closes_at, metadata
+	)
+	VALUES ($1, $2, $3, 'llm', $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13::jsonb)`,
+		event.ID, event.StreamerID, nullableUUID(event.ScenarioID), event.TemplateID, event.TransitionID, event.TerminalID,
+		string(titleJSON), string(optionsJSON), string(totalsJSON), event.Status, openedAt, closesAt, string(metadataJSON),
+	)
+	return err
+}
+
+func (s *Service) listOpenEventsByStreamerDB(ctx context.Context, streamerID string, now time.Time) ([]LiveEvent, error) {
+	if streamerID == "" {
+		return []LiveEvent{}, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+	SELECT id, streamer_id, scenario_id, template_id, transition_id, terminal_id,
+	       title_json, options_json, final_totals_json, status, opened_at, closes_at, metadata
+	FROM live_event_history
+	WHERE streamer_id = $1 AND status = 'open' AND (closes_at IS NULL OR closes_at > $2)
+	ORDER BY opened_at DESC`, streamerID, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+	return scanLiveEventRows(rows)
+}
+
+func (s *Service) loadLiveEventDB(ctx context.Context, eventID, streamerID string) (LiveEvent, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+	SELECT id, streamer_id, scenario_id, template_id, transition_id, terminal_id,
+	       title_json, options_json, final_totals_json, status, opened_at, closes_at, metadata
+	FROM live_event_history
+	WHERE id = $1 AND streamer_id = $2
+	LIMIT 1`, eventID, streamerID)
+	if err != nil {
+		return LiveEvent{}, false, err
+	}
+	defer rows.Close() //nolint:errcheck
+	items, err := scanLiveEventRows(rows)
+	if err != nil {
+		return LiveEvent{}, false, err
+	}
+	if len(items) == 0 {
+		return LiveEvent{}, false, nil
+	}
+	return items[0], true, nil
+}
+
+func (s *Service) ensureLiveEventLoaded(ctx context.Context, eventID, streamerID string) error {
+	s.mu.RLock()
+	item, ok := s.items[eventID]
+	s.mu.RUnlock()
+	if ok && item.event.StreamerID == streamerID {
+		return nil
+	}
+	event, found, err := s.loadLiveEventDB(ctx, eventID, streamerID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrEventNotFound
+	}
+	s.cacheLoadedEvents([]LiveEvent{event})
+	return nil
+}
+
+func (s *Service) cacheLoadedEvents(events []LiveEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, event := range events {
+		copyEvent := event
+		if copyEvent.Totals == nil {
+			copyEvent.Totals = map[string]int64{}
+		}
+		if existing, ok := s.items[copyEvent.ID]; ok {
+			existing.event = copyEvent
+			continue
+		}
+		s.items[copyEvent.ID] = &liveEventState{event: copyEvent, processedVotes: map[string]voteRecord{}, userVotes: map[string]voteRecord{}}
+	}
+}
+
+func (s *Service) findVoteByIdempotencyDB(ctx context.Context, idempotencyKey string) (dbVoteRecord, bool, error) {
+	var rec dbVoteRecord
+	err := s.db.QueryRowContext(ctx, `SELECT event_id, option_id, amount_int FROM live_event_vote_history WHERE idempotency_key = $1`, idempotencyKey).Scan(&rec.EventID, &rec.OptionID, &rec.Amount)
+	if err == nil {
+		return rec, true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return dbVoteRecord{}, false, nil
+	}
+	return dbVoteRecord{}, false, err
+}
+
+func (s *Service) persistVoteDB(ctx context.Context, event LiveEvent, req VoteRequest, optionID string) error {
+	totalsJSON, err := json.Marshal(event.Totals)
+	if err != nil {
+		return err
+	}
+	metadataJSON, err := json.Marshal(map[string]any{
+		"totalContributed": event.TotalContributed,
+		"platformFeeINT":   event.PlatformFeeINT,
+		"distributableINT": event.DistributableINT,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE live_event_history SET final_totals_json = $2::jsonb, metadata = metadata || $3::jsonb, updated_at = NOW() WHERE id = $1`, event.ID, string(totalsJSON), string(metadataJSON)); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+	INSERT INTO live_event_vote_history (event_id, user_id, option_id, amount_int, wallet_ledger_id, idempotency_key, metadata)
+	VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+		event.ID, strings.TrimSpace(req.UserID), optionID, req.Amount, strings.TrimSpace(req.WalletLedgerID), strings.TrimSpace(req.IdempotencyKey), string(metadataJSON),
+	)
+	return err
+}
+
+func scanLiveEventRows(rows *sql.Rows) ([]LiveEvent, error) {
+	items := make([]LiveEvent, 0)
+	for rows.Next() {
+		var event LiveEvent
+		var scenarioID sql.NullString
+		var titleRaw, optionsRaw, totalsRaw, metadataRaw []byte
+		var openedAt time.Time
+		var closesAt sql.NullTime
+		if err := rows.Scan(&event.ID, &event.StreamerID, &scenarioID, &event.TemplateID, &event.TransitionID, &event.TerminalID, &titleRaw, &optionsRaw, &totalsRaw, &event.Status, &openedAt, &closesAt, &metadataRaw); err != nil {
+			return nil, err
+		}
+		if scenarioID.Valid {
+			event.ScenarioID = scenarioID.String
+		}
+		if len(titleRaw) > 0 {
+			_ = json.Unmarshal(titleRaw, &event.Title)
+		}
+		if len(optionsRaw) > 0 {
+			_ = json.Unmarshal(optionsRaw, &event.Options)
+		}
+		if len(totalsRaw) > 0 {
+			_ = json.Unmarshal(totalsRaw, &event.Totals)
+		}
+		metadata := map[string]any{}
+		if len(metadataRaw) > 0 {
+			_ = json.Unmarshal(metadataRaw, &metadata)
+		}
+		event.DefaultLanguage = stringValue(metadata["defaultLanguage"])
+		event.TotalContributed = int64Value(metadata["totalContributed"])
+		event.PlatformFeeINT = int64Value(metadata["platformFeeINT"])
+		event.DistributableINT = int64Value(metadata["distributableINT"])
+		event.CreatedAt = openedAt.UTC().Format(time.RFC3339Nano)
+		if closesAt.Valid {
+			event.ClosesAt = closesAt.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if event.Totals == nil {
+			event.Totals = map[string]int64{}
+		}
+		items = append(items, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func nullableUUID(id string) any {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	return strings.TrimSpace(id)
+}
+
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func int64Value(value any) int64 {
+	switch typed := value.(type) {
+	case nil:
+		return 0
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return parsed
+	default:
+		parsed, _ := strconv.ParseInt(fmt.Sprint(typed), 10, 64)
+		return parsed
+	}
 }
 
 func (s *Service) ListUserHistory(_ context.Context, userID string) []UserEventHistoryItem {

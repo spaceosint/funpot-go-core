@@ -2,8 +2,11 @@ package events
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestListLiveByStreamer(t *testing.T) {
@@ -211,5 +214,89 @@ func TestUpdateSettingsPersistsToStore(t *testing.T) {
 	}
 	if updated.VotePlatformFeePercent != 17 {
 		t.Fatalf("unexpected updated settings: %+v", updated)
+	}
+}
+
+func TestPostgresCreateLiveEventPersistsHistory(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	svc := NewPostgresService(db, nil)
+	activeRows := sqlmock.NewRows([]string{"id", "streamer_id", "scenario_id", "template_id", "transition_id", "terminal_id", "title_json", "options_json", "final_totals_json", "status", "opened_at", "closes_at", "metadata"})
+	mock.ExpectQuery("SELECT id, streamer_id, scenario_id, template_id").
+		WithArgs("00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000001:terminal-1", sqlmock.AnyArg()).
+		WillReturnRows(activeRows)
+	mock.ExpectExec("INSERT INTO live_event_history").
+		WithArgs(sqlmock.AnyArg(), "00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002", "00000000-0000-0000-0000-000000000001:terminal-1", "transition-1", "terminal-1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "open", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := svc.CreateLiveEvent(context.Background(), CreateLiveEventRequest{
+		StreamerID:      "00000000-0000-0000-0000-000000000001",
+		ScenarioID:      "00000000-0000-0000-0000-000000000002",
+		TransitionID:    "transition-1",
+		TerminalID:      "terminal-1",
+		Title:           map[string]string{"ru": "Победитель карты"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}},
+		Duration:        time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateLiveEvent() error = %v", err)
+	}
+	if created.TemplateID != "00000000-0000-0000-0000-000000000001:terminal-1" || created.Status != "open" {
+		t.Fatalf("unexpected created event: %+v", created)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet db expectations: %v", err)
+	}
+}
+
+func TestPostgresVotePersistsVoteHistoryAndTotals(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	eventID := "00000000-0000-0000-0000-000000000011"
+	streamerID := "00000000-0000-0000-0000-000000000012"
+	scenarioID := "00000000-0000-0000-0000-000000000013"
+	ledgerID := "00000000-0000-0000-0000-000000000014"
+	now := time.Now().UTC()
+	svc := NewPostgresService(db, nil)
+	mock.ExpectQuery("SELECT event_id, option_id, amount_int FROM live_event_vote_history").
+		WithArgs("vote-1").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT id, streamer_id, scenario_id, template_id").
+		WithArgs(eventID, streamerID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "streamer_id", "scenario_id", "template_id", "transition_id", "terminal_id", "title_json", "options_json", "final_totals_json", "status", "opened_at", "closes_at", "metadata"}).
+			AddRow(eventID, streamerID, scenarioID, streamerID+":terminal-1", "transition-1", "terminal-1", []byte(`{"ru":"Победитель карты"}`), []byte(`[{"id":"ct","title":{"ru":"CT"}}]`), []byte(`{"ct":0}`), "open", now, now.Add(time.Minute), []byte(`{"defaultLanguage":"ru"}`)))
+	mock.ExpectExec("UPDATE live_event_history SET final_totals_json").
+		WithArgs(eventID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO live_event_vote_history").
+		WithArgs(eventID, "00000000-0000-0000-0000-000000000015", "ct", int64(100), ledgerID, "vote-1", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	event, err := svc.Vote(context.Background(), VoteRequest{
+		EventID:        eventID,
+		StreamerID:     streamerID,
+		UserID:         "00000000-0000-0000-0000-000000000015",
+		OptionID:       "ct",
+		Amount:         100,
+		IdempotencyKey: "vote-1",
+		WalletLedgerID: ledgerID,
+	})
+	if err != nil {
+		t.Fatalf("Vote() error = %v", err)
+	}
+	if event.Totals["ct"] != 100 || event.TotalContributed != 100 {
+		t.Fatalf("unexpected vote totals: %+v", event)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet db expectations: %v", err)
 	}
 }
