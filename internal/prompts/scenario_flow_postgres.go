@@ -35,6 +35,7 @@ func (s *PostgresScenarioPackageStore) List(ctx context.Context) ([]ScenarioPack
 SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
+WHERE (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')
 ORDER BY game_slug ASC, version DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -67,13 +68,13 @@ func (s *PostgresScenarioPackageStore) Create(ctx context.Context, item Scenario
 	}
 
 	var version int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE game_slug = $1`, item.GameSlug).Scan(&version); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE game_slug = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, item.GameSlug).Scan(&version); err != nil {
 		return ScenarioPackage{}, err
 	}
 	item.Version = version
 
 	var hasAny bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE game_slug = $1)`, item.GameSlug).Scan(&hasAny); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE game_slug = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package'))`, item.GameSlug).Scan(&hasAny); err != nil {
 		return ScenarioPackage{}, err
 	}
 	if !hasAny {
@@ -123,7 +124,7 @@ SET game_slug = $2,
 	is_active = $9,
 	activated_by = $10,
 	activated_at = $11
-WHERE id = $1`,
+WHERE id = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`,
 		item.ID, item.GameSlug, item.Name, item.LLMModelConfigID, initialStepID(item.Steps), stepsJSON, legacyStepTransitionsJSON(item.Transitions), scenarioMetadataJSON(item),
 		item.IsActive, item.ActivatedBy, nullableTime(item.ActivatedAt),
 	)
@@ -148,7 +149,7 @@ func (s *PostgresScenarioPackageStore) Delete(ctx context.Context, id string) er
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	res, err := tx.ExecContext(ctx, `DELETE FROM llm_scenarios WHERE id = $1`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM llm_scenarios WHERE id = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, id)
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func (s *PostgresScenarioPackageStore) Delete(ctx context.Context, id string) er
 		err = tx.QueryRowContext(ctx, `
 SELECT id
 FROM llm_scenarios
-WHERE game_slug = $1
+WHERE game_slug = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')
 ORDER BY version DESC, created_at DESC, id DESC
 LIMIT 1`, item.GameSlug).Scan(&replacementID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -169,7 +170,7 @@ LIMIT 1`, item.GameSlug).Scan(&replacementID)
 		}
 		if replacementID != "" {
 			now := time.Now().UTC()
-			if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1`, replacementID, item.ActivatedBy, now); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, replacementID, item.ActivatedBy, now); err != nil {
 				return err
 			}
 		}
@@ -193,10 +194,10 @@ func (s *PostgresScenarioPackageStore) SetActive(ctx context.Context, id string,
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = FALSE WHERE game_slug = $1 AND is_active = TRUE`, item.GameSlug); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = FALSE WHERE game_slug = $1 AND is_active = TRUE AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, item.GameSlug); err != nil {
 		return ScenarioPackage{}, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1`, id, actorID, now)
+	res, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, id, actorID, now)
 	if err != nil {
 		return ScenarioPackage{}, err
 	}
@@ -215,7 +216,7 @@ func (s *PostgresScenarioPackageStore) GetByID(ctx context.Context, id string) (
 SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
-WHERE id = $1`, id)
+WHERE id = $1 AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')`, id)
 	item, err := scanScenarioPackage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ScenarioPackage{}, ErrScenarioPackageNotFound
@@ -228,7 +229,7 @@ func (s *PostgresScenarioPackageStore) GetActiveByGameSlug(ctx context.Context, 
 SELECT id, name, version, game_slug, model_config_id, is_active,
        nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 FROM llm_scenarios
-WHERE game_slug = $1 AND is_active = TRUE
+WHERE game_slug = $1 AND is_active = TRUE AND (metadata->>'kind' IS NULL OR metadata->>'kind' = 'scenario_package')
 LIMIT 1`, gameSlug)
 	item, err := scanScenarioPackage(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -323,10 +324,16 @@ func legacyStepTransitionsJSON(transitions []ScenarioTransition) []byte {
 }
 
 func scenarioMetadataJSON(item ScenarioPackage) []byte {
-	raw, _ := json.Marshal(transitionsPayload{
-		PackageTransitions: item.PackageTransitions,
-		FinalStateOptions:  item.FinalStateOptions,
-		FinalCondition:     strings.TrimSpace(item.FinalCondition),
+	raw, _ := json.Marshal(struct {
+		Kind string `json:"kind"`
+		transitionsPayload
+	}{
+		Kind: "scenario_package",
+		transitionsPayload: transitionsPayload{
+			PackageTransitions: item.PackageTransitions,
+			FinalStateOptions:  item.FinalStateOptions,
+			FinalCondition:     strings.TrimSpace(item.FinalCondition),
+		},
 	})
 	return raw
 }

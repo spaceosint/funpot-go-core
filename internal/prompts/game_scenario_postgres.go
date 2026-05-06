@@ -30,12 +30,19 @@ func NewPostgresGameScenarioStore(db *sql.DB) *PostgresGameScenarioStore {
 	return &PostgresGameScenarioStore{db: db}
 }
 
+const gameScenarioStorageSlugPrefix = "game_scenario:"
+
+func gameScenarioStorageSlug(gameSlug string) string {
+	return gameScenarioStorageSlugPrefix + strings.TrimSpace(gameSlug)
+}
+
 func (s *PostgresGameScenarioStore) List(ctx context.Context) ([]GameScenario, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, name, version, game_slug, is_active, initial_node_id,
-       nodes_json, transitions_json, created_by, activated_by, created_at, activated_at
-FROM llm_game_scenarios
-ORDER BY game_slug ASC, version DESC, created_at DESC`)
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+WHERE metadata->>'kind' = 'game_scenario'
+ORDER BY COALESCE(metadata->>'gameSlug', game_slug) ASC, version DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -67,13 +74,13 @@ func (s *PostgresGameScenarioStore) Create(ctx context.Context, item GameScenari
 	}
 
 	var version int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM llm_game_scenarios WHERE game_slug = $1`, item.GameSlug).Scan(&version); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) + 1 FROM llm_scenarios WHERE COALESCE(metadata->>'gameSlug', game_slug) = $1 AND metadata->>'kind' = 'game_scenario'`, item.GameSlug).Scan(&version); err != nil {
 		return GameScenario{}, err
 	}
 	item.Version = version
 
 	var hasActive bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM llm_game_scenarios WHERE is_active = TRUE)`).Scan(&hasActive); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM llm_scenarios WHERE is_active = TRUE AND metadata->>'kind' = 'game_scenario')`).Scan(&hasActive); err != nil {
 		return GameScenario{}, err
 	}
 	if !hasActive {
@@ -88,13 +95,13 @@ func (s *PostgresGameScenarioStore) Create(ctx context.Context, item GameScenari
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-INSERT INTO llm_game_scenarios (
+INSERT INTO llm_scenarios (
 	id, game_slug, name, version, is_active, initial_node_id,
-	nodes_json, transitions_json, created_by, activated_by, created_at, activated_at
+	nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)`,
-		item.ID, item.GameSlug, item.Name, item.Version, item.IsActive, item.InitialNodeID,
-		nodesJSON, transitionsJSON, item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13)`,
+		item.ID, gameScenarioStorageSlug(item.GameSlug), item.Name, item.Version, item.IsActive, item.InitialNodeID,
+		nodesJSON, transitionsJSON, gameScenarioMetadataJSON(item), item.CreatedBy, item.ActivatedBy, item.CreatedAt, nullableTime(item.ActivatedAt),
 	)
 	if err != nil {
 		return GameScenario{}, err
@@ -109,18 +116,19 @@ func (s *PostgresGameScenarioStore) Update(ctx context.Context, item GameScenari
 	}
 
 	res, err := s.db.ExecContext(ctx, `
-UPDATE llm_game_scenarios
+UPDATE llm_scenarios
 SET game_slug = $2,
 	name = $3,
 	is_active = $4,
 	initial_node_id = $5,
 	nodes_json = $6::jsonb,
 	transitions_json = $7::jsonb,
-	activated_by = $8,
-	activated_at = $9
-WHERE id = $1`,
-		item.ID, item.GameSlug, item.Name, item.IsActive, item.InitialNodeID,
-		nodesJSON, transitionsJSON, item.ActivatedBy, nullableTime(item.ActivatedAt),
+	metadata = $8::jsonb,
+	activated_by = $9,
+	activated_at = $10
+WHERE id = $1 AND metadata->>'kind' = 'game_scenario'`,
+		item.ID, gameScenarioStorageSlug(item.GameSlug), item.Name, item.IsActive, item.InitialNodeID,
+		nodesJSON, transitionsJSON, gameScenarioMetadataJSON(item), item.ActivatedBy, nullableTime(item.ActivatedAt),
 	)
 	if err != nil {
 		return GameScenario{}, err
@@ -143,7 +151,7 @@ func (s *PostgresGameScenarioStore) Delete(ctx context.Context, id string) error
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	res, err := tx.ExecContext(ctx, `DELETE FROM llm_game_scenarios WHERE id = $1`, id)
+	res, err := tx.ExecContext(ctx, `DELETE FROM llm_scenarios WHERE id = $1 AND metadata->>'kind' = 'game_scenario'`, id)
 	if err != nil {
 		return err
 	}
@@ -155,7 +163,8 @@ func (s *PostgresGameScenarioStore) Delete(ctx context.Context, id string) error
 		var replacementID string
 		err = tx.QueryRowContext(ctx, `
 SELECT id
-FROM llm_game_scenarios
+FROM llm_scenarios
+WHERE metadata->>'kind' = 'game_scenario'
 ORDER BY created_at DESC, id DESC
 LIMIT 1`).Scan(&replacementID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -163,7 +172,7 @@ LIMIT 1`).Scan(&replacementID)
 		}
 		if replacementID != "" {
 			now := time.Now().UTC()
-			if _, err := tx.ExecContext(ctx, `UPDATE llm_game_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1`, replacementID, item.ActivatedBy, now); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 AND metadata->>'kind' = 'game_scenario'`, replacementID, item.ActivatedBy, now); err != nil {
 				return err
 			}
 		}
@@ -186,10 +195,10 @@ func (s *PostgresGameScenarioStore) SetActive(ctx context.Context, id string, ac
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	if _, err := tx.ExecContext(ctx, `UPDATE llm_game_scenarios SET is_active = FALSE, activated_by = '', activated_at = NULL WHERE is_active = TRUE`); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = FALSE, activated_by = '', activated_at = NULL WHERE is_active = TRUE AND metadata->>'kind' = 'game_scenario'`); err != nil {
 		return GameScenario{}, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE llm_game_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1`, id, actorID, now)
+	res, err := tx.ExecContext(ctx, `UPDATE llm_scenarios SET is_active = TRUE, activated_by = $2, activated_at = $3 WHERE id = $1 AND metadata->>'kind' = 'game_scenario'`, id, actorID, now)
 	if err != nil {
 		return GameScenario{}, err
 	}
@@ -206,9 +215,9 @@ func (s *PostgresGameScenarioStore) SetActive(ctx context.Context, id string, ac
 func (s *PostgresGameScenarioStore) GetByID(ctx context.Context, id string) (GameScenario, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, name, version, game_slug, is_active, initial_node_id,
-       nodes_json, transitions_json, created_by, activated_by, created_at, activated_at
-FROM llm_game_scenarios
-WHERE id = $1`, id)
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+WHERE id = $1 AND metadata->>'kind' = 'game_scenario'`, id)
 	item, err := scanGameScenario(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GameScenario{}, ErrGameScenarioNotFound
@@ -219,9 +228,9 @@ WHERE id = $1`, id)
 func (s *PostgresGameScenarioStore) GetActiveByGameSlug(ctx context.Context, gameSlug string) (GameScenario, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, name, version, game_slug, is_active, initial_node_id,
-       nodes_json, transitions_json, created_by, activated_by, created_at, activated_at
-FROM llm_game_scenarios
-WHERE game_slug = $1 AND is_active = TRUE
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+WHERE COALESCE(metadata->>'gameSlug', game_slug) = $1 AND is_active = TRUE AND metadata->>'kind' = 'game_scenario'
 LIMIT 1`, gameSlug)
 	item, err := scanGameScenario(row)
 	if err == nil {
@@ -232,9 +241,9 @@ LIMIT 1`, gameSlug)
 	}
 	fallback := s.db.QueryRowContext(ctx, `
 SELECT id, name, version, game_slug, is_active, initial_node_id,
-       nodes_json, transitions_json, created_by, activated_by, created_at, activated_at
-FROM llm_game_scenarios
-WHERE is_active = TRUE
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+WHERE is_active = TRUE AND metadata->>'kind' = 'game_scenario'
 ORDER BY created_at DESC, id DESC
 LIMIT 1`)
 	item, err = scanGameScenario(fallback)
@@ -253,6 +262,7 @@ func scanGameScenario(scanner gameScenarioScanner) (GameScenario, error) {
 	var activatedAt sql.NullTime
 	var nodesRaw []byte
 	var transitionsRaw []byte
+	var metadataRaw []byte
 	err := scanner.Scan(
 		&item.ID,
 		&item.Name,
@@ -262,6 +272,7 @@ func scanGameScenario(scanner gameScenarioScanner) (GameScenario, error) {
 		&item.InitialNodeID,
 		&nodesRaw,
 		&transitionsRaw,
+		&metadataRaw,
 		&item.CreatedBy,
 		&item.ActivatedBy,
 		&item.CreatedAt,
@@ -280,10 +291,29 @@ func scanGameScenario(scanner gameScenarioScanner) (GameScenario, error) {
 			return GameScenario{}, fmt.Errorf("unmarshal transitions_json: %w", err)
 		}
 	}
+	if len(metadataRaw) > 0 {
+		var metadata struct {
+			GameSlug string `json:"gameSlug"`
+		}
+		if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+			return GameScenario{}, fmt.Errorf("unmarshal metadata: %w", err)
+		}
+		if strings.TrimSpace(metadata.GameSlug) != "" {
+			item.GameSlug = strings.TrimSpace(metadata.GameSlug)
+		}
+	}
 	if activatedAt.Valid {
 		item.ActivatedAt = activatedAt.Time
 	}
 	return item, nil
+}
+
+func gameScenarioMetadataJSON(item GameScenario) []byte {
+	raw, _ := json.Marshal(map[string]string{
+		"kind":     "game_scenario",
+		"gameSlug": strings.TrimSpace(item.GameSlug),
+	})
+	return raw
 }
 
 func encodeGameScenarioPayload(item GameScenario) ([]byte, []byte, error) {
