@@ -98,10 +98,17 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > the previous capture overruns the window.
 >
 > Stream capture now runs as a long-lived Streamlink→FFmpeg pipeline per streamer
-> and cuts sequential ~30s segments continuously (`%09d.mp4`) to minimize boundary
-> loss between chunks.
+> and cuts sequential 1-second source segments continuously (`%09d.mp4`).
+> The worker assembles the exact number of consecutive source segments requested
+> by the active Scenario Package v2 step `segmentSeconds`, so admins can tune
+> LLM chunk length while preserving contiguous coverage with no skipped seconds
+> between chunks.
 >
-> Each ~30s chunk is analyzed immediately by the worker.
+> Each assembled step-sized chunk is analyzed immediately by the worker, then
+> the local assembled video is deleted after analysis/upload; consumed 1-second
+> source segments are deleted as soon as they are assembled into an LLM chunk.
+> When a new continuous capture session starts, stale local stream artifacts from
+> previous interrupted sessions are removed from the streamer output directory.
 > In parallel, chunks are accumulated and merged via `ffmpeg -c copy` (no re-encoding)
 > into ~2-minute windows (`FUNPOT_STREAMLINK_ARCHIVE_AGGREGATE_COUNT` controls batch size),
 > then uploaded to Bunny Stream when Bunny credentials are configured.

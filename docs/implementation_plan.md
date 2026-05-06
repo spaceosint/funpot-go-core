@@ -56,8 +56,11 @@ business logic and immediate backend scope.
   (`/api/admin/llm/scenario-packages` + activation + graph).
 - [x] Remove legacy admin surfaces for prompt versions, state schemas, rule sets, and model-config CRUD across code + docs.
 - [ ] Re-introduce scenario-package persistence in storage (PostgreSQL) after the scenario-only cleanup baseline stabilizes.
-- [ ] Implement stream capture worker pipeline:
-  `streamlink -> media chunking -> previous_state + new_chunk -> updated_state`.
+- [x] Implement stream capture worker pipeline:
+  `streamlink -> media chunking -> previous_state + new_chunk -> updated_state`,
+  including step-level `segmentSeconds` assembly from contiguous source segments
+  so no seconds are skipped between LLM chunks, plus cleanup of consumed source
+  segments, assembled local videos, and stale artifacts from interrupted sessions.
 - [ ] Implement match-session lifecycle so one detected match is tracked as one
   chat/session with explicit persisted state JSON.
 - [ ] Ship the initial Counter-Strike tracker flow:
