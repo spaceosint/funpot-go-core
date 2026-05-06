@@ -12,6 +12,22 @@ import (
 	"time"
 )
 
+func chdirForTest(t *testing.T, dir string) {
+	t.Helper()
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir(%q) error = %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Fatalf("restore working directory to %q: %v", originalDir, err)
+		}
+	})
+}
+
 type fakeChannelResolver struct {
 	channel string
 	err     error
@@ -487,7 +503,7 @@ func TestStreamlinkCaptureAdapterContinuousUsesRequestedDurationWithoutSkippingS
 }
 
 func TestStreamlinkCaptureAdapterContinuousConcatListUsesAbsoluteSegmentPaths(t *testing.T) {
-	t.Chdir(t.TempDir())
+	chdirForTest(t, t.TempDir())
 	outDir := filepath.Join("tmp", "stream_chunks")
 	runner := &fakeCommandRunner{}
 	adapter := NewStreamlinkCaptureAdapter(StreamlinkCaptureConfig{
