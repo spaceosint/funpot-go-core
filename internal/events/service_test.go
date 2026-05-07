@@ -3,10 +3,13 @@ package events
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestListLiveByStreamer(t *testing.T) {
@@ -298,5 +301,99 @@ func TestPostgresVotePersistsVoteHistoryAndTotals(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet db expectations: %v", err)
+	}
+}
+
+func TestRedisLiveEventCreateUsesRedisBeforePostgresHistory(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close() //nolint:errcheck
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	svc := NewPostgresService(db, nil)
+	svc.WithRedisLiveState(redisClient, time.Hour)
+
+	streamerID := "00000000-0000-0000-0000-000000000101"
+	scenarioID := "00000000-0000-0000-0000-000000000102"
+	mock.ExpectExec("INSERT INTO live_event_history").
+		WithArgs(sqlmock.AnyArg(), streamerID, scenarioID, streamerID+":terminal-redis", "transition-redis", "terminal-redis", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "open", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	created, err := svc.CreateLiveEvent(context.Background(), CreateLiveEventRequest{
+		StreamerID:      streamerID,
+		ScenarioID:      scenarioID,
+		TransitionID:    "transition-redis",
+		TerminalID:      "terminal-redis",
+		Title:           map[string]string{"ru": "Победитель карты"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}},
+		Duration:        time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CreateLiveEvent() error = %v", err)
+	}
+	if _, ok := svc.readLiveEventStateFromRedis(context.Background(), created.ID); !ok {
+		t.Fatalf("expected event state to be written to Redis")
+	}
+
+	if _, err := svc.CreateLiveEvent(context.Background(), CreateLiveEventRequest{
+		StreamerID:      streamerID,
+		ScenarioID:      scenarioID,
+		TransitionID:    "transition-redis",
+		TerminalID:      "terminal-redis",
+		Title:           map[string]string{"ru": "Победитель карты"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}},
+		Duration:        time.Minute,
+	}); !errors.Is(err, ErrAlreadyActive) {
+		t.Fatalf("expected duplicate active event from Redis, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet db expectations: %v", err)
+	}
+}
+
+func TestListLiveByStreamerUsesRedisAsActiveSourceWhenPostgresExists(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	defer redisClient.Close() //nolint:errcheck
+
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	svc := NewPostgresService(db, nil)
+	svc.WithRedisLiveState(redisClient, time.Hour)
+	event := LiveEvent{
+		ID:              "event-redis-list",
+		TemplateID:      "00000000-0000-0000-0000-000000000201:terminal-1",
+		StreamerID:      "00000000-0000-0000-0000-000000000201",
+		ScenarioID:      "00000000-0000-0000-0000-000000000202",
+		TerminalID:      "terminal-1",
+		Title:           map[string]string{"ru": "Победитель карты"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}},
+		ClosesAt:        time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		Status:          "open",
+		Totals:          map[string]int64{"ct": 0},
+	}
+	if err := svc.persistLiveState(context.Background(), event); err != nil {
+		t.Fatalf("persistLiveState() error = %v", err)
+	}
+
+	items := svc.ListLiveByStreamer(context.Background(), event.StreamerID)
+	if len(items) != 1 || items[0].ID != event.ID {
+		t.Fatalf("expected Redis live event, got %#v", items)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unexpected db calls: %v", err)
 	}
 }
