@@ -74,6 +74,10 @@ type StepDurationCapture interface {
 	CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error)
 }
 
+type StepSegmentCapture interface {
+	CaptureWithSegmentCount(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error)
+}
+
 type StageClassifier interface {
 	Classify(ctx context.Context, input StageRequest) (StageClassification, error)
 }
@@ -270,7 +274,7 @@ func (w *Worker) ProcessStreamer(ctx context.Context, streamerID string) (stream
 		return lastDecision, ErrTrackingStop
 	}
 
-	chunk, err := w.captureWithRetry(ctx, id, execution.Step.SegmentSeconds)
+	chunk, err := w.captureWithRetry(ctx, id, execution.Step.SegmentCount)
 	if err != nil {
 		if errors.Is(err, ErrStreamlinkAdBreak) {
 			logger.Info("stream chunk capture skipped because stream is on ad break", zap.String("streamerID", id), zap.Error(err))
@@ -359,19 +363,18 @@ func defaultTrackerState() string {
 	return `{}`
 }
 
-func (w *Worker) captureWithRetry(ctx context.Context, streamerID string, segmentSeconds int) (ChunkRef, error) {
+func (w *Worker) captureWithRetry(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error) {
 	attempts := w.captureRetryCount + 1
 	if attempts <= 0 {
 		attempts = 1
 	}
-	duration := time.Duration(segmentSeconds) * time.Second
-	if duration <= 0 {
-		duration = 30 * time.Second
+	if segmentCount <= 0 {
+		segmentCount = 30
 	}
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		chunk, err := w.captureChunk(ctx, streamerID, duration)
+		chunk, err := w.captureChunk(ctx, streamerID, segmentCount)
 		if err == nil {
 			return chunk, nil
 		}
@@ -386,9 +389,12 @@ func (w *Worker) captureWithRetry(ctx context.Context, streamerID string, segmen
 	return ChunkRef{}, lastErr
 }
 
-func (w *Worker) captureChunk(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
+func (w *Worker) captureChunk(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error) {
+	if segmentedCapture, ok := w.capture.(StepSegmentCapture); ok {
+		return segmentedCapture.CaptureWithSegmentCount(ctx, streamerID, segmentCount)
+	}
 	if timedCapture, ok := w.capture.(StepDurationCapture); ok {
-		return timedCapture.CaptureWithDuration(ctx, streamerID, duration)
+		return timedCapture.CaptureWithDuration(ctx, streamerID, time.Duration(segmentCount)*time.Second)
 	}
 	return w.capture.Capture(ctx, streamerID)
 }
@@ -909,7 +915,7 @@ func (w *Worker) processScenarioPackage(ctx context.Context, runID, streamerID s
 	step := execution.Step
 	entering := execution.Entering
 	previousState := execution.PreviousState
-	logger.Info("scenario step selected", zap.String("streamerID", streamerID), zap.String("scenarioPackageID", pkg.ID), zap.String("stepID", step.ID), zap.Int("segmentSeconds", step.SegmentSeconds), zap.Int("maxRequests", step.MaxRequests))
+	logger.Info("scenario step selected", zap.String("streamerID", streamerID), zap.String("scenarioPackageID", pkg.ID), zap.String("stepID", step.ID), zap.Int("segmentCount", step.SegmentCount), zap.Int("maxRequests", step.MaxRequests))
 	if strings.TrimSpace(pkg.LLMModelConfigID) == "" {
 		return streamers.LLMDecision{}, prompts.ErrInvalidScenarioModelRef
 	}

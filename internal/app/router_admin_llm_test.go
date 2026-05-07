@@ -65,7 +65,7 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 				"gameSlug":           "global",
 				"promptTemplate":     "detect",
 				"responseSchemaJson": "{}",
-				"segmentSeconds":     15,
+				"segmentCount":       15,
 				"maxRequests":        4,
 				"initial":            true,
 				"order":              1,
@@ -116,8 +116,8 @@ func TestAdminLLMScenarioPackageRoutes(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected first step object, got %#v", steps[0])
 	}
-	if got, _ := firstStep["segmentSeconds"].(float64); int(got) != 15 {
-		t.Fatalf("expected segmentSeconds=15, got %#v", firstStep["segmentSeconds"])
+	if got, _ := firstStep["segmentCount"].(float64); int(got) != 15 {
+		t.Fatalf("expected segmentCount=15, got %#v", firstStep["segmentCount"])
 	}
 	if got, _ := firstStep["maxRequests"].(float64); int(got) != 4 {
 		t.Fatalf("expected maxRequests=4, got %#v", firstStep["maxRequests"])

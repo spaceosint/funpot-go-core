@@ -31,7 +31,8 @@ type ScenarioStep struct {
 	EntryCondition     string    `json:"entryCondition,omitempty"`
 	PromptTemplate     string    `json:"promptTemplate"`
 	ResponseSchemaJSON string    `json:"responseSchemaJson"`
-	SegmentSeconds     int       `json:"segmentSeconds,omitempty"`
+	SegmentCount       int       `json:"segmentCount,omitempty"`
+	SegmentSeconds     int       `json:"segmentSeconds,omitempty"` // Deprecated: use SegmentCount.
 	MaxRequests        int       `json:"maxRequests,omitempty"`
 	Initial            bool      `json:"initial"`
 	Order              int       `json:"order"`
@@ -240,12 +241,18 @@ func normalizeScenarioSteps(steps []ScenarioStep, fallbackGameSlug string, now t
 		if strings.TrimSpace(normalized[i].GameSlug) == "" {
 			normalized[i].GameSlug = fallbackGameSlug
 		}
-		if normalized[i].SegmentSeconds <= 0 {
+		if normalized[i].SegmentCount <= 0 {
+			normalized[i].SegmentCount = normalized[i].SegmentSeconds
+		}
+		if normalized[i].SegmentCount <= 0 {
 			if normalized[i].Initial {
-				normalized[i].SegmentSeconds = 15
+				normalized[i].SegmentCount = 15
 			} else {
-				normalized[i].SegmentSeconds = 30
+				normalized[i].SegmentCount = 30
 			}
+		}
+		if normalized[i].SegmentSeconds <= 0 {
+			normalized[i].SegmentSeconds = normalized[i].SegmentCount
 		}
 		if normalized[i].MaxRequests < 0 {
 			normalized[i].MaxRequests = 0

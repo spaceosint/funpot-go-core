@@ -593,11 +593,11 @@ func TestScenarioPackageCreateAppliesStepDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create scenario package: %v", err)
 	}
-	if item.Steps[0].SegmentSeconds != 15 {
-		t.Fatalf("expected initial step segment default 15s, got %d", item.Steps[0].SegmentSeconds)
+	if item.Steps[0].SegmentCount != 15 {
+		t.Fatalf("expected initial step segment count default 15, got %d", item.Steps[0].SegmentCount)
 	}
-	if item.Steps[1].SegmentSeconds != 30 {
-		t.Fatalf("expected non-initial step segment default 30s, got %d", item.Steps[1].SegmentSeconds)
+	if item.Steps[1].SegmentCount != 30 {
+		t.Fatalf("expected non-initial step segment count default 30, got %d", item.Steps[1].SegmentCount)
 	}
 	if item.Steps[0].MaxRequests != 0 || item.Steps[1].MaxRequests != 0 {
 		t.Fatalf("expected maxRequests default 0 (unlimited), got %#v", item.Steps)

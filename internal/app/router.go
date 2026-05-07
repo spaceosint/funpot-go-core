@@ -71,6 +71,7 @@ func scenarioPackageRequestToCreateRequest(req scenarioPackageCreateRequest, act
 			EntryCondition:     step.EntryCondition,
 			PromptTemplate:     step.PromptTemplate,
 			ResponseSchemaJSON: step.ResponseSchemaJSON,
+			SegmentCount:       step.SegmentCount,
 			SegmentSeconds:     step.SegmentSeconds,
 			MaxRequests:        step.MaxRequests,
 			Initial:            step.Initial,
@@ -193,6 +194,7 @@ type scenarioStepRequest struct {
 	EntryCondition     string `json:"entryCondition"`
 	PromptTemplate     string `json:"promptTemplate"`
 	ResponseSchemaJSON string `json:"responseSchemaJson"`
+	SegmentCount       int    `json:"segmentCount"`
 	SegmentSeconds     int    `json:"segmentSeconds"`
 	MaxRequests        int    `json:"maxRequests"`
 	Initial            bool   `json:"initial"`

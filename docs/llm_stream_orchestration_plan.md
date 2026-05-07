@@ -59,9 +59,9 @@ Current orchestration uses only the model below:
   - transition by priority,
   - stay-on-step fallback.
 - Wire worker to prefer scenario package execution when present.
-- Preserve continuous video coverage when applying each step `segmentSeconds`: capture
+- Preserve continuous video coverage when applying each step `segmentCount`: capture
   a continuous per-streamer source timeline and assemble LLM chunks from consecutive
-  segments without dropping any seconds between adjacent LLM requests, and clean
+  segments without dropping any source segments between adjacent LLM requests, and clean
   up consumed local source/assembled video files after they are no longer needed.
 
 ## Deferred (next iteration)
