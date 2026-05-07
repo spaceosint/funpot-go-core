@@ -10,7 +10,9 @@
 - **games** `(id uuid PK, streamer_id uuid FK streamers, title text, rules_json jsonb, status text CHECK (status IN ('draft','active','closed','paused')), start_at timestamptz, end_at timestamptz)`
 - **events** `(id uuid PK, streamer_id uuid FK streamers, game_id uuid FK games, title text, options_json jsonb, state text CHECK (state IN ('live','closed','cancelled')), closes_at timestamptz, totals_json jsonb, result_json jsonb, source_clip_id uuid FK media_clips, prompt_versions_json jsonb, confidence numeric(4,2), created_at timestamptz, updated_at timestamptz)` with indexes on `(streamer_id, state)`, `(game_id, state)`.
 - **votes** `(id uuid PK, event_id uuid FK events, user_id uuid FK users, option_id text, cost_int bigint, idempotency_key text, created_at timestamptz)` with unique constraint `(user_id, event_id)` and indexes `(event_id)`, `(idempotency_key)`.
-- **media_clips** `(id uuid PK, streamer_id uuid FK streamers, url text, thumbnail_url text, started_at timestamptz, duration_sec int, source text DEFAULT 'bunny', created_at timestamptz)`.
+- **streamer_uploaded_videos** `(id uuid PK, streamer_id uuid FK streamers, provider text, video_id text, title text, url text, status text, duration_s int, size_bytes bigint, mime_type text, metadata jsonb, created_at timestamptz, updated_at timestamptz)` stores Bunny/object-storage metadata only; video bytes stay outside PostgreSQL.
+- **media_clips** `(id uuid PK, streamer_id uuid FK streamers, uploaded_video_id uuid FK streamer_uploaded_videos, url text, duration_s int, source_type text, source_id uuid, status text, metadata jsonb, created_at timestamptz, updated_at timestamptz)`.
+- **llm_request_logs** `(id uuid PK, streamer_id uuid FK streamers, scenario_id uuid FK llm_scenarios, model_config_id uuid FK llm_model_configs, request_type text, status text, provider_request_id text, sanitized input_json jsonb, sanitized output_json jsonb, token/latency/cost counters, error_message text, created_at timestamptz, expires_at timestamptz)` stores compact scenario-step decision/request audit data with retention; decision fields are packed into the existing JSON columns to avoid a duplicate history table.
 - **prompts** `(id uuid PK, scope text CHECK (scope IN ('session','game','per_clip')), streamer_id uuid FK streamers NULLABLE, game_id uuid FK games NULLABLE, version text, body_text text, schema_version text, status text CHECK (status IN ('active','inactive')), created_by uuid FK users, created_at timestamptz)`.
 - **config** `(key text PK, value_json jsonb, updated_at timestamptz)`.
 - **idempotency** `(id uuid PK, key text unique, first_seen_at timestamptz, last_seen_at timestamptz, response_cache_json jsonb)`.
@@ -20,11 +22,13 @@
 - `users` 1—n `wallet_ledger`, `payments`, `votes`.
 - `referrals` optionally link `users` to inviter.
 - `streamers` reference `users` via `added_by`.
-- `games`, `events`, `media_clips` tie to `streamers`.
+- `games`, `events`, `media_clips`, `streamer_uploaded_videos`, and `llm_request_logs` tie to `streamers`.
 - `events` belong to a `game` (optional) and may reference a `media_clip`.
 - `votes` belong to both `events` and `users`.
 - `prompts` optionally scoped by streamer/game.
+- `llm_request_logs.provider_request_id` carries the app-level decision id when a decision is recorded, while sanitized `input_json`/`output_json` preserve prompt/state metadata without storing video bytes or unsanitized inline media.
 
 ## Partitioning Strategy (Future)
 - Partition `wallet_ledger` by month once record counts exceed 10M.
 - Partition `votes` by `(streamer_id HASH)` or `(created_at RANGE)` depending on access patterns.
+- Partition or periodically purge `llm_request_logs` by `expires_at`/`created_at` when request volume grows; keep only compact state deltas and sanitized payloads in PostgreSQL.

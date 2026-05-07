@@ -25,11 +25,13 @@ func (s *PostgresUploadedVideoStore) Save(ctx context.Context, streamerID string
 		return nil
 	}
 	const query = `
-INSERT INTO streamer_uploaded_videos (streamer_id, video_id, title, url, created_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (streamer_id, video_id)
-DO UPDATE SET title = EXCLUDED.title,
+INSERT INTO streamer_uploaded_videos (streamer_id, provider, video_id, title, url, status, created_at)
+VALUES ($1, 'bunny', $2, $3, $4, 'ready', $5)
+ON CONFLICT (provider, video_id)
+DO UPDATE SET streamer_id = EXCLUDED.streamer_id,
+              title = EXCLUDED.title,
               url = EXCLUDED.url,
+              status = EXCLUDED.status,
               created_at = EXCLUDED.created_at`
 	if _, err := s.db.ExecContext(ctx, query, key, strings.TrimSpace(item.ID), strings.TrimSpace(item.Title), strings.TrimSpace(item.URL), strings.TrimSpace(item.CreatedAt)); err != nil {
 		return fmt.Errorf("save uploaded video metadata: %w", err)
