@@ -98,13 +98,13 @@ jobs:
             exit 1
           fi
           cat <<EOF >payload.json
-{
-  "environment": "${ENVIRONMENT}",
-  "branch": "${BRANCH}",
-  "image": "${IMAGE_REF}",
-  "sha": "${HEAD_SHA}"
-}
-EOF
+          {
+            "environment": "${ENVIRONMENT}",
+            "branch": "${BRANCH}",
+            "image": "${IMAGE_REF}",
+            "sha": "${HEAD_SHA}"
+          }
+          EOF
           curl -fsSL -X POST -H 'Content-Type: application/json' --data @payload.json "$WEBHOOK_URL"
 
       - name: Resolve healthcheck target
