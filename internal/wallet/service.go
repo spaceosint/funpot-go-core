@@ -200,6 +200,27 @@ FROM wallet_ledger WHERE idempotency_key = $1
 	return entry, balance, nil
 }
 
+func (s *Service) HasProcessed(userID, idempotencyKey string) bool {
+	userID = strings.TrimSpace(userID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if userID == "" || idempotencyKey == "" {
+		return false
+	}
+	if s.db != nil {
+		var exists bool
+		err := s.db.QueryRowContext(context.Background(), `SELECT EXISTS(SELECT 1 FROM wallet_ledger WHERE user_id = $1 AND idempotency_key = $2)`, userID, idempotencyKey).Scan(&exists)
+		return err == nil && exists
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	acct, ok := s.accounts[userID]
+	if !ok {
+		return false
+	}
+	_, ok = acct.ProcessedByIdemID[idempotencyKey]
+	return ok
+}
+
 func (s *Service) Adjust(req AdjustRequest) (Entry, int64, error) {
 	if req.Delta == 0 {
 		return Entry{}, 0, ErrInvalidDelta

@@ -12,6 +12,16 @@ type UserVote struct {
 	TotalAmount int64  `json:"totalAmount"`
 }
 
+type OptionMarket struct {
+	PoolINT     int64   `json:"poolINT"`
+	SharePct    float64 `json:"sharePct"`
+	Coefficient float64 `json:"coefficient"`
+}
+
+type LiveEventMarket struct {
+	Options map[string]OptionMarket `json:"options"`
+}
+
 type UserEventHistoryItem struct {
 	EventID          string            `json:"eventId"`
 	StreamerID       string            `json:"streamerId"`

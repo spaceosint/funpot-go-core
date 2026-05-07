@@ -1903,6 +1903,23 @@ func NewHandler(
 					writeError(w, http.StatusBadRequest, "invalid request body")
 					return
 				}
+				vote := events.VoteRequest{
+					EventID:        eventID,
+					StreamerID:     req.StreamerID,
+					UserID:         claims.Subject,
+					OptionID:       req.OptionID,
+					Amount:         req.AmountINT,
+					IdempotencyKey: idempotencyKey,
+				}
+				refundKey := voteRefundIdempotencyKey(idempotencyKey)
+				if walletService.HasProcessed(claims.Subject, refundKey) {
+					writeError(w, http.StatusConflict, "vote payment was rolled back; retry with a new Idempotency-Key")
+					return
+				}
+				if err := eventsService.ValidateVote(r.Context(), vote); err != nil {
+					writeEventVoteError(w, logger, eventID, err)
+					return
+				}
 				walletEntry, balanceAfterVote, err := walletService.Post(wallet.PostRequest{
 					UserID:         claims.Subject,
 					Type:           wallet.EntryTypeDebit,
@@ -1912,38 +1929,23 @@ func NewHandler(
 					ActorID:        claims.Subject,
 				})
 				if err != nil {
-					switch {
-					case errors.Is(err, wallet.ErrInvalidAmount), errors.Is(err, wallet.ErrIdempotencyRequired):
-						writeError(w, http.StatusBadRequest, err.Error())
-					case errors.Is(err, wallet.ErrInsufficientFunds):
-						writeError(w, http.StatusConflict, err.Error())
-					default:
-						logger.Error("failed to debit wallet for vote", zap.String("userID", claims.Subject), zap.Error(err))
-						writeError(w, http.StatusInternalServerError, "failed to process vote")
-					}
+					writeWalletPostError(w, logger, claims.Subject, err)
 					return
 				}
-				event, err := eventsService.Vote(r.Context(), events.VoteRequest{
-					EventID:        eventID,
-					StreamerID:     req.StreamerID,
-					UserID:         claims.Subject,
-					OptionID:       req.OptionID,
-					Amount:         req.AmountINT,
-					IdempotencyKey: idempotencyKey,
-					WalletLedgerID: strings.TrimSpace(walletEntry.ID),
-				})
+				vote.WalletLedgerID = strings.TrimSpace(walletEntry.ID)
+				event, err := eventsService.Vote(r.Context(), vote)
 				if err != nil {
-					switch {
-					case errors.Is(err, events.ErrInvalidVote):
-						writeError(w, http.StatusBadRequest, err.Error())
-					case errors.Is(err, events.ErrEventNotFound):
-						writeError(w, http.StatusNotFound, err.Error())
-					case errors.Is(err, events.ErrEventClosed):
-						writeError(w, http.StatusConflict, err.Error())
-					default:
-						logger.Error("failed to process event vote", zap.String("eventID", eventID), zap.Error(err))
-						writeError(w, http.StatusInternalServerError, "failed to process vote")
+					if _, _, refundErr := walletService.Post(wallet.PostRequest{
+						UserID:         claims.Subject,
+						Type:           wallet.EntryTypeCredit,
+						Amount:         req.AmountINT,
+						Reason:         "event_vote_rollback",
+						IdempotencyKey: refundKey,
+						ActorID:        claims.Subject,
+					}); refundErr != nil {
+						logger.Error("failed to roll back wallet debit after vote failure", zap.String("userID", claims.Subject), zap.String("eventID", eventID), zap.String("idempotencyKey", idempotencyKey), zap.Error(refundErr))
 					}
+					writeEventVoteError(w, logger, eventID, err)
 					return
 				}
 				nickname := claims.Subject
@@ -1952,25 +1954,16 @@ func NewHandler(
 						nickname = profile.Nickname
 					}
 				}
+				market := event.Market()
 				rtHub.PublishToStreamer(req.StreamerID, realtime.Envelope{
-					Type: "EVENT_UPDATED",
-					Payload: realtime.EventUpdatedPayload{
-						EventID:  event.ID,
-						Totals:   event.Totals,
-						ClosesAt: event.ClosesAt,
-					},
+					Type:    "EVENT_UPDATED",
+					Payload: buildEventUpdatedPayload(event, market),
 				})
 				rtHub.PublishToStreamer(req.StreamerID, realtime.Envelope{
 					Type: "EVENT_VOTE_FEED_UPDATED",
 					Payload: realtime.VoteFeedPayload{
-						EventID: event.ID,
-						Items: []realtime.VoteFeedItem{{
-							UserID:    claims.Subject,
-							Nickname:  nickname,
-							OptionID:  req.OptionID,
-							AmountINT: req.AmountINT,
-							CreatedAt: realtime.NowRFC3339(),
-						}},
+						EventID:    event.ID,
+						Items:      []realtime.VoteFeedItem{buildVoteFeedItem(claims.Subject, nickname, req.OptionID, req.AmountINT, event, market)},
 						SnapshotAt: realtime.NowRFC3339(),
 					},
 				})
@@ -2006,6 +1999,70 @@ func NewHandler(
 	}
 
 	return mux
+}
+
+func voteRefundIdempotencyKey(idempotencyKey string) string {
+	return strings.TrimSpace(idempotencyKey) + ":rollback"
+}
+
+func writeWalletPostError(w http.ResponseWriter, logger *zap.Logger, userID string, err error) {
+	switch {
+	case errors.Is(err, wallet.ErrInvalidAmount), errors.Is(err, wallet.ErrIdempotencyRequired):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, wallet.ErrInsufficientFunds):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		logger.Error("failed to debit wallet for vote", zap.String("userID", userID), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to process vote")
+	}
+}
+
+func writeEventVoteError(w http.ResponseWriter, logger *zap.Logger, eventID string, err error) {
+	switch {
+	case errors.Is(err, events.ErrInvalidVote):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, events.ErrEventNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, events.ErrEventClosed):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		logger.Error("failed to process event vote", zap.String("eventID", eventID), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to process vote")
+	}
+}
+
+func buildEventUpdatedPayload(event events.LiveEvent, market events.LiveEventMarket) realtime.EventUpdatedPayload {
+	options := make(map[string]realtime.EventOptionMarket, len(market.Options))
+	for optionID, item := range market.Options {
+		options[optionID] = realtime.EventOptionMarket{
+			PoolINT:     item.PoolINT,
+			SharePct:    item.SharePct,
+			Coefficient: item.Coefficient,
+		}
+	}
+	return realtime.EventUpdatedPayload{
+		EventID:          event.ID,
+		Totals:           event.Totals,
+		TotalContributed: event.TotalContributed,
+		PlatformFeeINT:   event.PlatformFeeINT,
+		DistributableINT: event.DistributableINT,
+		Options:          options,
+		ClosesAt:         event.ClosesAt,
+	}
+}
+
+func buildVoteFeedItem(userID, nickname, optionID string, amountINT int64, event events.LiveEvent, market events.LiveEventMarket) realtime.VoteFeedItem {
+	optionMarket := market.Options[strings.TrimSpace(optionID)]
+	return realtime.VoteFeedItem{
+		UserID:             userID,
+		Nickname:           nickname,
+		OptionID:           optionID,
+		AmountINT:          amountINT,
+		OptionPoolSharePct: optionMarket.SharePct,
+		Coefficient:        optionMarket.Coefficient,
+		PotentialWinINT:    event.PotentialWinINT(optionID, amountINT),
+		CreatedAt:          realtime.NowRFC3339(),
+	}
 }
 
 func requireAdmin(w http.ResponseWriter, r *http.Request, adminService *admin.Service) bool {

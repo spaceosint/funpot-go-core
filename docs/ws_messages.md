@@ -37,10 +37,16 @@ Payload schema:
 {
   "eventId": "uuid",
   "totals": { "optionId": 123 },
+  "totalContributed": 1000,
+  "platformFeeINT": 100,
+  "distributableINT": 900,
+  "options": {
+    "ct": { "poolINT": 450, "sharePct": 50.0, "coefficient": 2.0 }
+  },
   "closesAt": "ISO-8601|null"
 }
 ```
-Broadcast every 250–500 ms at most, optionally batching multiple events per frame.
+Broadcast every 250–500 ms at most, optionally batching multiple events per frame. `options` lets the frontend render live pool percentages and current payout coefficients per outcome.
 
 ### EVENT_VOTE_FEED_UPDATED
 Payload schema:
@@ -53,13 +59,16 @@ Payload schema:
       "nickname": "BraveFox123",
       "optionId": "ct",
       "amountINT": 150,
+      "optionPoolSharePct": 50.0,
+      "coefficient": 2.0,
+      "potentialWinINT": 300,
       "createdAt": "ISO-8601"
     }
   ],
   "snapshotAt": "ISO-8601"
 }
 ```
-Real-time feed of participant votes for the mini-game. Frontend should append `items` to the vote tape and reconcile by `eventId + userId + createdAt`.
+Real-time feed of participant votes for the mini-game, including who placed the vote, selected option, current option share, current coefficient, and potential win for that vote amount. Frontend should append `items` to the vote tape and reconcile by `eventId + userId + createdAt`.
 
 ### EVENT_CLOSED
 Payload schema:
