@@ -445,6 +445,51 @@ func (s *Service) ListLiveByStreamer(ctx context.Context, streamerID string) []L
 	return result
 }
 
+func (s *Service) ValidateVote(ctx context.Context, req VoteRequest) error {
+	if strings.TrimSpace(req.EventID) == "" || strings.TrimSpace(req.StreamerID) == "" || strings.TrimSpace(req.UserID) == "" || strings.TrimSpace(req.OptionID) == "" || req.Amount <= 0 || strings.TrimSpace(req.IdempotencyKey) == "" {
+		return ErrInvalidVote
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if s.db != nil {
+		if existing, ok, err := s.findVoteByIdempotencyDB(ctx, strings.TrimSpace(req.IdempotencyKey)); err != nil {
+			return err
+		} else if ok {
+			if strings.TrimSpace(existing.EventID) == strings.TrimSpace(req.EventID) {
+				return nil
+			}
+			return ErrInvalidVote
+		}
+		if s.redis != nil {
+			if err := s.ensureLiveEventLoadedFromRedis(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+				return err
+			}
+		} else if err := s.ensureLiveEventLoaded(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+			return err
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.items[strings.TrimSpace(req.EventID)]
+	if !ok || item.event.StreamerID != strings.TrimSpace(req.StreamerID) {
+		return ErrEventNotFound
+	}
+	if !isOpen(item.event, time.Now().UTC()) {
+		return ErrEventClosed
+	}
+	if existing, ok := item.processedVotes[strings.TrimSpace(req.IdempotencyKey)]; ok {
+		if strings.TrimSpace(existing.OptionID) == strings.TrimSpace(req.OptionID) {
+			return nil
+		}
+		return ErrInvalidVote
+	}
+	if _, ok := item.event.Totals[strings.TrimSpace(req.OptionID)]; !ok {
+		return ErrInvalidVote
+	}
+	return nil
+}
+
 func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) {
 	if strings.TrimSpace(req.EventID) == "" || strings.TrimSpace(req.StreamerID) == "" || strings.TrimSpace(req.UserID) == "" || strings.TrimSpace(req.OptionID) == "" || req.Amount <= 0 || strings.TrimSpace(req.IdempotencyKey) == "" {
 		return LiveEvent{}, ErrInvalidVote
@@ -497,13 +542,28 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 	if _, ok := item.event.Totals[optionID]; !ok {
 		return LiveEvent{}, ErrInvalidVote
 	}
+	userID := strings.TrimSpace(req.UserID)
+	previousEvent := cloneLiveEvent(item.event)
+	previousUserVote, hadPreviousUserVote := item.userVotes[userID]
+	rollbackVoteMutation := func() {
+		item.event = previousEvent
+		if hadPreviousUserVote {
+			item.userVotes[userID] = previousUserVote
+		} else {
+			delete(item.userVotes, userID)
+		}
+		delete(item.processedVotes, strings.TrimSpace(req.IdempotencyKey))
+		if s.redis != nil {
+			_ = s.persistLiveState(ctx, previousEvent)
+		}
+	}
 	fee := calculateFee(req.Amount, s.votePlatformFeeBPS)
 	netAmount := req.Amount - fee
 	item.event.Totals[optionID] += netAmount
 	item.event.TotalContributed += req.Amount
 	item.event.PlatformFeeINT += fee
 	item.event.DistributableINT = item.event.TotalContributed - item.event.PlatformFeeINT
-	userVote := item.userVotes[strings.TrimSpace(req.UserID)]
+	userVote := item.userVotes[userID]
 	if userVote.OptionID == "" {
 		userVote.OptionID = optionID
 	}
@@ -511,10 +571,11 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 		userVote.OptionID = optionID
 	}
 	userVote.Amount += req.Amount
-	item.userVotes[strings.TrimSpace(req.UserID)] = userVote
+	item.userVotes[userID] = userVote
 	item.processedVotes[strings.TrimSpace(req.IdempotencyKey)] = voteRecord{OptionID: optionID, Amount: req.Amount}
 	if s.redis != nil {
 		if err := s.persistLiveState(ctx, item.event); err != nil {
+			rollbackVoteMutation()
 			return LiveEvent{}, err
 		}
 	}
@@ -526,6 +587,7 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 			}
 		}
 		if err := s.persistVoteDB(ctx, eventForHistory, req, optionID); err != nil {
+			rollbackVoteMutation()
 			return LiveEvent{}, err
 		}
 	}
@@ -537,7 +599,6 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 		optionPool,
 		req.Amount,
 	)
-	userID := strings.TrimSpace(req.UserID)
 	historyItem := UserEventHistoryItem{
 		EventID:          item.event.ID,
 		StreamerID:       item.event.StreamerID,
@@ -997,6 +1058,23 @@ func calculateCoefficient(distributableINT, optionPoolINT int64) float64 {
 	return float64(distributableINT) / float64(optionPoolINT)
 }
 
+func cloneLiveEvent(event LiveEvent) LiveEvent {
+	copyEvent := event
+	copyEvent.Title = cloneStringsMap(event.Title)
+	copyEvent.Options = append([]Option(nil), event.Options...)
+	if event.Totals != nil {
+		copyEvent.Totals = make(map[string]int64, len(event.Totals))
+		for key, value := range event.Totals {
+			copyEvent.Totals[key] = value
+		}
+	}
+	if event.UserVote != nil {
+		userVote := *event.UserVote
+		copyEvent.UserVote = &userVote
+	}
+	return copyEvent
+}
+
 func cloneStringsMap(src map[string]string) map[string]string {
 	if src == nil {
 		return nil
@@ -1016,6 +1094,30 @@ func calculateFee(amount int64, feeBPS int64) int64 {
 		return amount
 	}
 	return (amount * feeBPS) / 10000
+}
+
+func (event LiveEvent) Market() LiveEventMarket {
+	options := make(map[string]OptionMarket, len(event.Totals))
+	for optionID, pool := range event.Totals {
+		sharePct := 0.0
+		if event.DistributableINT > 0 && pool > 0 {
+			sharePct = (float64(pool) / float64(event.DistributableINT)) * 100
+		}
+		options[optionID] = OptionMarket{
+			PoolINT:     pool,
+			SharePct:    roundMarketFloat(sharePct),
+			Coefficient: roundMarketFloat(calculateCoefficient(event.DistributableINT, pool)),
+		}
+	}
+	return LiveEventMarket{Options: options}
+}
+
+func (event LiveEvent) PotentialWinINT(optionID string, amountINT int64) int64 {
+	return CalculateAccrualINT(event.TotalContributed, event.PlatformFeeINT, event.Totals[strings.TrimSpace(optionID)], amountINT)
+}
+
+func roundMarketFloat(value float64) float64 {
+	return math.Round(value*10000) / 10000
 }
 
 // CalculateAccrualINT calculates user's accrual from the distributable event pool.

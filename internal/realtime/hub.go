@@ -11,11 +11,14 @@ type Envelope struct {
 }
 
 type VoteFeedItem struct {
-	UserID    string `json:"userId"`
-	Nickname  string `json:"nickname"`
-	OptionID  string `json:"optionId"`
-	AmountINT int64  `json:"amountINT"`
-	CreatedAt string `json:"createdAt"`
+	UserID             string  `json:"userId"`
+	Nickname           string  `json:"nickname"`
+	OptionID           string  `json:"optionId"`
+	AmountINT          int64   `json:"amountINT"`
+	OptionPoolSharePct float64 `json:"optionPoolSharePct"`
+	Coefficient        float64 `json:"coefficient"`
+	PotentialWinINT    int64   `json:"potentialWinINT"`
+	CreatedAt          string  `json:"createdAt"`
 }
 
 type VoteFeedPayload struct {
@@ -24,10 +27,20 @@ type VoteFeedPayload struct {
 	SnapshotAt string         `json:"snapshotAt"`
 }
 
+type EventOptionMarket struct {
+	PoolINT     int64   `json:"poolINT"`
+	SharePct    float64 `json:"sharePct"`
+	Coefficient float64 `json:"coefficient"`
+}
+
 type EventUpdatedPayload struct {
-	EventID  string           `json:"eventId"`
-	Totals   map[string]int64 `json:"totals"`
-	ClosesAt string           `json:"closesAt"`
+	EventID          string                       `json:"eventId"`
+	Totals           map[string]int64             `json:"totals"`
+	TotalContributed int64                        `json:"totalContributed"`
+	PlatformFeeINT   int64                        `json:"platformFeeINT"`
+	DistributableINT int64                        `json:"distributableINT"`
+	Options          map[string]EventOptionMarket `json:"options"`
+	ClosesAt         string                       `json:"closesAt"`
 }
 
 type ScenarioStepPayload struct {
