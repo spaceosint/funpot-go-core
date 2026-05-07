@@ -123,6 +123,7 @@ func main() {
 	streamersService := streamers.NewServiceWithValidator(streamerValidator)
 	if db != nil {
 		streamersService.SetStreamerRepository(streamers.NewPostgresStreamerRepository(db))
+		streamersService.SetDecisionRepository(streamers.NewPostgresDecisionRepository(db))
 	}
 	streamersService.SetMinLiveViewers(cfg.Client.MinViewers)
 	streamersService.SetLogger(logger.Named("streamers"))
