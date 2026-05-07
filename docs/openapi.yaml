@@ -425,6 +425,38 @@ paths:
         default:
           $ref: '#/components/responses/Error'
 
+  /api/admin/events/{eventId}/settle:
+    post:
+      summary: Settle live event outcome and credit winner/draw payouts (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminEventSettleRequest'
+      responses:
+        '200':
+          description: Settled event and credited payouts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventSettlement'
+        default:
+          $ref: '#/components/responses/Error'
+
 
   /api/rewards/weekly/claim:
     post:
@@ -2136,6 +2168,57 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScenarioGraphGroup'
+
+    AdminEventSettleRequest:
+      type: object
+      required: [streamerId, result]
+      properties:
+        streamerId:
+          type: string
+        winningOptionId:
+          type: string
+          description: Required when result is win; omitted for draw/refund settlement.
+        result:
+          type: string
+          enum: [win, draw]
+    EventSettlementPayout:
+      type: object
+      properties:
+        userId:
+          type: string
+        optionId:
+          type: string
+        amountINT:
+          type: integer
+        winAmountINT:
+          type: integer
+        resultStatus:
+          type: string
+          enum: [won, lost, draw]
+        idempotencyKey:
+          type: string
+    EventSettlement:
+      type: object
+      properties:
+        event:
+          $ref: '#/components/schemas/LiveEvent'
+        winningOptionId:
+          type: string
+        result:
+          type: string
+          enum: [win, draw]
+        payouts:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventSettlementPayout'
+        totalPayoutINT:
+          type: integer
+        platformFeeINT:
+          type: integer
+          description: Admin-configured platform fee already withheld from the distributable winner pool.
+        distributableINT:
+          type: integer
+
     LiveEvent:
       type: object
       properties:
@@ -2251,7 +2334,7 @@ components:
           nullable: true
         resultStatus:
           type: string
-          enum: [pending, won, lost]
+          enum: [pending, won, lost, draw]
     UserEventHistoryStreamerItem:
       type: object
       properties:

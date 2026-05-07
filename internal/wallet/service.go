@@ -302,5 +302,5 @@ func (s *Service) ensureAccountLocked(userID string) *account {
 
 func isGameRelatedReason(reason string) bool {
 	reason = strings.TrimSpace(reason)
-	return reason == "event_vote"
+	return reason == "event_vote" || reason == "event_win" || reason == "event_draw_refund" || reason == "event_vote_rollback"
 }

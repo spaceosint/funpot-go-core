@@ -448,3 +448,103 @@ func TestWeeklyRewardClaimCreditsWalletAndRespects24h(t *testing.T) {
 		t.Fatalf("expected wallet balance 10, got %d", walletPayload.Balance)
 	}
 }
+
+func TestAdminEventSettlementCreditsWinnerWithPlatformFee(t *testing.T) {
+	eventsService := events.NewService([]events.LiveEvent{{
+		ID:              "event-settle",
+		TemplateID:      "streamer-1:terminal-1",
+		StreamerID:      "streamer-1",
+		ScenarioID:      "scenario-1",
+		TerminalID:      "terminal-1",
+		Title:           map[string]string{"ru": "Победитель карты"},
+		DefaultLanguage: "ru",
+		Options: []events.Option{
+			{ID: "ct", Title: map[string]string{"ru": "CT"}},
+			{ID: "t", Title: map[string]string{"ru": "T"}},
+		},
+		ClosesAt:  time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Status:    "open",
+		Totals:    map[string]int64{"ct": 0, "t": 0},
+	}})
+	userService := users.NewService(users.NewInMemoryRepository())
+	created, err := userService.SyncTelegramProfile(context.Background(), users.TelegramProfile{ID: 1, Username: "u1"})
+	if err != nil {
+		t.Fatalf("SyncTelegramProfile() error = %v", err)
+	}
+	handler := NewHandler(
+		zap.NewNop(),
+		func() bool { return true },
+		nil,
+		buildAuthService(t),
+		admin.NewService([]string{"admin-1"}),
+		userService,
+		nil,
+		nil,
+		nil,
+		nil,
+		eventsService,
+		ClientConfigResponse{},
+	)
+	adminToken := buildToken(t, "admin-1")
+	userToken := buildToken(t, created.ID)
+
+	settingsReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings/general", bytes.NewReader([]byte(`{"votePlatformFeePercent":15}`)))
+	settingsReq.Header.Set("Authorization", "Bearer "+adminToken)
+	settingsRes := httptest.NewRecorder()
+	handler.ServeHTTP(settingsRes, settingsReq)
+	if settingsRes.Code != http.StatusOK {
+		t.Fatalf("settings status=%d body=%s", settingsRes.Code, settingsRes.Body.String())
+	}
+
+	adjustReq := httptest.NewRequest(http.MethodPut, "/api/admin/users/"+created.ID, bytes.NewReader([]byte(`{"balanceDeltaINT":100,"balanceReason":"seed"}`)))
+	adjustReq.Header.Set("Authorization", "Bearer "+adminToken)
+	adjustReq.Header.Set("Idempotency-Key", "settle-adj-seed")
+	adjustRes := httptest.NewRecorder()
+	handler.ServeHTTP(adjustRes, adjustReq)
+	if adjustRes.Code != http.StatusOK {
+		t.Fatalf("seed wallet status=%d body=%s", adjustRes.Code, adjustRes.Body.String())
+	}
+
+	voteReq := httptest.NewRequest(http.MethodPost, "/api/events/event-settle/vote", bytes.NewReader([]byte(`{"streamerId":"streamer-1","optionId":"ct","amountINT":100}`)))
+	voteReq.Header.Set("Authorization", "Bearer "+userToken)
+	voteReq.Header.Set("Idempotency-Key", "settle-vote-1")
+	voteRes := httptest.NewRecorder()
+	handler.ServeHTTP(voteRes, voteReq)
+	if voteRes.Code != http.StatusOK {
+		t.Fatalf("vote status=%d body=%s", voteRes.Code, voteRes.Body.String())
+	}
+
+	settleReq := httptest.NewRequest(http.MethodPost, "/api/admin/events/event-settle/settle", bytes.NewReader([]byte(`{"streamerId":"streamer-1","winningOptionId":"ct","result":"win"}`)))
+	settleReq.Header.Set("Authorization", "Bearer "+adminToken)
+	settleReq.Header.Set("Idempotency-Key", "settle-event-1")
+	settleRes := httptest.NewRecorder()
+	handler.ServeHTTP(settleRes, settleReq)
+	if settleRes.Code != http.StatusOK {
+		t.Fatalf("settle status=%d body=%s", settleRes.Code, settleRes.Body.String())
+	}
+	var settlement events.Settlement
+	if err := json.Unmarshal(settleRes.Body.Bytes(), &settlement); err != nil {
+		t.Fatalf("unmarshal settlement: %v", err)
+	}
+	if settlement.TotalPayoutINT != 85 || settlement.PlatformFeeINT != 15 || settlement.DistributableINT != 85 {
+		t.Fatalf("unexpected settlement: %+v", settlement)
+	}
+
+	walletReq := httptest.NewRequest(http.MethodGet, "/api/wallet", nil)
+	walletReq.Header.Set("Authorization", "Bearer "+userToken)
+	walletRes := httptest.NewRecorder()
+	handler.ServeHTTP(walletRes, walletReq)
+	if walletRes.Code != http.StatusOK {
+		t.Fatalf("wallet status=%d body=%s", walletRes.Code, walletRes.Body.String())
+	}
+	var walletPayload struct {
+		Balance int64 `json:"balance"`
+	}
+	if err := json.Unmarshal(walletRes.Body.Bytes(), &walletPayload); err != nil {
+		t.Fatalf("unmarshal wallet response: %v", err)
+	}
+	if walletPayload.Balance != 85 {
+		t.Fatalf("expected wallet balance 85 after platform-fee settlement, got %d", walletPayload.Balance)
+	}
+}

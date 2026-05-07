@@ -217,7 +217,8 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/streamers/{streamerId}/llm-history?page=1&pageSize=20` – admin timeline endpoint with paginated LLM decision history (step name, LLM response, global state delta, event timestamps). Each LLM event now carries its own Bunny video fragment URL in `videoData`, plus the endpoint returns uploaded Bunny video metadata for the streamer.
 - `DELETE /api/admin/streamers/{streamerId}/llm-history` – admin cleanup endpoint that deletes persisted LLM decision history and removes tracked Bunny videos for the streamer.
 - `GET /api/events/live` – returns live events for a required `streamerId` query parameter.
-- `GET /realtime?streamerId=<id>` – WebSocket upgrade endpoint (JWT required in `Authorization: Bearer <token>`), streams streamer updates (`EVENT_UPDATED`, `EVENT_VOTE_FEED_UPDATED`) and user-scoped updates (`BALANCE_UPDATED`, `USER_BET_UPDATED`).
+- `POST /api/admin/events/{eventId}/settle` – admin-only settlement endpoint. Send `result=win` with `winningOptionId` to credit winners from the distributable pool after the admin-configured platform fee, or `result=draw` to refund original vote amounts.
+- `GET /realtime?streamerId=<id>` – WebSocket upgrade endpoint (JWT required in `Authorization: Bearer <token>`), streams streamer updates (`EVENT_UPDATED`, `EVENT_VOTE_FEED_UPDATED`, `EVENT_SETTLED`) and user-scoped updates (`BALANCE_UPDATED`, `USER_BET_UPDATED`).
 - `GET /api/admin/games` – admin-only endpoint listing all configured games.
 - `POST /api/admin/games` – admin-only endpoint creating a game definition.
 - `PUT /api/admin/games/{gameId}` – admin-only endpoint updating a game definition.
@@ -248,6 +249,7 @@ Authorization: Bearer <jwt>
    - `EVENT_VOTE_FEED_UPDATED` (nickname + option + amount),
    - `BALANCE_UPDATED` (your new balance),
    - `USER_BET_UPDATED` (your cumulative stake, coefficient, potential payout).
+6. Settle as admin via `POST /api/admin/events/{eventId}/settle` and verify `EVENT_SETTLED` plus winner/refund `BALANCE_UPDATED` messages.
 
 When database connection fields are unset the server falls back to the in-memory
 repository for user profiles. This is useful for quick smoke tests but bypasses

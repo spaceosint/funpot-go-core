@@ -397,3 +397,89 @@ func TestListLiveByStreamerUsesRedisAsActiveSourceWhenPostgresExists(t *testing.
 		t.Fatalf("unexpected db calls: %v", err)
 	}
 }
+
+func TestSettleEventMarksWinLossAndUsesPlatformFee(t *testing.T) {
+	svc := NewService([]LiveEvent{{
+		ID:              "event-1",
+		TemplateID:      "streamer-1:terminal-1",
+		StreamerID:      "streamer-1",
+		ScenarioID:      "scenario-1",
+		TerminalID:      "terminal-1",
+		Title:           map[string]string{"ru": "Победитель"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}, {ID: "t", Title: map[string]string{"ru": "T"}}},
+		ClosesAt:        time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		Status:          "open",
+		Totals:          map[string]int64{"ct": 0, "t": 0},
+	}})
+	if _, err := svc.UpdateSettings(Settings{VotePlatformFeePercent: 10}); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{EventID: "event-1", StreamerID: "streamer-1", UserID: "winner", OptionID: "ct", Amount: 100, IdempotencyKey: "vote-win"}); err != nil {
+		t.Fatalf("winner Vote() error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{EventID: "event-1", StreamerID: "streamer-1", UserID: "loser", OptionID: "t", Amount: 100, IdempotencyKey: "vote-lose"}); err != nil {
+		t.Fatalf("loser Vote() error = %v", err)
+	}
+
+	settlement, err := svc.SettleEvent(context.Background(), SettleRequest{EventID: "event-1", StreamerID: "streamer-1", WinningOptionID: "ct", Result: SettleResultWin, ActorID: "admin"})
+	if err != nil {
+		t.Fatalf("SettleEvent() error = %v", err)
+	}
+	if settlement.Event.Status != "settled" || settlement.PlatformFeeINT != 20 || settlement.DistributableINT != 180 || settlement.TotalPayoutINT != 180 {
+		t.Fatalf("unexpected settlement totals: %+v", settlement)
+	}
+	if len(settlement.Payouts) != 1 || settlement.Payouts[0].UserID != "winner" || settlement.Payouts[0].WinAmountINT != 180 || settlement.Payouts[0].ResultStatus != ResultStatusWon {
+		t.Fatalf("unexpected payouts: %+v", settlement.Payouts)
+	}
+
+	winnerHistory := svc.ListUserHistory(context.Background(), "winner")
+	if len(winnerHistory) != 1 || winnerHistory[0].WinAmountINT == nil || *winnerHistory[0].WinAmountINT != 180 || winnerHistory[0].ResultStatus != ResultStatusWon {
+		t.Fatalf("unexpected winner history: %+v", winnerHistory)
+	}
+	loserHistory := svc.ListUserHistory(context.Background(), "loser")
+	if len(loserHistory) != 1 || loserHistory[0].WinAmountINT == nil || *loserHistory[0].WinAmountINT != 0 || loserHistory[0].ResultStatus != ResultStatusLost {
+		t.Fatalf("unexpected loser history: %+v", loserHistory)
+	}
+}
+
+func TestSettleEventDrawRefundsOriginalAmounts(t *testing.T) {
+	svc := NewService([]LiveEvent{{
+		ID:              "event-draw",
+		TemplateID:      "streamer-1:terminal-1",
+		StreamerID:      "streamer-1",
+		ScenarioID:      "scenario-1",
+		TerminalID:      "terminal-1",
+		Title:           map[string]string{"ru": "Победитель"},
+		DefaultLanguage: "ru",
+		Options:         []Option{{ID: "ct", Title: map[string]string{"ru": "CT"}}, {ID: "t", Title: map[string]string{"ru": "T"}}},
+		ClosesAt:        time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano),
+		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		Status:          "open",
+		Totals:          map[string]int64{"ct": 0, "t": 0},
+	}})
+	if _, err := svc.UpdateSettings(Settings{VotePlatformFeePercent: 25}); err != nil {
+		t.Fatalf("UpdateSettings() error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{EventID: "event-draw", StreamerID: "streamer-1", UserID: "u1", OptionID: "ct", Amount: 80, IdempotencyKey: "draw-vote-1"}); err != nil {
+		t.Fatalf("u1 Vote() error = %v", err)
+	}
+	if _, err := svc.Vote(context.Background(), VoteRequest{EventID: "event-draw", StreamerID: "streamer-1", UserID: "u2", OptionID: "t", Amount: 20, IdempotencyKey: "draw-vote-2"}); err != nil {
+		t.Fatalf("u2 Vote() error = %v", err)
+	}
+
+	settlement, err := svc.SettleEvent(context.Background(), SettleRequest{EventID: "event-draw", StreamerID: "streamer-1", Result: SettleResultDraw, ActorID: "admin"})
+	if err != nil {
+		t.Fatalf("SettleEvent(draw) error = %v", err)
+	}
+	if settlement.Result != SettleResultDraw || settlement.WinningOptionID != "" || settlement.TotalPayoutINT != 100 || len(settlement.Payouts) != 2 {
+		t.Fatalf("unexpected draw settlement: %+v", settlement)
+	}
+	for _, userID := range []string{"u1", "u2"} {
+		history := svc.ListUserHistory(context.Background(), userID)
+		if len(history) != 1 || history[0].ResultStatus != ResultStatusDraw || history[0].WinAmountINT == nil || *history[0].WinAmountINT != history[0].AmountINT {
+			t.Fatalf("unexpected draw history for %s: %+v", userID, history)
+		}
+	}
+}

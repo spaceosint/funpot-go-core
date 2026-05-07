@@ -22,6 +22,13 @@ type LiveEventMarket struct {
 	Options map[string]OptionMarket `json:"options"`
 }
 
+const (
+	ResultStatusPending = "pending"
+	ResultStatusWon     = "won"
+	ResultStatusLost    = "lost"
+	ResultStatusDraw    = "draw"
+)
+
 type UserEventHistoryItem struct {
 	EventID          string            `json:"eventId"`
 	StreamerID       string            `json:"streamerId"`
@@ -83,4 +90,39 @@ type VoteRequest struct {
 	Amount         int64
 	IdempotencyKey string
 	WalletLedgerID string
+}
+
+type SettleResult string
+
+const (
+	SettleResultWin  SettleResult = "win"
+	SettleResultDraw SettleResult = "draw"
+)
+
+type SettleRequest struct {
+	EventID         string       `json:"-"`
+	StreamerID      string       `json:"streamerId"`
+	WinningOptionID string       `json:"winningOptionId,omitempty"`
+	Result          SettleResult `json:"result"`
+	IdempotencyKey  string       `json:"-"`
+	ActorID         string       `json:"-"`
+}
+
+type SettlementPayout struct {
+	UserID         string `json:"userId"`
+	OptionID       string `json:"optionId"`
+	AmountINT      int64  `json:"amountINT"`
+	WinAmountINT   int64  `json:"winAmountINT"`
+	ResultStatus   string `json:"resultStatus"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+type Settlement struct {
+	Event            LiveEvent          `json:"event"`
+	WinningOptionID  string             `json:"winningOptionId,omitempty"`
+	Result           SettleResult       `json:"result"`
+	Payouts          []SettlementPayout `json:"payouts"`
+	TotalPayoutINT   int64              `json:"totalPayoutINT"`
+	PlatformFeeINT   int64              `json:"platformFeeINT"`
+	DistributableINT int64              `json:"distributableINT"`
 }

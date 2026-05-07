@@ -70,6 +70,31 @@ Payload schema:
 ```
 Real-time feed of participant votes for the mini-game, including who placed the vote, selected option, current option share, current coefficient, and potential win for that vote amount. Frontend should append `items` to the vote tape and reconcile by `eventId + userId + createdAt`.
 
+
+### EVENT_SETTLED
+Payload schema:
+```json
+{
+  "event": { "id": "uuid", "status": "settled" },
+  "winningOptionId": "ct",
+  "result": "win",
+  "payouts": [
+    {
+      "userId": "uuid",
+      "optionId": "ct",
+      "amountINT": 100,
+      "winAmountINT": 180,
+      "resultStatus": "won",
+      "idempotencyKey": "event_settlement:event:user:vote"
+    }
+  ],
+  "totalPayoutINT": 180,
+  "platformFeeINT": 20,
+  "distributableINT": 180
+}
+```
+Sent after an admin settles a mini-game. `result=win` pays winning-option voters from the distributable pool after the admin platform fee; `result=draw` refunds original vote amounts and marks history as `draw`.
+
 ### EVENT_CLOSED
 Payload schema:
 ```json
