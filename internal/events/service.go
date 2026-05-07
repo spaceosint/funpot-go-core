@@ -122,9 +122,14 @@ func (s *Service) CreateLiveEvent(ctx context.Context, req CreateLiveEventReques
 	if req.Duration <= 0 {
 		req.Duration = 5 * time.Minute
 	}
-	templateID := strings.TrimSpace(req.StreamerID) + ":" + strings.TrimSpace(req.TerminalID)
-	if s.db != nil {
-		if existing, ok, err := s.findActiveEventByTemplateDB(ctx, strings.TrimSpace(req.StreamerID), templateID, now); err != nil {
+	streamerID := strings.TrimSpace(req.StreamerID)
+	templateID := streamerID + ":" + strings.TrimSpace(req.TerminalID)
+	if s.redis != nil {
+		if existing, ok := s.findActiveEventByTemplateRedis(ctx, streamerID, templateID, now); ok {
+			return existing, ErrAlreadyActive
+		}
+	} else if s.db != nil {
+		if existing, ok, err := s.findActiveEventByTemplateDB(ctx, streamerID, templateID, now); err != nil {
 			return LiveEvent{}, err
 		} else if ok {
 			return existing, ErrAlreadyActive
@@ -132,18 +137,20 @@ func (s *Service) CreateLiveEvent(ctx context.Context, req CreateLiveEventReques
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, item := range s.items {
-		if item.event.StreamerID != strings.TrimSpace(req.StreamerID) || item.event.TemplateID != templateID {
-			continue
-		}
-		if isOpen(item.event, now) {
-			return item.event, ErrAlreadyActive
+	if s.redis == nil {
+		for _, item := range s.items {
+			if item.event.StreamerID != streamerID || item.event.TemplateID != templateID {
+				continue
+			}
+			if isOpen(item.event, now) {
+				return item.event, ErrAlreadyActive
+			}
 		}
 	}
 	event := LiveEvent{
 		ID:              uuid.NewString(),
 		TemplateID:      templateID,
-		StreamerID:      strings.TrimSpace(req.StreamerID),
+		StreamerID:      streamerID,
 		ScenarioID:      strings.TrimSpace(req.ScenarioID),
 		TransitionID:    strings.TrimSpace(req.TransitionID),
 		TerminalID:      strings.TrimSpace(req.TerminalID),
@@ -164,14 +171,23 @@ func (s *Service) CreateLiveEvent(ctx context.Context, req CreateLiveEventReques
 		userVotes:      map[string]voteRecord{},
 	}
 	s.items[event.ID] = state
-	if s.db != nil {
+	if s.redis != nil {
+		if err := s.persistLiveState(ctx, event); err != nil {
+			delete(s.items, event.ID)
+			return LiveEvent{}, err
+		}
+		if s.db != nil {
+			if err := s.persistLiveEventHistoryFromRedis(ctx, event.ID, now); err != nil {
+				delete(s.items, event.ID)
+				_ = s.deleteLiveState(ctx, event)
+				return LiveEvent{}, err
+			}
+		}
+	} else if s.db != nil {
 		if err := s.insertLiveEventDB(ctx, event, now); err != nil {
 			delete(s.items, event.ID)
 			return LiveEvent{}, err
 		}
-	}
-	if s.redis != nil {
-		_ = s.persistLiveState(ctx, event)
 	}
 	return event, nil
 }
@@ -398,12 +414,11 @@ func (s *Service) rollbackWeeklyRewardClaimDB(userID string, claimedAt string) {
 
 func (s *Service) ListLiveByStreamer(ctx context.Context, streamerID string) []LiveEvent {
 	if s.redis != nil {
-		if event, ok := s.readActiveEventFromRedis(ctx, streamerID); ok {
-			now := time.Now().UTC()
-			if isOpen(event, now) {
-				return []LiveEvent{event}
-			}
+		items := s.listOpenEventsFromRedis(ctx, streamerID, time.Now().UTC())
+		if len(items) > 0 {
+			s.cacheLoadedEvents(items)
 		}
+		return items
 	}
 	if s.db != nil {
 		if items, err := s.listOpenEventsByStreamerDB(ctx, strings.TrimSpace(streamerID), time.Now().UTC()); err == nil && len(items) > 0 {
@@ -451,7 +466,11 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 				return event, nil
 			}
 		}
-		if err := s.ensureLiveEventLoaded(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+		if s.redis != nil {
+			if err := s.ensureLiveEventLoadedFromRedis(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
+				return LiveEvent{}, err
+			}
+		} else if err := s.ensureLiveEventLoaded(ctx, strings.TrimSpace(req.EventID), strings.TrimSpace(req.StreamerID)); err != nil {
 			return LiveEvent{}, err
 		}
 	}
@@ -494,13 +513,21 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 	userVote.Amount += req.Amount
 	item.userVotes[strings.TrimSpace(req.UserID)] = userVote
 	item.processedVotes[strings.TrimSpace(req.IdempotencyKey)] = voteRecord{OptionID: optionID, Amount: req.Amount}
-	if s.db != nil {
-		if err := s.persistVoteDB(ctx, item.event, req, optionID); err != nil {
+	if s.redis != nil {
+		if err := s.persistLiveState(ctx, item.event); err != nil {
 			return LiveEvent{}, err
 		}
 	}
-	if s.redis != nil {
-		_ = s.persistLiveState(ctx, item.event)
+	if s.db != nil {
+		eventForHistory := item.event
+		if s.redis != nil {
+			if redisEvent, ok := s.readLiveEventStateFromRedis(ctx, item.event.ID); ok {
+				eventForHistory = redisEvent
+			}
+		}
+		if err := s.persistVoteDB(ctx, eventForHistory, req, optionID); err != nil {
+			return LiveEvent{}, err
+		}
 	}
 	optionPool := item.event.Totals[optionID]
 	coefficient := calculateCoefficient(item.event.DistributableINT, optionPool)
@@ -544,34 +571,160 @@ func (s *Service) persistLiveState(ctx context.Context, event LiveEvent) error {
 	if ttl <= 0 {
 		ttl = 6 * time.Hour
 	}
-	stateKey := fmt.Sprintf("live_event:%s:state", event.ID)
-	activeKey := fmt.Sprintf("streamer:%s:active_event", event.StreamerID)
-	b, err := json.Marshal(event)
+	stateKey := liveEventStateKey(event.ID)
+	latestKey := latestActiveEventKey(event.StreamerID)
+	activeSetKey := activeEventsSetKey(event.StreamerID)
+	templateKey := activeTemplateKey(event.StreamerID, event.TemplateID)
+	b, err := json.Marshal(redisLiveEventState{Event: event, StreamerID: event.StreamerID})
 	if err != nil {
 		return err
 	}
 	if err = s.redis.Set(ctx, stateKey, b, ttl).Err(); err != nil {
 		return err
 	}
-	return s.redis.Set(ctx, activeKey, event.ID, ttl).Err()
+	if err = s.redis.SAdd(ctx, activeSetKey, event.ID).Err(); err != nil {
+		return err
+	}
+	if err = s.redis.Expire(ctx, activeSetKey, ttl).Err(); err != nil {
+		return err
+	}
+	if err = s.redis.Set(ctx, latestKey, event.ID, ttl).Err(); err != nil {
+		return err
+	}
+	return s.redis.Set(ctx, templateKey, event.ID, ttl).Err()
 }
 
-func (s *Service) readActiveEventFromRedis(ctx context.Context, streamerID string) (LiveEvent, bool) {
-	activeKey := fmt.Sprintf("streamer:%s:active_event", streamerID)
-	eventID, err := s.redis.Get(ctx, activeKey).Result()
+func (s *Service) deleteLiveState(ctx context.Context, event LiveEvent) error {
+	if s.redis == nil {
+		return nil
+	}
+	if err := s.redis.SRem(ctx, activeEventsSetKey(event.StreamerID), event.ID).Err(); err != nil {
+		return err
+	}
+	return s.redis.Del(ctx,
+		liveEventStateKey(event.ID),
+		latestActiveEventKey(event.StreamerID),
+		activeTemplateKey(event.StreamerID, event.TemplateID),
+	).Err()
+}
+
+func (s *Service) findActiveEventByTemplateRedis(ctx context.Context, streamerID, templateID string, now time.Time) (LiveEvent, bool) {
+	if s.redis == nil {
+		return LiveEvent{}, false
+	}
+	eventID, err := s.redis.Get(ctx, activeTemplateKey(streamerID, templateID)).Result()
 	if err != nil || strings.TrimSpace(eventID) == "" {
 		return LiveEvent{}, false
 	}
-	stateKey := fmt.Sprintf("live_event:%s:state", strings.TrimSpace(eventID))
-	raw, err := s.redis.Get(ctx, stateKey).Bytes()
+	event, ok := s.readLiveEventStateFromRedis(ctx, eventID)
+	if !ok || !isOpen(event, now) {
+		return LiveEvent{}, false
+	}
+	return event, true
+}
+
+func (s *Service) listOpenEventsFromRedis(ctx context.Context, streamerID string, now time.Time) []LiveEvent {
+	if s.redis == nil || strings.TrimSpace(streamerID) == "" {
+		return []LiveEvent{}
+	}
+	ids, err := s.redis.SMembers(ctx, activeEventsSetKey(streamerID)).Result()
+	if err != nil || len(ids) == 0 {
+		if event, ok := s.readLatestActiveEventFromRedis(ctx, streamerID); ok && isOpen(event, now) {
+			return []LiveEvent{event}
+		}
+		return []LiveEvent{}
+	}
+	items := make([]LiveEvent, 0, len(ids))
+	for _, id := range ids {
+		event, ok := s.readLiveEventStateFromRedis(ctx, id)
+		if !ok || !isOpen(event, now) {
+			continue
+		}
+		event.Status = "open"
+		items = append(items, event)
+	}
+	return items
+}
+
+func (s *Service) readLatestActiveEventFromRedis(ctx context.Context, streamerID string) (LiveEvent, bool) {
+	eventID, err := s.redis.Get(ctx, latestActiveEventKey(streamerID)).Result()
+	if err != nil || strings.TrimSpace(eventID) == "" {
+		return LiveEvent{}, false
+	}
+	return s.readLiveEventStateFromRedis(ctx, eventID)
+}
+
+func (s *Service) readLiveEventStateFromRedis(ctx context.Context, eventID string) (LiveEvent, bool) {
+	if s.redis == nil || strings.TrimSpace(eventID) == "" {
+		return LiveEvent{}, false
+	}
+	raw, err := s.redis.Get(ctx, liveEventStateKey(eventID)).Bytes()
 	if err != nil {
 		return LiveEvent{}, false
+	}
+	var wrapped redisLiveEventState
+	if err = json.Unmarshal(raw, &wrapped); err == nil && strings.TrimSpace(wrapped.Event.ID) != "" {
+		wrapped.Event.StreamerID = firstNonEmpty(strings.TrimSpace(wrapped.StreamerID), strings.TrimSpace(wrapped.Event.StreamerID))
+		return wrapped.Event, true
 	}
 	var event LiveEvent
 	if err = json.Unmarshal(raw, &event); err != nil {
 		return LiveEvent{}, false
 	}
 	return event, true
+}
+
+func (s *Service) ensureLiveEventLoadedFromRedis(ctx context.Context, eventID, streamerID string) error {
+	s.mu.RLock()
+	item, ok := s.items[eventID]
+	s.mu.RUnlock()
+	if ok && item.event.StreamerID == streamerID {
+		return nil
+	}
+	event, found := s.readLiveEventStateFromRedis(ctx, eventID)
+	if !found || event.StreamerID != streamerID {
+		return ErrEventNotFound
+	}
+	s.cacheLoadedEvents([]LiveEvent{event})
+	return nil
+}
+
+func (s *Service) persistLiveEventHistoryFromRedis(ctx context.Context, eventID string, openedAt time.Time) error {
+	event, ok := s.readLiveEventStateFromRedis(ctx, eventID)
+	if !ok {
+		return ErrEventNotFound
+	}
+	return s.insertLiveEventDB(ctx, event, openedAt)
+}
+
+func liveEventStateKey(eventID string) string {
+	return fmt.Sprintf("live_event:%s:state", strings.TrimSpace(eventID))
+}
+
+func latestActiveEventKey(streamerID string) string {
+	return fmt.Sprintf("streamer:%s:active_event", strings.TrimSpace(streamerID))
+}
+
+func activeEventsSetKey(streamerID string) string {
+	return fmt.Sprintf("streamer:%s:active_events", strings.TrimSpace(streamerID))
+}
+
+func activeTemplateKey(streamerID, templateID string) string {
+	return fmt.Sprintf("streamer:%s:template:%s:active_event", strings.TrimSpace(streamerID), strings.TrimSpace(templateID))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+type redisLiveEventState struct {
+	Event      LiveEvent `json:"event"`
+	StreamerID string    `json:"streamerId"`
 }
 
 type dbVoteRecord struct {

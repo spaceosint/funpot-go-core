@@ -2,6 +2,7 @@ package streamers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
@@ -56,10 +57,18 @@ type analysisState struct {
 	updatedAt string
 }
 
+type StreamerRepository interface {
+	List(ctx context.Context, query, status string, page int) ([]Streamer, error)
+	GetByID(ctx context.Context, id string) (Streamer, bool, error)
+	Upsert(ctx context.Context, item Streamer) (Streamer, error)
+	Delete(ctx context.Context, id string) error
+}
+
 type Service struct {
 	logger           *zap.Logger
 	mu               sync.RWMutex
 	items            []Streamer
+	streamerRepo     StreamerRepository
 	decisionRepo     DecisionRepository
 	analysis         map[string]analysisState
 	validator        TwitchValidator
@@ -75,6 +84,14 @@ type Service struct {
 
 func NewService() *Service {
 	return NewServiceWithValidator(noopTwitchValidator{})
+}
+
+func NewPostgresService(db *sql.DB, validator TwitchValidator) *Service {
+	svc := NewServiceWithValidator(validator)
+	if db != nil {
+		svc.SetStreamerRepository(NewPostgresStreamerRepository(db))
+	}
+	return svc
 }
 
 func NewServiceWithValidator(validator TwitchValidator) *Service {
@@ -118,6 +135,15 @@ func (s *Service) SetLogger(logger *zap.Logger) {
 	s.logger = logger
 }
 
+func (s *Service) SetStreamerRepository(repo StreamerRepository) {
+	if s == nil || repo == nil {
+		return
+	}
+	s.mu.Lock()
+	s.streamerRepo = repo
+	s.mu.Unlock()
+}
+
 func (s *Service) SetDecisionRepository(repo DecisionRepository) {
 	if s == nil || repo == nil {
 		return
@@ -151,44 +177,56 @@ func (s *Service) trackingStopHook() func(context.Context, string) error {
 	return s.onTrackingStop
 }
 
-func (s *Service) List(_ context.Context, query, status string, page int) []Streamer {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *Service) List(ctx context.Context, query, status string, page int) []Streamer {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if page < 1 {
 		page = 1
 	}
-	needle := strings.ToLower(strings.TrimSpace(query))
-	statusFilter := strings.ToLower(strings.TrimSpace(status))
-	matches := make([]Streamer, 0, len(s.items))
-	for _, item := range s.items {
-		if needle != "" && !strings.Contains(strings.ToLower(item.TwitchNickname), needle) && !strings.Contains(strings.ToLower(item.DisplayName), needle) {
-			continue
+
+	s.mu.RLock()
+	repo := s.streamerRepo
+	s.mu.RUnlock()
+	if repo != nil {
+		items, err := repo.List(ctx, query, status, page)
+		if err == nil {
+			return items
 		}
-		if statusFilter != "" && strings.ToLower(item.Status) != statusFilter {
-			continue
+		if s.logger != nil {
+			s.logger.Error("failed to list streamers from repository", zap.Error(err))
 		}
-		matches = append(matches, item)
 	}
 
-	const pageSize = 20
-	start := (page - 1) * pageSize
-	if start >= len(matches) {
-		return []Streamer{}
-	}
-	end := start + pageSize
-	if end > len(matches) {
-		end = len(matches)
-	}
-	result := make([]Streamer, end-start)
-	copy(result, matches[start:end])
-	return result
-}
-
-func (s *Service) GetByID(_ context.Context, id string) (Streamer, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return filterStreamers(s.items, query, status, page)
+}
+
+func (s *Service) GetByID(ctx context.Context, id string) (Streamer, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	needle := strings.TrimSpace(id)
+	if needle == "" {
+		return Streamer{}, false
+	}
+
+	s.mu.RLock()
+	repo := s.streamerRepo
+	s.mu.RUnlock()
+	if repo != nil {
+		item, ok, err := repo.GetByID(ctx, needle)
+		if err == nil {
+			return item, ok
+		}
+		if s.logger != nil {
+			s.logger.Error("failed to load streamer from repository", zap.String("streamerID", needle), zap.Error(err))
+		}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for _, item := range s.items {
 		if item.ID == needle {
 			return item, true
@@ -197,21 +235,15 @@ func (s *Service) GetByID(_ context.Context, id string) (Streamer, bool) {
 	return Streamer{}, false
 }
 
-func (s *Service) ResolveStreamlinkChannel(_ context.Context, streamerID string) (string, error) {
+func (s *Service) ResolveStreamlinkChannel(ctx context.Context, streamerID string) (string, error) {
 	id := strings.TrimSpace(streamerID)
 	if id == "" {
 		return "", ErrNotFound
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for _, item := range s.items {
-		if item.ID == id {
-			if nickname := strings.TrimSpace(item.TwitchNickname); nickname != "" {
-				return nickname, nil
-			}
-			break
+	if item, ok := s.GetByID(ctx, id); ok {
+		if nickname := strings.TrimSpace(item.TwitchNickname); nickname != "" {
+			return nickname, nil
 		}
 	}
 
@@ -279,8 +311,7 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 		}
 	}
 
-	now := s.nowFn().UnixNano()
-	id := fmt.Sprintf("str_%d", now)
+	id := uuid.NewString()
 	streamer := Streamer{
 		ID:             id,
 		Platform:       "twitch",
@@ -293,8 +324,24 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 		Status:         "pending",
 	}
 
+	s.mu.RLock()
+	repo := s.streamerRepo
+	s.mu.RUnlock()
+	persistedNewStreamer := false
+	if repo != nil {
+		requestedID := id
+		stored, repoErr := repo.Upsert(ctx, streamer)
+		if repoErr != nil {
+			logger.Error("failed to persist streamer", zap.String("streamerID", id), zap.Error(repoErr))
+			return Submission{}, repoErr
+		}
+		streamer = stored
+		id = stored.ID
+		persistedNewStreamer = id == requestedID
+	}
+
 	s.mu.Lock()
-	s.items = append(s.items, streamer)
+	s.upsertCachedStreamerLocked(streamer)
 	s.mu.Unlock()
 
 	logger.Info("streamer stored and awaiting worker scheduling", zap.String("streamerID", id), zap.String("status", streamer.Status))
@@ -303,10 +350,13 @@ func (s *Service) Submit(ctx context.Context, twitchNickname, addedBy string) (S
 		logger.Info("starting streamer submission hook", zap.String("streamerID", id))
 		if err := hook(ctx, id); err != nil {
 			logger.Error("streamer submission hook failed", zap.String("streamerID", id), zap.Error(err))
-			s.mu.Lock()
-			if n := len(s.items); n > 0 && s.items[n-1].ID == id {
-				s.items = s.items[:n-1]
+			if repo != nil && persistedNewStreamer {
+				if deleteErr := repo.Delete(ctx, id); deleteErr != nil && s.logger != nil {
+					s.logger.Error("failed to rollback persisted streamer after hook error", zap.String("streamerID", id), zap.Error(deleteErr))
+				}
 			}
+			s.mu.Lock()
+			s.removeCachedStreamerLocked(id)
 			delete(s.analysis, id)
 			s.mu.Unlock()
 			return Submission{}, err
@@ -327,16 +377,7 @@ func (s *Service) StopTracking(ctx context.Context, streamerID string) error {
 		return ErrNotFound
 	}
 
-	s.mu.RLock()
-	exists := false
-	for _, item := range s.items {
-		if item.ID == id {
-			exists = true
-			break
-		}
-	}
-	s.mu.RUnlock()
-	if !exists {
+	if _, ok := s.GetByID(ctx, id); !ok {
 		return ErrNotFound
 	}
 
@@ -653,6 +694,60 @@ func inferDetectedGameKey(items []LLMDecision) string {
 		}
 	}
 	return ""
+}
+
+func filterStreamers(items []Streamer, query, status string, page int) []Streamer {
+	if page < 1 {
+		page = 1
+	}
+	needle := strings.ToLower(strings.TrimSpace(query))
+	statusFilter := strings.ToLower(strings.TrimSpace(status))
+	matches := make([]Streamer, 0, len(items))
+	for _, item := range items {
+		if needle != "" && !strings.Contains(strings.ToLower(item.TwitchNickname), needle) && !strings.Contains(strings.ToLower(item.DisplayName), needle) {
+			continue
+		}
+		if statusFilter != "" && strings.ToLower(item.Status) != statusFilter {
+			continue
+		}
+		matches = append(matches, item)
+	}
+
+	const pageSize = 20
+	start := (page - 1) * pageSize
+	if start >= len(matches) {
+		return []Streamer{}
+	}
+	end := start + pageSize
+	if end > len(matches) {
+		end = len(matches)
+	}
+	result := make([]Streamer, end-start)
+	copy(result, matches[start:end])
+	return result
+}
+
+func (s *Service) upsertCachedStreamerLocked(item Streamer) {
+	for idx, existing := range s.items {
+		if existing.ID == item.ID {
+			s.items[idx] = item
+			return
+		}
+	}
+	s.items = append(s.items, item)
+}
+
+func (s *Service) removeCachedStreamerLocked(id string) {
+	needle := strings.TrimSpace(id)
+	if needle == "" {
+		return
+	}
+	for idx, item := range s.items {
+		if item.ID == needle {
+			s.items = append(s.items[:idx], s.items[idx+1:]...)
+			return
+		}
+	}
 }
 
 func IsSupportedStatus(status string) bool {

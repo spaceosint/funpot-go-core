@@ -121,6 +121,9 @@ func main() {
 		streamerValidator = nil
 	}
 	streamersService := streamers.NewServiceWithValidator(streamerValidator)
+	if db != nil {
+		streamersService.SetStreamerRepository(streamers.NewPostgresStreamerRepository(db))
+	}
 	streamersService.SetMinLiveViewers(cfg.Client.MinViewers)
 	streamersService.SetLogger(logger.Named("streamers"))
 	gamesService := games.NewService()
@@ -131,6 +134,9 @@ func main() {
 	eventsService := events.NewService(nil)
 	if db != nil {
 		eventsService = events.NewPostgresService(db, nil)
+	}
+	if redisClient != nil {
+		eventsService.WithRedisLiveState(redisClient, 6*time.Hour)
 	}
 
 	streamCapture := buildStreamCapture(cfg, streamersService)
