@@ -346,6 +346,12 @@ type eventVoteRequest struct {
 	AmountINT  int64  `json:"amountINT"`
 }
 
+type adminEventSettleRequest struct {
+	StreamerID      string              `json:"streamerId"`
+	WinningOptionID string              `json:"winningOptionId,omitempty"`
+	Result          events.SettleResult `json:"result"`
+}
+
 type adminUsersResponse struct {
 	Page     int             `json:"page"`
 	PageSize int             `json:"pageSize"`
@@ -1123,6 +1129,87 @@ func NewHandler(
 			})))
 		}
 
+		if walletService != nil && eventsService != nil {
+			mux.Handle("/api/admin/events/", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !requireAdmin(w, r, adminService) {
+					writeError(w, http.StatusForbidden, "admin role is required")
+					return
+				}
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				path := strings.TrimPrefix(r.URL.Path, "/api/admin/events/")
+				if !strings.HasSuffix(path, "/settle") {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				eventID := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(path, "/settle"), "/"))
+				if eventID == "" {
+					writeError(w, http.StatusBadRequest, "event id is required")
+					return
+				}
+				claims, ok := auth.ClaimsFromContext(r.Context())
+				if !ok {
+					writeError(w, http.StatusUnauthorized, "missing auth claims")
+					return
+				}
+				idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+				if idempotencyKey == "" {
+					writeError(w, http.StatusBadRequest, wallet.ErrIdempotencyRequired.Error())
+					return
+				}
+				defer r.Body.Close() //nolint:errcheck
+				body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to read request body")
+					return
+				}
+				var req adminEventSettleRequest
+				if err := decodeJSONStrict(body, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid request body")
+					return
+				}
+				settlement, err := eventsService.SettleEvent(r.Context(), events.SettleRequest{
+					EventID:         eventID,
+					StreamerID:      req.StreamerID,
+					WinningOptionID: req.WinningOptionID,
+					Result:          req.Result,
+					IdempotencyKey:  idempotencyKey,
+					ActorID:         claims.Subject,
+				})
+				if err != nil {
+					writeEventSettlementError(w, logger, eventID, err)
+					return
+				}
+				for _, payout := range settlement.Payouts {
+					if payout.WinAmountINT <= 0 {
+						continue
+					}
+					reason := "event_win"
+					if payout.ResultStatus == events.ResultStatusDraw {
+						reason = "event_draw_refund"
+					}
+					_, balance, err := walletService.Post(wallet.PostRequest{
+						UserID:         payout.UserID,
+						Type:           wallet.EntryTypeCredit,
+						Amount:         payout.WinAmountINT,
+						Reason:         reason,
+						IdempotencyKey: payout.IdempotencyKey,
+						ActorID:        claims.Subject,
+					})
+					if err != nil {
+						logger.Error("failed to credit event settlement payout", zap.String("eventID", eventID), zap.String("userID", payout.UserID), zap.Error(err))
+						writeError(w, http.StatusInternalServerError, "failed to credit event settlement payout")
+						return
+					}
+					rtHub.PublishToUser(payout.UserID, realtime.Envelope{Type: "BALANCE_UPDATED", Payload: map[string]int64{"balance": balance}})
+				}
+				rtHub.PublishToStreamer(req.StreamerID, realtime.Envelope{Type: "EVENT_SETTLED", Payload: settlement})
+				writeJSON(w, http.StatusOK, settlement)
+			})))
+		}
+
 		if streamersService != nil {
 			mux.Handle("/api/streamers", authed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method {
@@ -1845,6 +1932,7 @@ func NewHandler(
 							StreamerNickname: item.StreamerID,
 							Details:          []events.UserEventHistoryItem{},
 						}
+
 						if streamersService != nil {
 							if streamer, found := streamersService.GetByID(r.Context(), item.StreamerID); found {
 								entry.StreamerNickname = streamer.TwitchNickname
@@ -2028,6 +2116,20 @@ func writeEventVoteError(w http.ResponseWriter, logger *zap.Logger, eventID stri
 	default:
 		logger.Error("failed to process event vote", zap.String("eventID", eventID), zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "failed to process vote")
+	}
+}
+
+func writeEventSettlementError(w http.ResponseWriter, logger *zap.Logger, eventID string, err error) {
+	switch {
+	case errors.Is(err, events.ErrInvalidSettlement):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, events.ErrEventNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, events.ErrEventClosed), errors.Is(err, events.ErrEventSettled):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		logger.Error("failed to settle event", zap.String("eventID", eventID), zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "failed to settle event")
 	}
 }
 

@@ -31,16 +31,21 @@
 - **Profile**: 2k vu, spike 200 rps for 60 seconds.
 - **Assertions**: No >1% rate-limit errors under configured thresholds, ledger consistency checks post-run.
 
-### S5 – Payments Lifecycle
+### S5 – Event Settlement Payouts
+- **Endpoint**: `POST /api/admin/events/{eventId}/settle` after a seeded burst of `POST /api/events/{eventId}/vote` calls.
+- **Profile**: 100 concurrent admin settlement replays against 10 events with 1k votes each, mixing `result=win` and `result=draw`.
+- **Assertions**: each payout idempotency key credits at most once; total credited winners equals `(totalContributed - platformFeeINT)` for win settlements and original vote amounts for draw settlements; p95 < 350 ms for settlement response with Redis active-state cleanup enabled.
+
+### S6 – Payments Lifecycle
 - **Endpoints**: `POST /api/payments/stars/createInvoice` followed by webhook simulation.
 - **Profile**: 200 vu, 5 rps invoice creation, webhook replay tests.
 - **Assertions**: Ledger balance increases exactly once per invoice.
 
-### S6 – WebSocket Fan-out
+### S7 – WebSocket Fan-out
 - **Setup**: 10k simulated connections per node; publish `EVENT_UPDATED` at 2 Hz.
 - **Assertions**: 99% of clients receive updates within 1 s; dropped message rate < 0.5%.
 
-### S7 – Streamlink Capture Cadence & Idempotency
+### S8 – Streamlink Capture Cadence & Idempotency
 - **Path**: background `streamlink -> source segment files -> assembled LLM chunk` scheduler for active streamers.
 - **Profile**: 100 active streamers across 15 minutes with mixed Scenario Package v2 `segmentCount` values (for example 10, 15, and 30 source segments).
 - **Assertions**: no streamer executes more than one capture cycle per configured step window; duplicate scheduler starts do not increase chunk volume; worker busy skips remain below 1% after warm-up; assembled LLM chunks advance through contiguous segment indexes with no gaps or duplicates; consumed source segments, analyzed/uploaded local videos, and stale interrupted-session artifacts do not accumulate on disk.

@@ -17,11 +17,13 @@ import (
 )
 
 var (
-	ErrInvalidEvent  = errors.New("event payload is invalid")
-	ErrEventNotFound = errors.New("event not found")
-	ErrEventClosed   = errors.New("event is closed")
-	ErrInvalidVote   = errors.New("vote payload is invalid")
-	ErrAlreadyActive = errors.New("active event already exists for template")
+	ErrInvalidEvent      = errors.New("event payload is invalid")
+	ErrEventNotFound     = errors.New("event not found")
+	ErrEventClosed       = errors.New("event is closed")
+	ErrInvalidVote       = errors.New("vote payload is invalid")
+	ErrAlreadyActive     = errors.New("active event already exists for template")
+	ErrInvalidSettlement = errors.New("event settlement payload is invalid")
+	ErrEventSettled      = errors.New("event is already settled")
 )
 
 type voteRecord struct {
@@ -42,6 +44,7 @@ type Service struct {
 	liveTTL            time.Duration
 	items              map[string]*liveEventState
 	historyByUser      map[string][]UserEventHistoryItem
+	settlementsByEvent map[string]Settlement
 	votePlatformFeeBPS int64
 	nicknameChangeCost int64
 	weeklyRewardByDay  [7]int64
@@ -90,6 +93,7 @@ func NewService(seed []LiveEvent) *Service {
 	return &Service{
 		items:              items,
 		historyByUser:      map[string][]UserEventHistoryItem{},
+		settlementsByEvent: map[string]Settlement{},
 		weeklyClaimsByUser: map[string]weeklyClaimState{},
 	}
 }
@@ -616,12 +620,267 @@ func (s *Service) Vote(ctx context.Context, req VoteRequest) (LiveEvent, error) 
 		OptionPoolINT:    optionPool,
 		Coefficient:      coefficient,
 		PotentialWinINT:  potentialWin,
-		ResultStatus:     "pending",
+		ResultStatus:     ResultStatusPending,
 	}
 	s.historyByUser[userID] = append(s.historyByUser[userID], historyItem)
 	event := item.event
 	event.UserVote = &UserVote{OptionID: userVote.OptionID, TotalAmount: userVote.Amount}
 	return event, nil
+}
+
+func (s *Service) SettleEvent(ctx context.Context, req SettleRequest) (Settlement, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	prepared, err := normalizeSettleRequest(req)
+	if err != nil {
+		return Settlement{}, err
+	}
+	if s.db != nil {
+		if s.redis != nil {
+			if err := s.ensureLiveEventLoadedFromRedis(ctx, prepared.EventID, prepared.StreamerID); err != nil {
+				return Settlement{}, err
+			}
+		} else if err := s.ensureLiveEventLoaded(ctx, prepared.EventID, prepared.StreamerID); err != nil {
+			return Settlement{}, err
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if settlement, ok := s.settlementsByEvent[prepared.EventID]; ok {
+		return cloneSettlement(settlement), nil
+	}
+	item, ok := s.items[prepared.EventID]
+	if !ok || item.event.StreamerID != prepared.StreamerID {
+		return Settlement{}, ErrEventNotFound
+	}
+	if strings.EqualFold(item.event.Status, "settled") {
+		return Settlement{}, ErrEventSettled
+	}
+	if strings.EqualFold(item.event.Status, "cancelled") {
+		return Settlement{}, ErrEventClosed
+	}
+	if prepared.Result == SettleResultWin {
+		if _, ok := item.event.Totals[prepared.WinningOptionID]; !ok {
+			return Settlement{}, ErrInvalidSettlement
+		}
+	}
+
+	event := cloneLiveEvent(item.event)
+	event.Status = "settled"
+	if event.Totals == nil {
+		event.Totals = map[string]int64{}
+	}
+	payouts, totalPayout := s.applySettlementToHistoryLocked(event, prepared)
+	settlement := Settlement{
+		Event:            event,
+		WinningOptionID:  prepared.WinningOptionID,
+		Result:           prepared.Result,
+		Payouts:          payouts,
+		TotalPayoutINT:   totalPayout,
+		PlatformFeeINT:   event.PlatformFeeINT,
+		DistributableINT: event.DistributableINT,
+	}
+	if s.db != nil {
+		dbPayouts, dbTotalPayout, err := s.persistSettlementDB(ctx, event, prepared)
+		if err != nil {
+			return Settlement{}, err
+		}
+		if len(dbPayouts) > 0 || dbTotalPayout > 0 {
+			settlement.Payouts = dbPayouts
+			settlement.TotalPayoutINT = dbTotalPayout
+		}
+	}
+	item.event = event
+	if s.redis != nil {
+		_ = s.deleteLiveState(ctx, item.event)
+	}
+	s.settlementsByEvent[prepared.EventID] = settlement
+	return cloneSettlement(settlement), nil
+}
+
+func normalizeSettleRequest(req SettleRequest) (SettleRequest, error) {
+	prepared := SettleRequest{
+		EventID:         strings.TrimSpace(req.EventID),
+		StreamerID:      strings.TrimSpace(req.StreamerID),
+		WinningOptionID: strings.TrimSpace(req.WinningOptionID),
+		Result:          req.Result,
+		IdempotencyKey:  strings.TrimSpace(req.IdempotencyKey),
+		ActorID:         strings.TrimSpace(req.ActorID),
+	}
+	if prepared.EventID == "" || prepared.StreamerID == "" {
+		return SettleRequest{}, ErrInvalidSettlement
+	}
+	if prepared.Result == "" {
+		if prepared.WinningOptionID != "" {
+			prepared.Result = SettleResultWin
+		} else {
+			return SettleRequest{}, ErrInvalidSettlement
+		}
+	}
+	switch prepared.Result {
+	case SettleResultWin:
+		if prepared.WinningOptionID == "" {
+			return SettleRequest{}, ErrInvalidSettlement
+		}
+	case SettleResultDraw:
+		prepared.WinningOptionID = ""
+	default:
+		return SettleRequest{}, ErrInvalidSettlement
+	}
+	return prepared, nil
+}
+
+func (s *Service) applySettlementToHistoryLocked(event LiveEvent, req SettleRequest) ([]SettlementPayout, int64) {
+	payouts := make([]SettlementPayout, 0)
+	totalPayout := int64(0)
+	winningContributionINT := int64(0)
+	if req.Result == SettleResultWin {
+		for _, items := range s.historyByUser {
+			for _, item := range items {
+				if item.EventID == event.ID && strings.TrimSpace(item.OptionID) == strings.TrimSpace(req.WinningOptionID) {
+					winningContributionINT += item.AmountINT
+				}
+			}
+		}
+	}
+	for userID, items := range s.historyByUser {
+		for idx := range items {
+			if items[idx].EventID != event.ID {
+				continue
+			}
+			winAmount, resultStatus := settlementAmountAndStatus(event, req, items[idx].OptionID, items[idx].AmountINT, winningContributionINT)
+			items[idx].WinAmountINT = int64Ptr(winAmount)
+			items[idx].ResultStatus = resultStatus
+			if winAmount <= 0 {
+				continue
+			}
+			payouts = append(payouts, SettlementPayout{
+				UserID:         userID,
+				OptionID:       items[idx].OptionID,
+				AmountINT:      items[idx].AmountINT,
+				WinAmountINT:   winAmount,
+				ResultStatus:   resultStatus,
+				IdempotencyKey: settlementPayoutIdempotencyKey(event.ID, userID, strconv.Itoa(idx)),
+			})
+			totalPayout += winAmount
+		}
+		s.historyByUser[userID] = items
+	}
+	return payouts, totalPayout
+}
+
+func settlementAmountAndStatus(event LiveEvent, req SettleRequest, optionID string, amountINT, winningContributionINT int64) (int64, string) {
+	if amountINT <= 0 {
+		return 0, ResultStatusLost
+	}
+	if req.Result == SettleResultDraw {
+		return amountINT, ResultStatusDraw
+	}
+	if strings.TrimSpace(optionID) != strings.TrimSpace(req.WinningOptionID) {
+		return 0, ResultStatusLost
+	}
+	if event.DistributableINT <= 0 || winningContributionINT <= 0 {
+		return 0, ResultStatusWon
+	}
+	return (event.DistributableINT * amountINT) / winningContributionINT, ResultStatusWon
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
+}
+
+func settlementPayoutIdempotencyKey(eventID, userID, voteRef string) string {
+	return "event_settlement:" + strings.TrimSpace(eventID) + ":" + strings.TrimSpace(userID) + ":" + strings.TrimSpace(voteRef)
+}
+
+type settlementVoteRow struct {
+	ID       string
+	UserID   string
+	OptionID string
+	Amount   int64
+}
+
+func (s *Service) persistSettlementDB(ctx context.Context, event LiveEvent, req SettleRequest) ([]SettlementPayout, int64, error) {
+	metadataJSON, err := json.Marshal(map[string]any{
+		"settlementResult":  req.Result,
+		"winningOptionId":   req.WinningOptionID,
+		"settlementActorId": strings.TrimSpace(req.ActorID),
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE live_event_history SET status = 'settled', closed_at = COALESCE(closed_at, NOW()), metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $1 AND streamer_id = $3 AND status <> 'settled'`, event.ID, string(metadataJSON), event.StreamerID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if rowsAffected, _ := result.RowsAffected(); rowsAffected == 0 {
+		return nil, 0, ErrEventSettled
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, option_id, amount_int FROM live_event_vote_history WHERE event_id = $1 ORDER BY created_at ASC, id ASC`, event.ID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close() //nolint:errcheck
+	votes := make([]settlementVoteRow, 0)
+	for rows.Next() {
+		var vote settlementVoteRow
+		if err := rows.Scan(&vote.ID, &vote.UserID, &vote.OptionID, &vote.Amount); err != nil {
+			return nil, 0, err
+		}
+		votes = append(votes, vote)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	winningContributionINT := int64(0)
+	if req.Result == SettleResultWin {
+		for _, vote := range votes {
+			if strings.TrimSpace(vote.OptionID) == strings.TrimSpace(req.WinningOptionID) {
+				winningContributionINT += vote.Amount
+			}
+		}
+	}
+	payouts := make([]SettlementPayout, 0, len(votes))
+	totalPayout := int64(0)
+	for _, vote := range votes {
+		winAmount, resultStatus := settlementAmountAndStatus(event, req, vote.OptionID, vote.Amount, winningContributionINT)
+		voteMetadataJSON, err := json.Marshal(map[string]any{
+			"settlementResult": req.Result,
+			"winningOptionId":  req.WinningOptionID,
+			"resultStatus":     resultStatus,
+			"winAmountINT":     winAmount,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE live_event_vote_history SET metadata = metadata || $2::jsonb WHERE id = $1`, vote.ID, string(voteMetadataJSON)); err != nil {
+			return nil, 0, err
+		}
+		if winAmount <= 0 {
+			continue
+		}
+		payouts = append(payouts, SettlementPayout{
+			UserID:         vote.UserID,
+			OptionID:       vote.OptionID,
+			AmountINT:      vote.Amount,
+			WinAmountINT:   winAmount,
+			ResultStatus:   resultStatus,
+			IdempotencyKey: settlementPayoutIdempotencyKey(event.ID, vote.UserID, vote.ID),
+		})
+		totalPayout += winAmount
+	}
+	return payouts, totalPayout, nil
+}
+
+func cloneSettlement(settlement Settlement) Settlement {
+	copySettlement := settlement
+	copySettlement.Event = cloneLiveEvent(settlement.Event)
+	copySettlement.Payouts = append([]SettlementPayout(nil), settlement.Payouts...)
+	return copySettlement
 }
 
 func (s *Service) persistLiveState(ctx context.Context, event LiveEvent) error {
