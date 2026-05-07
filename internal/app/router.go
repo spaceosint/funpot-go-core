@@ -126,15 +126,16 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 		nodes = append(nodes, prompts.GameScenarioNode{
 			ID:                node.ID,
 			Alias:             node.Alias,
-			ScenarioPackageID: node.ScenarioPackageID,
+			ScenarioPackageID: node.scenarioPackageID(),
 		})
 	}
 	transitions := make([]prompts.GameScenarioTransition, 0, len(req.Transitions))
 	for _, tr := range req.Transitions {
 		terminalConditions := make([]prompts.GameScenarioTerminalCondition, 0, len(tr.TerminalConditions))
-		for _, item := range tr.TerminalConditions {
-			outcomeTemplates := make([]prompts.GameScenarioOutcomeTemplate, 0, len(item.OutcomeTemplates))
-			for _, outcome := range item.OutcomeTemplates {
+		for _, item := range tr.terminalConditions() {
+			inputOutcomes := item.outcomeTemplates()
+			outcomeTemplates := make([]prompts.GameScenarioOutcomeTemplate, 0, len(inputOutcomes))
+			for _, outcome := range inputOutcomes {
 				outcomeTemplates = append(outcomeTemplates, prompts.GameScenarioOutcomeTemplate{
 					ID:        outcome.ID,
 					Title:     outcome.Title,
@@ -144,16 +145,16 @@ func gameScenarioRequestToCreateRequest(req gameScenarioCreateRequest, actorID s
 			}
 			terminalConditions = append(terminalConditions, prompts.GameScenarioTerminalCondition{
 				ID:               item.ID,
-				GameTitle:        item.GameTitle,
-				DefaultLanguage:  item.DefaultLanguage,
+				GameTitle:        item.gameTitle(),
+				DefaultLanguage:  item.defaultLanguage(),
 				OutcomeTemplates: outcomeTemplates,
 				Priority:         item.Priority,
 			})
 		}
 		transitions = append(transitions, prompts.GameScenarioTransition{
 			ID:                 tr.ID,
-			FromNodeID:         tr.FromNodeID,
-			ToNodeID:           tr.ToNodeID,
+			FromNodeID:         tr.fromNodeID(),
+			ToNodeID:           tr.toNodeID(),
 			Condition:          tr.Condition,
 			Priority:           tr.Priority,
 			TerminalConditions: terminalConditions,
@@ -236,26 +237,70 @@ type scenarioPackageCreateRequest struct {
 }
 
 type gameScenarioNodeRequest struct {
-	ID                string `json:"id"`
-	Alias             string `json:"alias"`
-	ScenarioPackageID string `json:"scenarioPackageId"`
+	ID                     string `json:"id"`
+	Alias                  string `json:"alias"`
+	ScenarioPackageID      string `json:"scenarioPackageId"`
+	ScenarioPackageIDSnake string `json:"scenario_package_id"`
+}
+
+func (r gameScenarioNodeRequest) scenarioPackageID() string {
+	return firstNonEmpty(r.ScenarioPackageID, r.ScenarioPackageIDSnake)
 }
 
 type gameScenarioTransitionRequest struct {
-	ID                 string                                 `json:"id"`
-	FromNodeID         string                                 `json:"fromNodeId"`
-	ToNodeID           string                                 `json:"toNodeId"`
-	Condition          string                                 `json:"condition"`
-	Priority           int                                    `json:"priority"`
-	TerminalConditions []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
+	ID                      string                                 `json:"id"`
+	FromNodeID              string                                 `json:"fromNodeId"`
+	FromNodeIDSnake         string                                 `json:"from_node_id"`
+	ToNodeID                string                                 `json:"toNodeId"`
+	ToNodeIDSnake           string                                 `json:"to_node_id"`
+	Condition               string                                 `json:"condition"`
+	Priority                int                                    `json:"priority"`
+	TerminalConditions      []gameScenarioTerminalConditionRequest `json:"terminalConditions"`
+	TerminalConditionsSnake []gameScenarioTerminalConditionRequest `json:"terminal_conditions"`
 }
 
 type gameScenarioTerminalConditionRequest struct {
-	ID               string                                     `json:"id"`
-	GameTitle        map[string]string                          `json:"gameTitle"`
-	DefaultLanguage  string                                     `json:"defaultLanguage"`
-	OutcomeTemplates []gameScenarioTerminalOutcomeTemplateInput `json:"outcomeTemplates"`
-	Priority         int                                        `json:"priority"`
+	ID                    string                                     `json:"id"`
+	GameTitle             map[string]string                          `json:"gameTitle"`
+	GameTitleSnake        map[string]string                          `json:"game_title"`
+	DefaultLanguage       string                                     `json:"defaultLanguage"`
+	DefaultLanguageSnake  string                                     `json:"default_language"`
+	OutcomeTemplates      []gameScenarioTerminalOutcomeTemplateInput `json:"outcomeTemplates"`
+	OutcomeTemplatesSnake []gameScenarioTerminalOutcomeTemplateInput `json:"outcome_templates"`
+	Priority              int                                        `json:"priority"`
+}
+
+func (r gameScenarioTransitionRequest) fromNodeID() string {
+	return firstNonEmpty(r.FromNodeID, r.FromNodeIDSnake)
+}
+
+func (r gameScenarioTransitionRequest) toNodeID() string {
+	return firstNonEmpty(r.ToNodeID, r.ToNodeIDSnake)
+}
+
+func (r gameScenarioTransitionRequest) terminalConditions() []gameScenarioTerminalConditionRequest {
+	if len(r.TerminalConditions) > 0 {
+		return r.TerminalConditions
+	}
+	return r.TerminalConditionsSnake
+}
+
+func (r gameScenarioTerminalConditionRequest) gameTitle() map[string]string {
+	if len(r.GameTitle) > 0 {
+		return r.GameTitle
+	}
+	return r.GameTitleSnake
+}
+
+func (r gameScenarioTerminalConditionRequest) defaultLanguage() string {
+	return firstNonEmpty(r.DefaultLanguage, r.DefaultLanguageSnake)
+}
+
+func (r gameScenarioTerminalConditionRequest) outcomeTemplates() []gameScenarioTerminalOutcomeTemplateInput {
+	if len(r.OutcomeTemplates) > 0 {
+		return r.OutcomeTemplates
+	}
+	return r.OutcomeTemplatesSnake
 }
 
 type gameScenarioTerminalOutcomeTemplateInput struct {

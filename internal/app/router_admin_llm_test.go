@@ -329,6 +329,15 @@ func TestAdminLLMGameScenarioRoutes(t *testing.T) {
 	if loaded["name"] != "cs2 game scenario" {
 		t.Fatalf("expected original name, got %#v", loaded["name"])
 	}
+	loadedTransitions, _ := loaded["transitions"].([]any)
+	if len(loadedTransitions) != 1 {
+		t.Fatalf("expected one loaded transition, got %#v", loaded["transitions"])
+	}
+	loadedTransition, _ := loadedTransitions[0].(map[string]any)
+	loadedTerminals, _ := loadedTransition["terminalConditions"].([]any)
+	if len(loadedTerminals) != 1 {
+		t.Fatalf("expected terminal conditions in loaded game scenario, got %#v", loadedTransition["terminalConditions"])
+	}
 
 	updateBody, _ := json.Marshal(map[string]any{
 		"name":          "cs2 game scenario updated",
