@@ -41,8 +41,8 @@
 - **Assertions**: 99% of clients receive updates within 1 s; dropped message rate < 0.5%.
 
 ### S7 – Streamlink Capture Cadence & Idempotency
-- **Path**: background `streamlink -> 1-second source segments -> assembled LLM chunk` scheduler for active streamers.
-- **Profile**: 100 active streamers across 15 minutes with mixed Scenario Package v2 `segmentSeconds` values (for example 10, 15, and 30 seconds).
+- **Path**: background `streamlink -> source segment files -> assembled LLM chunk` scheduler for active streamers.
+- **Profile**: 100 active streamers across 15 minutes with mixed Scenario Package v2 `segmentCount` values (for example 10, 15, and 30 source segments).
 - **Assertions**: no streamer executes more than one capture cycle per configured step window; duplicate scheduler starts do not increase chunk volume; worker busy skips remain below 1% after warm-up; assembled LLM chunks advance through contiguous segment indexes with no gaps or duplicates; consumed source segments, analyzed/uploaded local videos, and stale interrupted-session artifacts do not accumulate on disk.
 
 ## Metrics Collection

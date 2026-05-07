@@ -150,9 +150,19 @@ func (a *StreamlinkCaptureAdapter) CaptureWithDuration(ctx context.Context, stre
 		duration = a.cfg.CaptureTimeout
 	}
 	if a.continuous {
-		return a.captureContinuous(ctx, streamerID, duration)
+		return a.CaptureWithSegmentCount(ctx, streamerID, continuousSegmentCount(duration))
 	}
 	return a.captureSingle(ctx, streamerID, duration)
+}
+
+func (a *StreamlinkCaptureAdapter) CaptureWithSegmentCount(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error) {
+	if segmentCount <= 0 {
+		segmentCount = continuousSegmentCount(a.cfg.CaptureTimeout)
+	}
+	if a.continuous {
+		return a.captureContinuousSegments(ctx, streamerID, segmentCount)
+	}
+	return a.captureSingle(ctx, streamerID, time.Duration(segmentCount)*continuousCaptureSegmentUnit)
 }
 
 func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID string, captureTimeout time.Duration) (ChunkRef, error) {
@@ -291,6 +301,10 @@ func (a *StreamlinkCaptureAdapter) captureSingle(ctx context.Context, streamerID
 }
 
 func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, streamerID string, captureTimeout time.Duration) (ChunkRef, error) {
+	return a.captureContinuousSegments(ctx, streamerID, continuousSegmentCount(captureTimeout))
+}
+
+func (a *StreamlinkCaptureAdapter) captureContinuousSegments(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error) {
 	logger := a.logger
 	if logger == nil {
 		logger = zap.NewNop()
@@ -320,10 +334,12 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 		return ChunkRef{}, session.lastErr
 	}
 
-	segmentCount := continuousSegmentCount(captureTimeout)
+	if segmentCount <= 0 {
+		segmentCount = continuousSegmentCount(a.cfg.CaptureTimeout)
+	}
 	targetIndex := session.nextIndex
 	lastIndex := targetIndex + segmentCount - 1
-	deadline := time.Now().Add(captureTimeout + continuousCaptureSegmentUnit + streamlinkCaptureShutdownGracePeriod)
+	deadline := time.Now().Add(time.Duration(segmentCount)*continuousCaptureSegmentUnit + continuousCaptureSegmentUnit + streamlinkCaptureShutdownGracePeriod)
 	lastObservedSize := int64(-1)
 	var lastSizeChangedAt time.Time
 	for {
@@ -341,7 +357,7 @@ func (a *StreamlinkCaptureAdapter) captureContinuous(ctx context.Context, stream
 				return ChunkRef{}, err
 			}
 			session.nextIndex += segmentCount
-			logger.Info("continuous stream chunk assembled", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int("firstSegmentIndex", targetIndex), zap.Int("lastSegmentIndex", lastIndex), zap.Int("segmentSeconds", segmentCount))
+			logger.Info("continuous stream chunk assembled", zap.String("streamerID", id), zap.String("chunkPath", chunkPath), zap.Int("firstSegmentIndex", targetIndex), zap.Int("lastSegmentIndex", lastIndex), zap.Int("segmentCount", segmentCount))
 			return ChunkRef{Reference: chunkPath, CapturedAt: a.nowFn().UTC()}, nil
 		}
 		if !segmentsReady {

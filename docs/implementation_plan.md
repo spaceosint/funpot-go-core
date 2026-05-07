@@ -58,8 +58,8 @@ business logic and immediate backend scope.
 - [ ] Re-introduce scenario-package persistence in storage (PostgreSQL) after the scenario-only cleanup baseline stabilizes.
 - [x] Implement stream capture worker pipeline:
   `streamlink -> media chunking -> previous_state + new_chunk -> updated_state`,
-  including step-level `segmentSeconds` assembly from contiguous source segments
-  so no seconds are skipped between LLM chunks, plus cleanup of consumed source
+  including step-level `segmentCount` assembly from contiguous source segments
+  so no source segments are skipped between LLM chunks, plus cleanup of consumed source
   segments, assembled local videos, and stale artifacts from interrupted sessions.
 - [ ] Implement match-session lifecycle so one detected match is tracked as one
   chat/session with explicit persisted state JSON.

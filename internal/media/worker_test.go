@@ -17,10 +17,11 @@ import (
 )
 
 type fakeCapture struct {
-	chunk          ChunkRef
-	err            error
-	lastDuration   time.Duration
-	captureInvoked int
+	chunk            ChunkRef
+	err              error
+	lastDuration     time.Duration
+	lastSegmentCount int
+	captureInvoked   int
 }
 
 func (f *fakeCapture) Capture(_ context.Context, _ string) (ChunkRef, error) {
@@ -33,6 +34,11 @@ func (f *fakeCapture) Capture(_ context.Context, _ string) (ChunkRef, error) {
 
 func (f *fakeCapture) CaptureWithDuration(ctx context.Context, streamerID string, duration time.Duration) (ChunkRef, error) {
 	f.lastDuration = duration
+	return f.Capture(ctx, streamerID)
+}
+
+func (f *fakeCapture) CaptureWithSegmentCount(ctx context.Context, streamerID string, segmentCount int) (ChunkRef, error) {
+	f.lastSegmentCount = segmentCount
 	return f.Capture(ctx, streamerID)
 }
 
@@ -744,7 +750,7 @@ func TestWorkerProcessScenarioPackageUsesPackageModelConfigWhenStepModelMissing(
 	}
 }
 
-func TestWorkerProcessStreamerUsesStepSegmentDuration(t *testing.T) {
+func TestWorkerProcessStreamerUsesStepSegmentCount(t *testing.T) {
 	capture := &fakeCapture{chunk: ChunkRef{Reference: "chunk-1", CapturedAt: time.Now().UTC()}}
 	worker := NewWorker(
 		capture,
@@ -755,7 +761,7 @@ func TestWorkerProcessStreamerUsesStepSegmentDuration(t *testing.T) {
 				GameSlug:         "global",
 				LLMModelConfigID: "cfg-default",
 				Steps: []prompts.ScenarioStep{
-					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, SegmentSeconds: 15},
+					{ID: "initial", Name: "Initial", PromptTemplate: "detect", ResponseSchemaJSON: `{}`, Initial: true, Order: 1, SegmentCount: 15},
 				},
 			},
 			llmModelConfig: prompts.LLMModelConfig{ID: "cfg-default", Model: "gemini-2.5-flash"},
@@ -769,8 +775,8 @@ func TestWorkerProcessStreamerUsesStepSegmentDuration(t *testing.T) {
 	if _, err := worker.ProcessStreamer(context.Background(), "streamer-1"); err != nil {
 		t.Fatalf("process streamer: %v", err)
 	}
-	if capture.lastDuration != 15*time.Second {
-		t.Fatalf("capture duration = %v, want 15s", capture.lastDuration)
+	if capture.lastSegmentCount != 15 {
+		t.Fatalf("capture segment count = %d, want 15", capture.lastSegmentCount)
 	}
 }
 

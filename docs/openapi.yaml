@@ -1753,10 +1753,15 @@ components:
         responseSchemaJson:
           type: string
           description: JSON schema/template contract that the LLM response must follow exactly (legacy coercion is not applied).
+        segmentCount:
+          type: integer
+          minimum: 1
+          description: Number of consecutive source video segments to assemble for each LLM request. Defaults to 15 for the initial step and 30 for all other steps.
         segmentSeconds:
           type: integer
           minimum: 1
-          description: Video segment duration in seconds for this step. Defaults to 15 for the initial step and 30 for all other steps.
+          deprecated: true
+          description: Deprecated alias for segmentCount kept for backwards compatibility; value is interpreted as a source segment count, not wall-clock seconds.
         maxRequests:
           type: integer
           minimum: 0
@@ -1772,10 +1777,15 @@ components:
         - $ref: '#/components/schemas/ScenarioStepRequest'
         - type: object
           properties:
+            segmentCount:
+              type: integer
+              minimum: 1
+              description: Number of consecutive source video segments to assemble for each LLM request. Defaults to 15 for the initial step and 30 for all other steps.
             segmentSeconds:
               type: integer
               minimum: 1
-              description: Video segment duration in seconds for this step. Defaults to 15 for the initial step and 30 for all other steps.
+              deprecated: true
+              description: Deprecated alias for segmentCount kept for backwards compatibility; value is interpreted as a source segment count, not wall-clock seconds.
             maxRequests:
               type: integer
               minimum: 0

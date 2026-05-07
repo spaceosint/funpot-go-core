@@ -98,11 +98,11 @@ FUNPOT_DATABASE_CONN_MAX_LIFETIME=30m
 > the previous capture overruns the window.
 >
 > Stream capture now runs as a long-lived Streamlink→FFmpeg pipeline per streamer
-> and cuts sequential 1-second source segments continuously (`%09d.mp4`).
-> The worker assembles the exact number of consecutive source segments requested
-> by the active Scenario Package v2 step `segmentSeconds`, so admins can tune
-> LLM chunk length while preserving contiguous coverage with no skipped seconds
-> between chunks.
+> and cuts sequential source segment files continuously (`%09d.mp4`; FFmpeg uses a 1-second target, but stream-copy keyframes can make wall-clock duration vary).
+> The worker assembles the exact number of consecutive source segment files requested
+> by the active Scenario Package v2 step `segmentCount`, so admins can tune
+> how many files are sent in each LLM chunk while preserving contiguous coverage
+> with no skipped source segments between chunks.
 >
 > Each assembled step-sized chunk is analyzed immediately by the worker, then
 > the local assembled video is deleted after analysis/upload; consumed 1-second
@@ -225,7 +225,7 @@ On startup the server listens on `FUNPOT_SERVER_ADDRESS` and provides:
 - `GET /api/admin/llm/model-configs` / `POST /api/admin/llm/model-configs` – admin CRUD entrypoints for reusable LLM model configs (model + execution params + free-form metadata JSON).
 - `PUT /api/admin/llm/model-configs/{id}` / `DELETE /api/admin/llm/model-configs/{id}` / `POST /api/admin/llm/model-configs/{id}/activate` – update, remove, and switch active model configuration.
 - `GET /api/admin/llm/scenario-packages` / `POST /api/admin/llm/scenario-packages` – admin CRUD for scenario graph packages with per-game versioning and activation. Admin can provide explicit graph `transitions` (`fromStepId`, `toStepId`, `condition`, `priority`) for branch routing and optional strict-linear `packageTransitions` (single connector: `toPackageId`, `priority`, optional `action=stop_tracking`, optional `finalStateOptionId`) for package-to-package routing (`A -> B -> N`) or terminal stop behavior. Package payload also supports `finalCondition` (logical expression for final mini-game decision), `finalStateOptions` (predefined `{id,name,condition,finalStateJson,finalLabel}` choices), and derived `potentialState` in API responses (all detected state keys/value variants aggregated from step `responseSchemaJson`). If step `transitions` are omitted backend auto-links steps linearly by `order` (`step_i -> step_(i+1)` uses target `entryCondition`); when the initial step has its own `entryCondition` backend also adds fallback transitions from non-initial steps back to initial using that condition.
-- Scenario steps support per-step tuning: `segmentSeconds` (default `15` for `initial=true`, otherwise `30`) and `maxRequests` (default `0` = unlimited). When a non-initial step exceeds `maxRequests`, runtime returns to initial step; when initial exceeds its own limit, streamer tracking stops.
+- Scenario steps support per-step tuning: `segmentCount` (default `15` for `initial=true`, otherwise `30`; legacy `segmentSeconds` is accepted as an alias) and `maxRequests` (default `0` = unlimited). When a non-initial step exceeds `maxRequests`, runtime returns to initial step; when initial exceeds its own limit, streamer tracking stops.
 
 - `GET /api/admin/llm/scenario-packages/{id}/graph` – returns a UI-ready visual graph payload (`nodes + edges + groups`) for scenario-graph editors/renderers.
 - Legacy prompt-version/state-schema/rule-set admin surfaces are removed from runtime; scenario-packages + model-configs are the supported LLM control surfaces.
