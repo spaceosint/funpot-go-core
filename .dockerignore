@@ -6,6 +6,7 @@
 **/*_test.go
 **/*.md
 **/*.log
+*.zip
 
 bin/
 dist/
