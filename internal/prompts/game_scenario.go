@@ -46,6 +46,86 @@ type GameScenarioOutcomeTemplate struct {
 	Priority  int               `json:"priority"`
 }
 
+func (n *GameScenarioNode) UnmarshalJSON(data []byte) error {
+	type nodeAlias GameScenarioNode
+	var aux struct {
+		nodeAlias
+		ScenarioPackageIDSnake string `json:"scenario_package_id"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*n = GameScenarioNode(aux.nodeAlias)
+	if strings.TrimSpace(n.ScenarioPackageID) == "" {
+		n.ScenarioPackageID = aux.ScenarioPackageIDSnake
+	}
+	return nil
+}
+
+func (t *GameScenarioTransition) UnmarshalJSON(data []byte) error {
+	type transitionAlias GameScenarioTransition
+	var aux struct {
+		transitionAlias
+		FromNodeIDSnake         string                          `json:"from_node_id"`
+		ToNodeIDSnake           string                          `json:"to_node_id"`
+		TerminalConditionsSnake []GameScenarioTerminalCondition `json:"terminal_conditions"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*t = GameScenarioTransition(aux.transitionAlias)
+	if strings.TrimSpace(t.FromNodeID) == "" {
+		t.FromNodeID = aux.FromNodeIDSnake
+	}
+	if strings.TrimSpace(t.ToNodeID) == "" {
+		t.ToNodeID = aux.ToNodeIDSnake
+	}
+	if len(t.TerminalConditions) == 0 {
+		t.TerminalConditions = aux.TerminalConditionsSnake
+	}
+	return nil
+}
+
+func (t *GameScenarioTerminalCondition) UnmarshalJSON(data []byte) error {
+	type terminalAlias GameScenarioTerminalCondition
+	var aux struct {
+		terminalAlias
+		TransitionIDSnake     string                        `json:"transition_id"`
+		GameTitleSnake        map[string]string             `json:"game_title"`
+		DefaultLanguageSnake  string                        `json:"default_language"`
+		OutcomeTemplatesSnake []GameScenarioOutcomeTemplate `json:"outcome_templates"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*t = GameScenarioTerminalCondition(aux.terminalAlias)
+	if strings.TrimSpace(t.TransitionID) == "" {
+		t.TransitionID = aux.TransitionIDSnake
+	}
+	if len(t.GameTitle) == 0 {
+		t.GameTitle = aux.GameTitleSnake
+	}
+	if strings.TrimSpace(t.DefaultLanguage) == "" {
+		t.DefaultLanguage = aux.DefaultLanguageSnake
+	}
+	if len(t.OutcomeTemplates) == 0 {
+		t.OutcomeTemplates = aux.OutcomeTemplatesSnake
+	}
+	return nil
+}
+
+func (o *GameScenarioOutcomeTemplate) UnmarshalJSON(data []byte) error {
+	type outcomeAlias GameScenarioOutcomeTemplate
+	var aux struct {
+		outcomeAlias
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*o = GameScenarioOutcomeTemplate(aux.outcomeAlias)
+	return nil
+}
+
 type GameScenario struct {
 	ID            string                   `json:"id"`
 	Name          string                   `json:"name"`

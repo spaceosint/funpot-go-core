@@ -107,6 +107,52 @@ ORDER BY COALESCE(metadata->>'gameSlug', game_slug) ASC, version DESC, created_a
 	}
 }
 
+func TestPostgresGameScenarioStoreListDecodesSnakeCaseTerminalConditions(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	store := NewPostgresGameScenarioStore(db)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	nodes := `[{"id":"n1","scenario_package_id":"pkg-1"}]`
+	transitions := `[{"id":"tr-1","from_node_id":"n1","to_node_id":"n1","condition":"winner == \"ct\"","priority":1,"terminal_conditions":[{"id":"tm-1","game_title":{"ru":"Победа"},"default_language":"ru","outcome_templates":[{"id":"ct","title":{"ru":"CT"},"condition":"winner == \"ct\"","priority":10}],"priority":20}]}]`
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+SELECT id, name, version, game_slug, is_active, initial_node_id,
+       nodes_json, transitions_json, metadata, created_by, activated_by, created_at, activated_at
+FROM llm_scenarios
+WHERE metadata->>'kind' = 'game_scenario'
+ORDER BY COALESCE(metadata->>'gameSlug', game_slug) ASC, version DESC, created_at DESC`)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "version", "game_slug", "is_active", "initial_node_id",
+			"nodes_json", "transitions_json", "metadata", "created_by", "activated_by", "created_at", "activated_at",
+		}).AddRow("game-scenario-1", "scenario", 1, "game_scenario:cs2", true, "n1", []byte(nodes), []byte(transitions), []byte(`{"gameSlug":"cs2","kind":"game_scenario"}`), "admin", "admin", now, now))
+
+	items, err := store.List(context.Background())
+	if err != nil {
+		t.Fatalf("store.List: %v", err)
+	}
+	if len(items) != 1 || len(items[0].Transitions) != 1 {
+		t.Fatalf("expected one scenario transition, got %#v", items)
+	}
+	transition := items[0].Transitions[0]
+	if transition.FromNodeID != "n1" || transition.ToNodeID != "n1" {
+		t.Fatalf("expected snake_case node ids to decode, got %#v", transition)
+	}
+	if len(transition.TerminalConditions) != 1 {
+		t.Fatalf("expected snake_case terminal conditions to decode, got %#v", transition.TerminalConditions)
+	}
+	terminal := transition.TerminalConditions[0]
+	if terminal.DefaultLanguage != "ru" || terminal.GameTitle["ru"] != "Победа" || len(terminal.OutcomeTemplates) != 1 {
+		t.Fatalf("unexpected terminal condition: %#v", terminal)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
 func TestPostgresGameScenarioStoreUpdateUsesStorageSlugAndReloads(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
